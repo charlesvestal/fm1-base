@@ -73,6 +73,19 @@ uint32_t plat_midi_out_room(uint32_t to);   /* the free slots in the out queues 
                                         * note-on */
 uint32_t plat_midi_out_link(void);     /* a number that changes at each new USB connection (a host to tell its
                                         * sounds again: programs, volumes) */
+/* USB MIDI host (fm1.toml usb_host = true: FM1B_USB_HOST 1; felucca-bsp docs/USB_HOST.md): the USB port plays host to
+ * a USB-MIDI controller or synth, directly or behind one powered hub; the FM-1 gives the port no power (a powered hub
+ * or adapter). It comes in on PORT_USB and TO_USB goes to it; no computer meanwhile (no USB audio, backup, mirror).
+ * Boot is always a device. plat_usb_host (main loop) asks; connecting blocks the main loop a moment (seconds behind a
+ * hub), the sound plays on. plat_usb_host_msg: the latest change, once (not a queue). plat_usb_lost: 1 once after a
+ * USB session ended (a device lost, the mode changed): release what its notes hold. Without FM1B_USB_HOST all stay
+ * USBH_OFF / 0. */
+enum { USBH_OFF, USBH_LOOKING, USBH_CONNECTED };
+enum { USBH_MSG_NONE, USBH_MSG_ON, USBH_MSG_OFF, USBH_MSG_MIDI, USBH_MSG_NOMIDI, USBH_MSG_LOW, USBH_MSG_LOST };
+void plat_usb_host(int on);
+int plat_usb_host_state(void);
+int plat_usb_host_msg(void);
+int plat_usb_lost(void);
 uint32_t plat_midi_count(int port, int out);   /* messages through port PORT_* since the start (out: sent), real-time (clock...) left out */
 uint32_t plat_midi_ago(int port, int out);     /* ms since the last one (0xFFFFFFFF: none yet) */
 

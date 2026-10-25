@@ -280,6 +280,12 @@ void plat_midi_send(uint32_t pkt, uint32_t to)
                 to & TO_BLE_DEV ? " BLE-DEV" : "");
 }
 
+/* the USB MIDI host: the simulator has no USB port */
+void plat_usb_host(int on) { (void)on; }
+int plat_usb_host_state(void) { return USBH_OFF; }
+int plat_usb_host_msg(void) { return USBH_MSG_NONE; }
+int plat_usb_lost(void) { return 0; }
+
 /* Bluetooth (FM1B_BLE): a stand-in for the stack, ready a second after the start, and its log */
 static uint32_t ble_t0;
 static char ble_log[8][40];

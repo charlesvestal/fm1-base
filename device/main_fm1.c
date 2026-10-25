@@ -925,6 +925,9 @@ static void fm1_main(void)
 
     for (;;) {
         fm1_wdt_feed();
+#if FELUCCA_USB_HOST
+        usb_host_task(fm1_ms);                      /* the host's mode change and connecting (plat_usb_host) */
+#endif
         usb_retry(fm1_ms);
         if (fm1_ms > 30000u && bootguard.pending) {     /* a crash or hang in the first 30 s counts */
             bootguard.pending = 0;

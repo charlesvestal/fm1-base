@@ -278,6 +278,23 @@ void plat_midi_send(uint32_t pkt, uint32_t to)    /* the main loop's and the tic
 }
 void plat_midi_out(uint32_t pkt) { plat_midi_send(pkt, TO_USB); }
 
+#if FELUCCA_USB_HOST                              /* (felucca-bsp's UH_MSG_* are USBH_MSG_*, in order) */
+void plat_usb_host(int on) { usb_host_switch((uint32_t)(on != 0)); }
+int plat_usb_host_state(void) { return !usb_host_active() ? USBH_OFF : usb_host_connected() ? USBH_CONNECTED : USBH_LOOKING; }
+int plat_usb_host_msg(void) { return (int)usb_host_message(); }
+#else
+void plat_usb_host(int on) { (void)on; }
+int plat_usb_host_state(void) { return USBH_OFF; }
+int plat_usb_host_msg(void) { return USBH_MSG_NONE; }
+#endif
+int plat_usb_lost(void)
+{
+    if (!midi_usb_lost)
+        return 0;
+    midi_usb_lost = 0;
+    return 1;
+}
+
 /* the keys' velocity and pressure (APP_KEY_SENSE): felucca-bsp's analog rows, as fm1-ctl and fm1-monk read them (the
  * converter's clock, a held key driven, the top row probed). Off, the converter is the main loop's (MASTER). */
 void plat_sense(int on)
