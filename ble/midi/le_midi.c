@@ -49,6 +49,7 @@ const char log_tag_const_i_BLE_MIDI = 1;           /* the SDK keeps these in log
 #endif
 extern void ble_midi_receive(uint32_t pkt, uint32_t ts);   /* ts: the sender's millisecond (13 bits) */
 extern uint32_t shim_ms(void);
+extern const uint8_t *bt_get_mac_addr(void);                /* device/radio.c: the kept address, or one made */
 
 /* ---- the GATT database (the SDK's binary form: size, flags, handle, uuid, value). Flags: bit 1 read,
  * bit 2 write without response, bit 3 write, bit 4 notify, 0x100 dynamic, 0x200 128-bit uuid. */
@@ -79,7 +80,27 @@ static const uint8_t profile_data[] = {
 #define ATT_RAM_BUFSIZE      (ATT_CTRL_BLOCK_SIZE + ATT_LOCAL_MTU_SIZE + ATT_SEND_CBUF_SIZE)
 static u8 att_ram_buffer[ATT_RAM_BUFSIZE] __attribute__((aligned(4)));
 
-static const char gap_device_name[] = "FM-1";
+/* The name this FM-1 advertises: FM1-1A2B, made from the unit's own Bluetooth address, so that two FM-1s on one desk
+ * differ in a computer's list without two builds. The advertising packet already holds the flags and the MIDI
+ * service's 128-bit UUID, 21 of its 31 bytes, so 8 characters is what fits there and the name is read without a scan.
+ * radio.c sets the address before the radio starts (bt_ble_init is called after bt_get_mac_addr there). */
+#define BT_NAME_LEN 8                            /* "FM1-" and 4 hex */
+static char gap_device_name[BT_NAME_LEN + 1];
+
+static void make_name(void)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    const uint8_t *m = bt_get_mac_addr();        /* never fails: the kept address, or one made and kept */
+    gap_device_name[0] = 'F';
+    gap_device_name[1] = 'M';
+    gap_device_name[2] = '1';
+    gap_device_name[3] = '-';
+    gap_device_name[4] = hex[m[4] >> 4];
+    gap_device_name[5] = hex[m[4] & 15u];
+    gap_device_name[6] = hex[m[5] >> 4];
+    gap_device_name[7] = hex[m[5] & 15u];
+    gap_device_name[8] = 0;
+}
 #if BLE_MIDI_CENTRAL
 #define ROLE_SERVER 0                            /* the SDK's MULTI_ROLE_SLAVE / MASTER */
 #define ROLE_CLIENT 1
@@ -588,6 +609,7 @@ static int make_set_adv_data(void)
 {
     static const u8 svc[16] = {MIDI_SVC_UUID};
     u8 offset = 0, *buf = adv_data;
+    make_name();                             /* from the radio's address: the name cannot change while it runs */
     offset += make_eir_packet_val(&buf[offset], offset, HCI_EIR_DATATYPE_FLAGS, 0x06, 1);
     offset += make_eir_packet_data(&buf[offset], offset, HCI_EIR_DATATYPE_COMPLETE_128BIT_SERVICE_UUIDS, (void *)svc, 16);
     offset += make_eir_packet_data(&buf[offset], offset, HCI_EIR_DATATYPE_COMPLETE_LOCAL_NAME, (void *)gap_device_name, sizeof gap_device_name - 1);
