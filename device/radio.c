@@ -606,7 +606,16 @@ void shim_bt_event(int from, const void *event, int len)
     (void)len;
     ble_events++;
     if (from == 3 && e && e->event == 3 && ble_state == BLE_STARTING) {   /* BT_EVENT_FROM_CON, BT_STATUS_INIT_OK */
-        shim_log("BT ready: advertising as FM-1");
+        {
+            extern const char *ble_midi_name(void);
+            char b[40] = "BT ready: advertising as ";
+            const char *n = ble_midi_name();
+            uint32_t i = 24;                      /* sizeof "BT ready: advertising as " - 1 */
+            while (*n && i < sizeof b - 1u)
+                b[i++] = *n++;
+            b[i] = 0;
+            shim_log(b);
+        }
         {
             extern uint32_t shim_heap_peak;
             extern const uint32_t shim_heap_size;

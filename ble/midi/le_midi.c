@@ -101,6 +101,14 @@ static void make_name(void)
     gap_device_name[7] = hex[m[5] & 15u];
     gap_device_name[8] = 0;
 }
+/* the name the advertising packets carry; radio.c's log line reads it before the first bt_ble_init(), when
+ * advertisements_setup_init() has not run yet */
+const char *ble_midi_name(void)
+{
+    if (!gap_device_name[0])
+        make_name();
+    return gap_device_name;
+}
 #if BLE_MIDI_CENTRAL
 #define ROLE_SERVER 0                            /* the SDK's MULTI_ROLE_SLAVE / MASTER */
 #define ROLE_CLIENT 1
@@ -609,7 +617,6 @@ static int make_set_adv_data(void)
 {
     static const u8 svc[16] = {MIDI_SVC_UUID};
     u8 offset = 0, *buf = adv_data;
-    make_name();                             /* from the radio's address: the name cannot change while it runs */
     offset += make_eir_packet_val(&buf[offset], offset, HCI_EIR_DATATYPE_FLAGS, 0x06, 1);
     offset += make_eir_packet_data(&buf[offset], offset, HCI_EIR_DATATYPE_COMPLETE_128BIT_SERVICE_UUIDS, (void *)svc, 16);
     offset += make_eir_packet_data(&buf[offset], offset, HCI_EIR_DATATYPE_COMPLETE_LOCAL_NAME, (void *)gap_device_name, sizeof gap_device_name - 1);
@@ -628,6 +635,7 @@ static int make_set_rsp_data(void)
 }
 static void advertisements_setup_init(void)
 {
+    make_name();                             /* from the radio's address; the same every time */
     ble_op_set_adv_param(ADV_INTERVAL_MIN, ADV_IND, ADV_CHANNEL_ALL);
     if (make_set_adv_data() | make_set_rsp_data())
         puts("advertisements_setup_init fail\n");
