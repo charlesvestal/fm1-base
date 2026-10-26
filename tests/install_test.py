@@ -283,6 +283,13 @@ def errors():
     dev = FakeFM1(image, name="My Interface")
     rc, out, err = cli(["--info", "--port", "my int"], dev)
     ok(rc == 0 and "FM-1_015" in out, "--port picks a port the default match skips")
+    for name in ("Optimist", "SLOOP 2.4", "Melodee", "LOOM-8"):   # (a firmware's own port name, alone)
+        rc, out, err = cli(["--info"], FakeFM1(image, name=name))
+        ok(rc == 0 and "FM-1_015" in out, f"a firmware's own port name, {name}: found without --port")
+    for name in ("Launchkey Mini MK3", "SMK-25 II"):             # (other gear is never probed)
+        dev = FakeFM1(image, name=name)
+        rc, out, err = cli(["--info"], dev)
+        ok(rc == 3 and dev.sent == [], f"other gear, {name}: never probed")
 
     t0 = time.monotonic()
     rc, out, err = cli([p, "--yes"], FakeFM1(image, unplug_after=2))
