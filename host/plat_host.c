@@ -56,6 +56,7 @@
  *   sysex HEX..                  a SysEx frame from the computer (F0 .. F7, hex, spaces allowed), as the device takes
  *                                it: to the app (APP_SYSEX: app_sysex gets the bytes between F0 and F7), or dropped (no
  *                                app hook, the app's 0, a status byte inside, longer than the device's 640-byte buffer)
+ *                                (8 KiB at most); with APP_SYSEX_BYTE each byte to app_sysex_byte first, any length
  *   sysex_out                    print the app's SysEx frames (plat_sysex_send) since the last "sysex_out" (and forget them)
  *   expect_sysex HEX..           check that this frame went out since the last "sysex_out" (F0 .. F7, hex)
  *   sysex_log FILE|off           every frame the app sends from now on, appended to FILE as it went out (raw)
@@ -1467,7 +1468,7 @@ static uint32_t hsx_hex(const char *h, uint8_t *raw, uint32_t max)
 #define HOST_SX_MAX 640u
 static int hsx_in(const char *hex)
 {
-    static uint8_t raw[2u * HOST_SX_MAX];
+    static uint8_t raw[8192];
     uint32_t n = hsx_hex(hex, raw, sizeof raw), i, ok;
     if (n < 2u || raw[0] != 0xF0u || raw[n - 1u] != 0xF7u) {
         printf("FAIL sysex: not a frame (F0 .. F7, hex)\n");
@@ -1475,6 +1476,10 @@ static int hsx_in(const char *hex)
     }
     for (i = 1, ok = 1; i + 1u < n; i++)
         ok &= raw[i] < 0x80u;
+#ifdef APP_SYSEX_BYTE
+    for (i = 0; i < n && (i == 0 || i + 1u == n || raw[i] < 0x80u); i++)
+        app_sysex_byte(raw[i]);                   /* (as the USB interrupt hands them over: to a status inside) */
+#endif
     if (!ok || n - 2u > HOST_SX_MAX || !hsx_session)
         return 0;                                 /* (a status byte inside, or too long: the device drops it) */
 #ifdef APP_SYSEX
@@ -1522,7 +1527,7 @@ static void hsx_print(void)
 int main(int argc, char **argv)
 {
     FILE *sc;
-    static char line[8192];
+    static char line[20000];
     char out[400];
     const char *dir = argc > 2 ? argv[2] : ".";
     int lineno = 0, fails = 0;
