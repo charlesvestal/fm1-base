@@ -7,7 +7,8 @@
  * The rest is MPL-2.0 (LICENSE). */
 /* BLE MIDI peripheral on JieLi's BLE stack: the MIDI service (03B80E5A-EDE8-4B33-A751-6CE34EC4C700) with
  * its one characteristic (7772E5DB-3868-4112-A1A9-F2669D106BF3: read, write without response, notify),
- * advertised with the service UUID and the name "FM-1". Built on the structure of the SDK's
+ * advertised with the service UUID and the name "FM-1 1F2D" (ble_midi_name: four hex digits of this FM-1's own).
+ * Built on the structure of the SDK's
  * le_trans_data.c (its event handling and connection-parameter requests), without its test profile.
  *
  *   bt_ble_init()                 the stack is up (BT_STATUS_INIT_OK): profile, advertising
@@ -49,6 +50,7 @@ const char log_tag_const_i_BLE_MIDI = 1;           /* the SDK keeps these in log
 #endif
 extern void ble_midi_receive(uint32_t pkt, uint32_t ts);   /* ts: the sender's millisecond (13 bits) */
 extern uint32_t shim_ms(void);
+extern void ble_midi_name(char *name);              /* "FM-1 " + four hex digits: this FM-1's (device/radio.c) */
 
 /* ---- the GATT database (the SDK's binary form: size, flags, handle, uuid, value). Flags: bit 1 read,
  * bit 2 write without response, bit 3 write, bit 4 notify, 0x100 dynamic, 0x200 128-bit uuid. */
@@ -79,7 +81,9 @@ static const uint8_t profile_data[] = {
 #define ATT_RAM_BUFSIZE      (ATT_CTRL_BLOCK_SIZE + ATT_LOCAL_MTU_SIZE + ATT_SEND_CBUF_SIZE)
 static u8 att_ram_buffer[ATT_RAM_BUFSIZE] __attribute__((aligned(4)));
 
-static const char gap_device_name[] = "FM-1";
+static char gap_device_name[10];                 /* "FM-1 1F2D" (bt_ble_init): two FM-1s on one computer told apart */
+#define GAP_NAME_LEN 9u
+#define GAP_NAME_SHORT 4u                        /* "FM-1": what the advertising holds, its full name in the scan response */
 #if BLE_MIDI_CENTRAL
 #define ROLE_SERVER 0                            /* the SDK's MULTI_ROLE_SLAVE / MASTER */
 #define ROLE_CLIENT 1
@@ -292,7 +296,7 @@ static uint16_t att_read_callback(hci_con_handle_t connection_handle, uint16_t a
     uint16_t len = 0;
     switch (att_handle) {
     case H_NAME:
-        len = sizeof gap_device_name - 1;
+        len = GAP_NAME_LEN;
         if (offset >= len || offset + buffer_size > len)
             break;
         if (buffer) {
@@ -590,7 +594,9 @@ static int make_set_adv_data(void)
     u8 offset = 0, *buf = adv_data;
     offset += make_eir_packet_val(&buf[offset], offset, HCI_EIR_DATATYPE_FLAGS, 0x06, 1);
     offset += make_eir_packet_data(&buf[offset], offset, HCI_EIR_DATATYPE_COMPLETE_128BIT_SERVICE_UUIDS, (void *)svc, 16);
-    offset += make_eir_packet_data(&buf[offset], offset, HCI_EIR_DATATYPE_COMPLETE_LOCAL_NAME, (void *)gap_device_name, sizeof gap_device_name - 1);
+    /* 31 bytes: the flags and the service leave 8 for a name, so "FM-1" shortened here; a computer's scan reads
+     * the whole name from the scan response */
+    offset += make_eir_packet_data(&buf[offset], offset, HCI_EIR_DATATYPE_SHORTENED_LOCAL_NAME, (void *)gap_device_name, GAP_NAME_SHORT);
     if (offset > ADV_RSP_PACKET_MAX)
         return -1;
     log_info("adv_data(%d)\n", offset);
@@ -600,7 +606,7 @@ static int make_set_adv_data(void)
 static int make_set_rsp_data(void)
 {
     u8 offset = 0, *buf = scan_rsp_data;
-    offset += make_eir_packet_data(&buf[offset], offset, HCI_EIR_DATATYPE_COMPLETE_LOCAL_NAME, (void *)gap_device_name, sizeof gap_device_name - 1);
+    offset += make_eir_packet_data(&buf[offset], offset, HCI_EIR_DATATYPE_COMPLETE_LOCAL_NAME, (void *)gap_device_name, GAP_NAME_LEN);
     ble_op_set_rsp_data(offset, buf);
     return 0;
 }
@@ -795,6 +801,7 @@ void ble_profile_init(void)
 void bt_ble_init(void)
 {
     log_info("ble init (MIDI)\n");
+    ble_midi_name(gap_device_name);
     if (!os_mutex_valid(&mutex))
         os_mutex_create(&mutex);
     set_ble_work_state(BLE_ST_INIT_OK);

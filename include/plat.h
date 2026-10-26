@@ -201,7 +201,7 @@ void plat_sense(int on);
 uint32_t plat_analog_mask(void);       /* bit k: key k is on an analog row (PA7 / PA8; the top row is probed) */
 
 /* 16 bytes unique to this FM-1 (its flash part's factory ID; the same across updates, firmwares and a wiped store):
- * for an address that must not change (the WiFi MAC); 0 = unknown (and in a build without WiFi) */
+ * for an address that must not change (the WiFi MAC, the Bluetooth name); 0 = unknown (and in a build without a radio) */
 const uint8_t *plat_chip_uid(void);
 
 /* persistent storage (Felucca storage.c objects: A/B sectors, CRC, torn-write safe) */

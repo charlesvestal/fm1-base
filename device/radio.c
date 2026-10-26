@@ -259,7 +259,8 @@ extern int syscfg_read(uint16_t id, void *buf, uint16_t len);
 extern int syscfg_write(uint16_t id, void *buf, uint16_t len);
 /* the BT address: the one kept, or one made from the chip's unique data (the SDK's own fallback is
  * a random one, kept) */
-#define CFG_BT_MAC_ADDR 1                         /* include_lib/utils/syscfg/syscfg_id.h */
+#define CFG_BT_MAC_ADDR 1                         /* the shim's own syscfg record (ble/shim/misc.c; the SDK's id is 102,
+                                                   * but only the shim reads it): kept 1, the address every FM-1 has */
 const uint8_t *bt_get_mac_addr(void)
 {
     static uint8_t mac[6];
@@ -275,6 +276,30 @@ const uint8_t *bt_get_mac_addr(void)
     mac[0] = (uint8_t)((mac[0] & 0xFC) | 0xC0);   /* a static random address */
     syscfg_write(CFG_BT_MAC_ADDR, mac, 6);
     return mac;
+}
+
+/* the name it advertises (le_midi.c): "FM-1 " and four hex digits of this FM-1's own, Melodee's way, so two FM-1s on
+ * one computer are told apart. From the flash's unique ID: the same every start, update and firmware, and a wiped
+ * store; no ID (a part that does not answer), from the BT address */
+void ble_midi_name(char *name)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    const uint8_t *u = plat_chip_uid();
+    uint32_t h = 2166136261u, i = 1;
+    while (u && i < 16u && u[i] == u[0])          /* all FF or all 0: no ID */
+        i++;
+    if (u && i < 16u) {
+        for (i = 0; i < 16u; i++)
+            h = (h ^ u[i]) * 16777619u;
+        h ^= h >> 16;
+    } else {
+        u = bt_get_mac_addr();
+        h = (uint32_t)u[4] << 8 | u[5];
+    }
+    name[0] = 'F', name[1] = 'M', name[2] = '-', name[3] = '1', name[4] = ' ';
+    for (i = 0; i < 4u; i++)
+        name[5 + i] = hex[h >> (12u - 4u * i) & 15u];
+    name[9] = 0;
 }
 
 
@@ -606,7 +631,11 @@ void shim_bt_event(int from, const void *event, int len)
     (void)len;
     ble_events++;
     if (from == 3 && e && e->event == 3 && ble_state == BLE_STARTING) {   /* BT_EVENT_FROM_CON, BT_STATUS_INIT_OK */
-        shim_log("BT ready: advertising as FM-1");
+        {
+            char b[40] = "BT ready: advertising as ";
+            ble_midi_name(b + 25);
+            shim_log(b);
+        }
         {
             extern uint32_t shim_heap_peak;
             extern const uint32_t shim_heap_size;
