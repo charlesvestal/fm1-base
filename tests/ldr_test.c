@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Charles Vestal
- * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
+ * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
+ * Copyright (c) 2026 Julius Vitkauskas (calibration sectors through the loader sweep) */
 /* Host test of the Felucca update loader (bsp/loader/ldr_core.c): a fake
  * host serves a package over the SysEx protocol, the "device" flash starts as
  * another package's flash.bin (as if that firmware were installed).
@@ -175,6 +176,39 @@ int main(int argc, char **argv)
         bad += check("foreign key / damaged app head refused, nothing erased", rc == -6 && erases == 0);
         logical[nfo + 0x4000 + 5] = save;
     }
+    /* the sectors the unit's radio calibration lives in (the first VM sector 0x93000, BTIF 0xE9000; fm1-base's open
+     * BLE build reads both at start and never writes them). The loader writes only the app area; its sweep erases a
+     * sector in 0x93000..0xFBFFF (Felucca's store skipped) only when the sector's last 256 bytes hold a valid update
+     * record. A calibration sector without one stays as it was, next to the stock firmware's record sector 0xE8000 */
+    {
+        static uint8_t vm[0x1000], btif[0x1000];
+        uint8_t r[112] = {0};
+        uint32_t i, x = 0x1234567u;
+        for (i = 0; i < 0x1000u; i++) {
+            x = x * 1103515245u + 12345u;
+            vm[i] = (uint8_t)(x >> 16);
+            btif[i] = (uint8_t)(x >> 8);
+        }
+        memcpy(vm, "\x55\xAA\xAA\x55", 4);                       /* a VM sector's magic */
+        vm[0xF06] = btif[0xF06] = 0x00;                             /* (no "AT" at +0xF06: not a record) */
+        memcpy(nor, old + ofo, 0x93000);
+        memcpy(nor + 0x93000, vm, sizeof vm);
+        memcpy(nor + 0xE9000, btif, sizeof btif);
+        r[2] = 0x0D; r[3] = 0x5A; r[4] = 0x01; r[5] = 0x5A; r[6] = 0x41; r[7] = 0x54;
+        ota_wr16(r, ota_crc16(r + 2, 78, 0));
+        memcpy(nor + 0xE4F00, r, sizeof r);                         /* Felucca's update record */
+        memcpy(nor + 0xE8F00, r, sizeof r);                         /* the stock firmware's */
+        rc = ldr_session();
+        bad += check("calibration sectors kept (no record in them)", rc == 0 &&
+                     !memcmp(nor + 0x93000, vm, sizeof vm) && !memcmp(nor + 0xE9000, btif, sizeof btif));
+        bad += check("records next to them cleared (0xE4000, 0xE8000)", nor[0xE4F06] == 0xFF && nor[0xE8F06] == 0xFF);
+        /* the one way the loader erases one: a valid update record in its last 256 bytes */
+        memcpy(nor + 0xE9F00, r, sizeof r);
+        rc = ldr_session();
+        bad += check("a record in the BTIF sector erases it (the sweep's rule)", rc == 0 && nor[0xE9000] == 0xFF &&
+                     nor[0xE9F06] == 0xFF && !memcmp(nor + 0x93000, vm, sizeof vm));
+    }
     printf("%s\n", bad ? "LOADER TEST FAILED" : "loader test passed");
+    free(old); free(logical);
     return bad != 0;
 }

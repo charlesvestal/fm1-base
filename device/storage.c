@@ -57,7 +57,7 @@ static uint8_t st_buf[ST_PAYLOAD_MAX] __attribute__((aligned(4)));
 static int st_head(uint32_t obj, uint32_t copy, st_hdr_t *h)   /* commit record valid: 0 */
 {
     if (st_read(st_sector(obj, copy), h, sizeof *h))
-        return -1;
+        return -2; /* I/O failure is not an erased/invalid copy */
     if (h->magic != ST_MAGIC || h->type != obj || h->len > ST_PAYLOAD_MAX ||
         h->hcrc != st_crc32(h, sizeof *h - 4u))
         return -1;
@@ -66,30 +66,40 @@ static int st_head(uint32_t obj, uint32_t copy, st_hdr_t *h)   /* commit record 
 
 static int st_body(uint32_t obj, uint32_t copy, const st_hdr_t *h)   /* payload -> st_buf, CRC ok: 0 */
 {
-    if (st_read(st_sector(obj, copy) + ST_PAYLOAD_OFF, st_buf, h->len) || st_crc32(st_buf, h->len) != h->crc)
+    if (st_read(st_sector(obj, copy) + ST_PAYLOAD_OFF, st_buf, h->len))
+        return -2;
+    if (st_crc32(st_buf, h->len) != h->crc)
         return -1;
     return 0;
 }
 
 /* the current copy: the valid one with the highest seq (A on a tie), -1 when
- * neither is valid. Headers first, so only the winner's payload is read (it
+ * neither is valid, -2 on read I/O failure. Headers first, so only the winner's payload is read (it
  * is left in st_buf); *h gets its header. */
 static int st_current(uint32_t obj, st_hdr_t *h)
 {
     st_hdr_t a, b;
-    int va = st_head(obj, 0, &a) == 0, vb = st_head(obj, 1, &b) == 0;
+    int ra = st_head(obj, 0, &a), rb = st_head(obj, 1, &b);
+    if (ra == -2 || rb == -2) return -2;
+    int va = ra == 0, vb = rb == 0;
     if (vb && (!va || b.seq > a.seq)) {
-        if (st_body(obj, 1, &b) == 0) {
+        rb = st_body(obj, 1, &b);
+        if (rb == -2) return -2;
+        if (rb == 0) {
             *h = b;
             return 1;
         }
         vb = 0;
     }
-    if (va && st_body(obj, 0, &a) == 0) {
+    ra = va ? st_body(obj, 0, &a) : -1;
+    if (ra == -2) return -2;
+    if (ra == 0) {
         *h = a;
         return 0;
     }
-    if (vb && st_body(obj, 1, &b) == 0) {
+    rb = vb ? st_body(obj, 1, &b) : -1;
+    if (rb == -2) return -2;
+    if (rb == 0) {
         *h = b;
         return 1;
     }
@@ -140,6 +150,7 @@ static int st_save(uint32_t obj, const void *src, uint32_t len)
     if (len > ST_PAYLOAD_MAX)
         return -1;
     cur = st_current(obj, &h);
+    if (cur == -2) return -2; /* never erase a possibly current unreadable copy */
     seq = cur < 0 ? 0u : h.seq;
     base = st_sector(obj, cur == 0 ? 1u : 0u);       /* write the other copy */
     for (off = 0; off < len; off++)

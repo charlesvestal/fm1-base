@@ -11,10 +11,18 @@
 static uint8_t nor[0x100000];
 static int fail_after = -1;            /* torn-write injection: stop after N programs */
 
-static int st_read(uint32_t off, void *dst, uint32_t n) { memcpy(dst, nor + off, n); return 0; }
-static int st_erase(uint32_t off) { memset(nor + off, 0xFF, 4096); return 0; }
+static int read_after = -1;
+static unsigned erase_calls, program_calls;
+static int st_read(uint32_t off, void *dst, uint32_t n)
+{
+    if (!read_after) return -1;
+    if (read_after > 0) read_after--;
+    memcpy(dst, nor + off, n); return 0;
+}
+static int st_erase(uint32_t off) { erase_calls++; memset(nor + off, 0xFF, 4096); return 0; }
 static int st_prog(uint32_t off, const void *src, uint32_t n)
 {
+    program_calls++;
     const uint8_t *s = src;
     uint32_t i;
     if (fail_after == 0)
@@ -40,6 +48,43 @@ static int check(const char *what, int ok)
 {
     printf("%-46s %s\n", what, ok ? "ok" : "FAIL");
     return ok ? 0 : 1;
+}
+
+static int read_io_test(void)
+{
+    static uint8_t saved[8192];
+    int bad = 0;
+    for (unsigned bank = 0; bank < 2; bank++) {
+        memset(nor, 255, sizeof nor);
+        bad += check("read-fault fixture saves A", st_save(OBJ_PANEL, "old", 3) == 0);
+        if (bank) bad += check("read-fault fixture saves B", st_save(OBJ_PANEL, "old", 3) == 0);
+        memcpy(saved, nor + st_sector(OBJ_PANEL, 0), sizeof saved);
+        unsigned e = erase_calls, p = program_calls;
+        for (int point = 0; point < 3; point++) {
+            st_hdr_t h;
+            read_after = point;
+            bad += check("I/O differs from blank/invalid", st_current(OBJ_PANEL, &h) == -2);
+            read_after = point;
+            int rc = st_save(OBJ_PANEL, "new", 3);
+            read_after = -1;
+            bad += check("I/O refuses before any erase/program", rc == -2 && erase_calls == e && program_calls == p &&
+                         !memcmp(saved, nor + st_sector(OBJ_PANEL, 0), sizeof saved));
+        }
+        bad += check("read fault cleared -> retry saves", st_save(OBJ_PANEL, "new", 3) == 0);
+        /* Winner CRC is invalid: I/O reading the fallback is still fatal. */
+        nor[st_sector(OBJ_PANEL, bank ^ 1u) + ST_PAYLOAD_OFF] ^= 1;
+        memcpy(saved, nor + st_sector(OBJ_PANEL, 0), sizeof saved);
+        e = erase_calls; p = program_calls; read_after = 3;
+        int rc = st_save(OBJ_PANEL, "retry", 5);
+        read_after = -1;
+        bad += check("fallback payload I/O refuses without writes", rc == -2 && erase_calls == e && program_calls == p &&
+                     !memcmp(saved, nor + st_sector(OBJ_PANEL, 0), sizeof saved));
+        /* Invalid data, unlike I/O, permits recovery using the older copy. */
+        bad += check("CRC-invalid newest copy permits save", st_save(OBJ_PANEL, "retry", 5) == 0);
+    }
+    memset(nor, 0, sizeof nor);
+    bad += check("two invalid headers permit a fresh save", st_save(OBJ_PANEL, "new", 3) == 0);
+    return bad;
 }
 
 int main(void)
@@ -107,6 +152,7 @@ int main(void)
         }
         bad += check("objects in data regions, clear of the sample slots", (int)ok);
     }
+    bad += read_io_test();
     printf("%s\n", bad ? "STORAGE TEST FAILED" : "storage test passed");
     return bad != 0;
 }

@@ -284,6 +284,10 @@ static void mirror_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const ui
         mr.cur = 0;
         memset(mr.cache, 0, sizeof mr.cache);
         while (r < h && rows < MR_MROWS) {
+            /* One incompressible row may already exceed MR_CAP. The scratch
+             * holds cap + one row, so do not speculate a second row then. */
+            if (rows && mr.pos - 11u > MR_CAP)
+                break;
             uint32_t at = mr.pos;
             if (!have) {
                 ch = (uint32_t)mr_span(px + r * w, y + r, full, sh, &s0, &s1);

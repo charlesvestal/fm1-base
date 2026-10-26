@@ -264,6 +264,7 @@ int main(int argc, char **argv)
         if (!f) { perror(path); return 2; }
         blen = fread(boot, 1, sizeof boot, f);
         fclose(f);
+        free(logical); logical = NULL;                    /* load owns this; img below is static */
         ota_deadline = 0;                                  /* no session: no deadline */
         {
             static const char *board[] = { "fm1", "smk37" };
@@ -324,5 +325,6 @@ int main(int argc, char **argv)
     }
 
     printf("%s\n", bad ? "OTA TEST FAILED" : "ota test passed");
+    free(logical);
     return bad != 0;
 }
