@@ -773,6 +773,19 @@ static void fm1_fault(const fm1_crash_t *c)
     fm1_reboot();
 }
 
+#ifdef APP_RESTART                                  /* (built for an app that asks for it: another's image as it was) */
+void plat_restart(void)
+{
+    app_panic();
+    fm1_audio_stop();
+    usb_detach();
+    fm1_delay_ms(30);
+    bootguard.pending = 0;                          /* intentional reset: not a failed boot */
+    radio_clean_exit();
+    fm1_reboot();
+}
+#endif
+
 static void enter_uboot(const char *why)
 {
     fm1_audio_stop();
