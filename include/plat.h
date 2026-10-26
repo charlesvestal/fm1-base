@@ -223,6 +223,16 @@ int plat_sysex_send(const uint8_t *frame, uint32_t n);   /* 0 = queued whole; -1
 uint32_t plat_sysex_room(void);        /* the bytes of SysEx the ring takes now without a wait: 0 with no computer, the
                                         * bus asleep, or a send under way. A send that must never wait checks it */
 uint32_t plat_sysex_queued(void);      /* the bytes still in the ring, not yet read (0: all out) */
+/* a frame streamed as it is made, for one too long to build first (a screen mirrored as it is drawn): begin, its bytes
+ * F0 .. F7 in any number of puts, end. The ring is the stream's from begin to end (no other SysEx, no note out in
+ * between: keep it short), each packet going in as soon as it is whole. A put waits while the ring is full and the
+ * computer reads; one that waited PLAT_SYSEX_STALL_MS without a packet read gives up: the frame is cut there (the
+ * computer drops a frame cut short at the next F0), the rest of its puts and its end return -1. Main loop; built for
+ * an app with APP_SYSEX */
+#define PLAT_SYSEX_STALL_MS 30u
+int plat_sysex_begin(void);            /* 0 = the stream is open; -1 = no computer, or a send under way */
+int plat_sysex_put(const uint8_t *p, uint32_t n);   /* 0 = in the ring (the last bytes held until more or end) */
+int plat_sysex_end(void);              /* the last packet out, the ring free again: 0 = the frame went whole */
 uint32_t plat_usb_session(void);       /* 0: no computer has set the FM-1 up; else a number that changes at every new
                                         * one (a bus reset, the cable out and in): what an app keeps for a connection
                                         * (a client's session) it drops when this changes */

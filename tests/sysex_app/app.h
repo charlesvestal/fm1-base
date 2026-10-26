@@ -3,7 +3,8 @@
 /* The SysEx test app (tests/run_tests.sh): the platform's SysEx with the computer as an app sees it. It answers frames
  * F0 7D 53 58 cmd args F7 ("SX"); cmd 1 echo: the same frame back; 2 room: plat_sysex_room, plat_sysex_queued,
  * plat_usb_session (3 x 7 bits each, as the frame's three numbers); 3 flood N: N frames of 63 bytes at once, then the
- * number sent whole (plat_sysex_send 0). Nothing else: no sound, a black screen. */
+ * number sent whole (plat_sysex_send 0); 4 stream N: a frame of 7 x N data bytes (0, 1, .. 127, 0 ..) streamed in puts of 7
+ * (plat_sysex_begin, put, end), then its end's result (expect stream: 0 whole, 1 not). Nothing else: no sound, a black screen. */
 #pragma once
 #include <stdint.h>
 #include "plat.h"
