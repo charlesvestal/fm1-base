@@ -242,6 +242,21 @@ const resealed = (b) => {                                      // its CRCs right
   check(e && e.code === "notfound", "no FM-1: not found");
 }
 {
+  // an FM-1 under another device's name: not asked; listed for Try; asked once picked (allowed), or alone (only)
+  const dev = new FakeFM1(img);
+  const port = (name) => ({ name, state: "connected", open: async () => {} });
+  const acc = { inputs: new Map([["i", port("Arturia KeyStep")], ["j", port("Launchkey Mini")], ["k", port("IAC Bus 1")]]),
+                outputs: new Map([["o", port("Arturia KeyStep")], ["p", port("Launchkey Mini")]]) };
+  let made = 0;
+  let e = await err(PB.find(acc, () => { made++; return dev; }));
+  check(e && e.code === "notfound" && made === 0, "a port with another device's name: not asked");
+  check(PB.others(acc).join() === "Arturia KeyStep,Launchkey Mini", "others: the pairs are listed to try (an input alone is not)");
+  const one = await PB.find(acc, () => dev, [], "Arturia KeyStep");
+  check(one && one.name === "Arturia KeyStep", "Try: asked alone, it answers");
+  const got = await PB.find(acc, () => dev, ["Arturia KeyStep"]);
+  check(got && got.name === "Arturia KeyStep" && PB.others(acc, ["Arturia KeyStep"]).join() === "Launchkey Mini", "picked: found from then on, no longer listed");
+}
+{
   // the firmware's own sections after the backup (EXTRAS): the page's join and split against fm1_backup.py's
   const secs = [{ tag: "LSMP", data: Uint8Array.from({ length: 2304 }, (_, i) => i & 0xFF) }, { tag: "ZZZZ", data: new Uint8Array(0) }];
   const withsec = Uint8Array.from(Buffer.from(tr.withsec, "hex"));

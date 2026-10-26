@@ -7,6 +7,10 @@
   FM-1 firmwares it comes from (X0X, FoMni-1, CTL-1 and the others).
 - **keremimo** ([@keremimo](https://github.com/keremimo)): the MIDI clock and transport sync in felucca-bsp's
   `usb.c` ([hugelton/felucca-bsp#3](https://github.com/hugelton/felucca-bsp/pull/3)).
+- **Chris Farrell** ([@seajaysec](https://github.com/seajaysec)): from [fm-static](https://github.com/seajaysec/fm-static),
+  the web installer's finding of an FM-1 under any port name, M-VAVE's Open firmware's identities, the package
+  checksum check and the return check after resuming an update, used under MPL-2.0 with his permission
+  ([seajaysec/fm-static#1](https://github.com/seajaysec/fm-static/issues/1#issuecomment-6410795859)).
 - The idea of running FM-1 firmware in the browser: [Groove OS](https://www.groove-os.com/) by Peter Gombos (no
   code from it).
 - Fonts: Barlow by The Barlow Project Authors and Terminus by Dimitar Toshkov Zhekov (both SIL OFL 1.1).

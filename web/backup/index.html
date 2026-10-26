@@ -64,6 +64,8 @@ progress { width: 100%; height: 6px; margin: .2rem 0 1rem; accent-color: var(--t
 progress[hidden] { display: none; }
 ul.small, p.small { color: var(--muted); font-size: .92rem; }
 ul.small { padding-left: 1.1rem; margin: 0; }
+ul.ports { list-style: none; padding: 0; margin: 0 0 .6rem; }
+ul.ports li { display: flex; gap: .6rem; align-items: center; margin: 0 0 .4rem; }
 kbd { font: 600 .9em "Barlow Semi Condensed", "Barlow", sans-serif; border: 1px solid var(--rule); border-bottom-width: 2px;
       border-radius: 4px; padding: 0 .3em; background: var(--ground); }
 </style>
@@ -77,6 +79,13 @@ cable. This page works in Chrome or Edge, and there is nothing to install.</p>
 <!-- what is happening, in words: the status (polite) and, when something fails, the alert (read at once) -->
 <div class="status" id="statusBox"><p id="status" role="status">Plug the FM-1 running {{NAME}} into this computer with a USB cable.</p><p id="alert" role="alert"></p></div>
 <progress id="bar" max="100" value="0" hidden aria-label="Backup progress"></progress>
+<section class="card" id="portpick" aria-labelledby="ph" hidden>
+  <h2 id="ph">Is the FM-1 under another name?</h2>
+  <p>A computer can show an FM-1's port under another device's name (a Mac remembers names by USB socket). This page asks
+  only the ports with an FM-1's usual names by itself. If your FM-1 is in this list, press Try on it.</p>
+  <ul id="portlist" class="ports"></ul>
+  <p id="pickstatus" role="status"></p>
+</section>
 
 <section class="card" aria-labelledby="bh">
   <h2 id="bh">Back up</h2>
@@ -277,11 +286,21 @@ const PB = (() => {
     return null;
   }
 
-  // the first MIDI port pair that answers as an FM-1 (ports named after the firmware first); a Link from makeLink(input, output)
+  // the first MIDI port pair that answers as an FM-1 (ports named after the firmware first); a Link from makeLink(input, output).
+  // Never probe other gear: only ports with an FM-1's usual names, and the ones in allowed (the user's picks, web/fm1ota.js's
+  // allow); with only, that one port
   const NAME_RE = new RegExp(NAME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-  async function find(access, makeLink) {
+  const USUAL_RE = /fm-?1|felucca|composite|sinco|usb-midi/i;
+  const askable = (name, allowed) => NAME_RE.test(name || "") || USUAL_RE.test(name || "") || allowed.includes(name);
+  // the input port names the page does not ask by itself, that have an output of the same name (for Try)
+  function others(access, allowed = []) {
+    const outs = new Set([...access.outputs.values()].filter((p) => p.state !== "disconnected").map((p) => p.name));
+    return [...new Set([...access.inputs.values()].filter((p) => p.state !== "disconnected" && outs.has(p.name) &&
+      !askable(p.name, allowed)).map((p) => p.name))];
+  }
+  async function find(access, makeLink, allowed = [], only = null) {
     const ins = [...access.inputs.values()].filter((p) => p.state !== "disconnected" &&
-      (NAME_RE.test(p.name || "") || /fm-?1|felucca|composite|sinco|usb-midi/i.test(p.name || "")));   // never probe other gear
+      (only != null ? p.name === only : askable(p.name, allowed)));
     ins.sort((a, b) => NAME_RE.test(b.name) - NAME_RE.test(a.name));
     const outs = [...access.outputs.values()];
     const base = (s) => (s || "").replace(/\s+\d+$/, "");
@@ -369,7 +388,7 @@ const PB = (() => {
   }
 
   return { HS_QUERY, RS_REQ, BU_REQ, BU_END, OK_ADDR, ASK_ADDR, FAIL_ADDR, VERSION, PLAYING, DECLINED, ID, NAME, MAGIC, DELAY, ERRORS,
-           pack7, unpack7, crc32, frame, parseFrame, response, parseRequest, parseIdentity, parse, split, join, summary, find, backup,
+           pack7, unpack7, crc32, frame, parseFrame, response, parseRequest, parseIdentity, parse, split, join, summary, find, others, backup,
            restore };
 })();
 // --- backup protocol: end
@@ -428,6 +447,42 @@ function setBusy(on) {
 }
 window.addEventListener("beforeunload", (e) => { if (busy) { e.preventDefault(); e.returnValue = ""; } });
 
+/* ports the user picked although their names are none of the usual ones (Try): remembered in this browser, shared with
+   the install page (its "fm1-ports") */
+const PICKED = "fm1-ports";
+let ports = [];
+try { ports = JSON.parse(localStorage.getItem(PICKED) || "[]").filter((x) => typeof x === "string"); } catch (_) { /* none */ }
+/* after "not found": the ports the page did not ask, each with Try */
+function showPorts() {
+  const names = access ? PB.others(access, ports) : [];
+  $("portlist").replaceChildren(...names.map((n) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "quiet"; b.textContent = "Try";
+    b.setAttribute("aria-label", `Try ${n}`);
+    b.addEventListener("click", () => tryPort(n, b));
+    const li = document.createElement("li"), sp = document.createElement("span");
+    sp.textContent = n;
+    li.append(sp, b);
+    return li;
+  }));
+  if (!names.length) { const li = document.createElement("li"); li.textContent = "No other MIDI ports."; $("portlist").append(li); }
+  $("portpick").hidden = false;
+}
+async function tryPort(name, button) {
+  if (busy) return;
+  button.disabled = true;
+  $("pickstatus").textContent = "Asking…";
+  let dev = null, err = null;
+  try { dev = await PB.find(access, (i, o) => new Link(i, o), ports, name); } catch (e) { err = e; }
+  button.disabled = false;
+  if (dev) dev.link.close();
+  if (!dev && !(err && err.code === "model")) { $("pickstatus").textContent = `No FM-1 answered on ${name}.`; return; }
+  if (!ports.includes(name)) ports.push(name);
+  try { localStorage.setItem(PICKED, JSON.stringify(ports)); } catch (_) { /* until the page is closed */ }
+  showPorts();
+  $("pickstatus").textContent = dev ? `Found ${FW.name} on ${name}. This browser remembers it. Press Back up or Restore again.` : err.message;
+}
+
 let access = null;
 async function connect() {
   if (!navigator.requestMIDIAccess) throw Object.assign(new Error("This browser has no Web MIDI. Open this page in Chrome or Edge."), { code: "nomidi" });
@@ -436,7 +491,9 @@ async function connect() {
     catch (_) { throw Object.assign(new Error("MIDI with SysEx was not allowed. Allow MIDI in the site settings (the address bar), then try again."), { code: "denied" }); }
   }
   say(`Looking for ${esc(FW.name)}&hellip;`);
-  return PB.find(access, (i, o) => new Link(i, o));
+  $("portpick").hidden = true;
+  try { return await PB.find(access, (i, o) => new Link(i, o), ports); }
+  catch (e) { if (e.code === "notfound") showPorts(); throw e; }
 }
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 

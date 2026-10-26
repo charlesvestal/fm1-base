@@ -38,6 +38,8 @@
   #log { max-height: 15em; overflow-y: auto; overscroll-behavior: contain; padding: 8px 10px; border-radius: 6px;
          border: 1px solid color-mix(in srgb, var(--dim) 35%, transparent); }
   #log:empty { display: none; }
+  #portlist { list-style: none; padding: 0; }
+  #portlist li { display: flex; gap: 10px; align-items: center; margin: 0 0 6px; }
   h2 { font-size: 18px; font-weight: 600; margin: 40px 0 12px; }
   ol { margin: 0 0 16px; padding-left: 20px; }
   textarea { width: 100%; box-sizing: border-box; font: 12px/1.4 ui-monospace, Menlo, monospace; color: var(--fg);
@@ -80,6 +82,12 @@
   <p id="status" role="status"></p>
   <p id="alert" role="alert"></p>
   <pre id="log"></pre>
+  <div id="portpick" hidden>
+    <h2 data-t="pickh">Is the FM-1 under another name?</h2>
+    <p class="small" data-t="pickwhy"></p>
+    <ul id="portlist" class="small"></ul>
+    <p id="pickstatus" role="status"></p>
+  </div>
   <h2 data-t="stockh">Back to the stock firmware</h2>
   <p class="small" data-t="stockwhy"></p>
   <ol class="small">
@@ -174,6 +182,12 @@ const TEXT = {
     bootstart: "m-bootloader を書き込み中", bootwrite: "m-bootloader を書き込み中。FM-1 は自動で再起動します",
     bootdone: "完了しました（m-bootloader 付き）",
     bootrefused: "{{NAME}} はインストールされましたが、m-bootloader は書き込めませんでした。ほかは何も変わっていません。",
+    stockdamaged: "このファイルは壊れています。もう一度ダウンロードしてください。",
+    pickh: "FM-1 が別の名前になっていませんか？",
+    pickwhy: "パソコンが FM-1 のポートを別の機器の名前で表示することがあります（Mac は USB の差し込み口ごとに名前を覚えます）。このページが自動で問い合わせるのは、FM-1 によくある名前のポートだけです。下の一覧にお使いの FM-1 があれば、「試す」を押してください。",
+    tryport: "試す", pickwait: "問い合わせ中…", pickempty: "ほかの MIDI ポートはありません。",
+    picknone: "{port} からは FM-1 の応答がありません。",
+    pickok: "{port} で {id} が見つかりました。このブラウザが覚えておきます。もう一度押してください。",
   },
   en: {
     intro: "Connect the FM-1 by USB, then press Install. It works in Chrome or Edge; the browser asks once to allow MIDI: allow it.",
@@ -224,6 +238,12 @@ const TEXT = {
     bootstart: "Installing m-bootloader", bootwrite: "Installing m-bootloader: the FM-1 restarts by itself",
     bootdone: "Done, with m-bootloader",
     bootrefused: "{{NAME}} is installed, but m-bootloader could not be: nothing else was changed.",
+    stockdamaged: "That file is damaged. Download it again.",
+    pickh: "Is the FM-1 under another name?",
+    pickwhy: "A computer can show an FM-1's port under another device's name (a Mac remembers names by USB socket). This page asks only the ports with an FM-1's usual names by itself. If your FM-1 is in this list, press Try on it.",
+    tryport: "Try", pickwait: "Asking…", pickempty: "No other MIDI ports.",
+    picknone: "No FM-1 answered on {port}.",
+    pickok: "Found {id} on {port}. This browser remembers it. Press the button again.",
   },
 };
 let lang = "en";                                 /* English first; 日本語 is a click away */
@@ -307,6 +327,7 @@ window.addEventListener("beforeunload", (e) => { if (writing) { e.preventDefault
     const pkg = new Uint8Array(await r.arrayBuffer());
     if (productOf(pkg) !== meta.product) { sayK("badpkg"); return; }
     image = logicalImage(pkg);
+    try { checkUfw(image); } catch (_) { image = null; sayK("badpkg"); return; }
     say(`{{NAME}} ${meta.version}`);
     $("go").disabled = false;
   } catch (e) { sayK("loadfail", e.message); }
@@ -336,11 +357,50 @@ $("stockfile").addEventListener("change", async (e) => {
     const hex = [...new Uint8Array(await crypto.subtle.digest("SHA-256", raw))].map((b) => b.toString(16).padStart(2, "0")).join("");
     const product = productOf(raw);
     if (!IS_STOCK(product)) { sayK("stockbad"); return; }
-    stock = { image: logicalImage(raw), product, sha256: hex };
+    const img = logicalImage(raw);
+    try { checkUfw(img); } catch (_) { sayK("stockdamaged"); return; }
+    stock = { image: img, product, sha256: hex };
     $("stockgo").disabled = writing;
     sayK("stockok");
   } catch (err) { sayK("error", err && err.message); }
 });
+
+/* ports the user picked although their names are none of the usual ones (Try): remembered in this browser, asked
+   like the usual ones from then on */
+const PICKED = "fm1-ports";
+let picked = [];
+try { picked = JSON.parse(localStorage.getItem(PICKED) || "[]").filter((x) => typeof x === "string"); } catch (_) { /* none */ }
+const updater = (midi, lg) => { const up = new Updater(midi, lg); picked.forEach((n) => up.allow(n)); return up; };
+/* after "not found": the ports the page did not ask, each with Try */
+function showPorts(midi) {
+  const up = updater(midi);
+  const names = up.ports().filter((n) => !up.askable(n));
+  $("portlist").replaceChildren(...names.map((n) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "plain"; b.textContent = t("tryport");
+    b.setAttribute("aria-label", `${t("tryport")}: ${n}`);
+    b.addEventListener("click", () => tryPort(midi, n, b));
+    const li = document.createElement("li"), sp = document.createElement("span");
+    sp.textContent = n;
+    li.append(sp, b);
+    return li;
+  }));
+  if (!names.length) { const li = document.createElement("li"); li.textContent = t("pickempty"); $("portlist").append(li); }
+  $("portpick").hidden = false;
+}
+async function tryPort(midi, name, button) {
+  if (writing) return;
+  button.disabled = true;
+  $("pickstatus").textContent = t("pickwait");
+  let id = null;
+  try { id = await updater(midi).probe(name); } catch (_) { /* no answer */ }
+  button.disabled = false;
+  if (!id) { $("pickstatus").textContent = t("picknone").replace("{port}", name); return; }
+  if (!picked.includes(name)) picked.push(name);
+  try { localStorage.setItem(PICKED, JSON.stringify(picked)); } catch (_) { /* until the page is closed */ }
+  showPorts(midi);
+  $("pickstatus").textContent = t("pickok").replace("{port}", name).replace("{id}", id.text);
+}
 
 /* before anything is written: the screen, the cable, the time, a backup */
 function confirmed(withBoot) {
@@ -366,10 +426,11 @@ async function run(img, product, isStock, sha256) {
     if (appState === false) return;
   }
   writing = true;
+  $("portpick").hidden = true;
   $("go").disabled = $("stockgo").disabled = true;
   let installed = false;
   try {
-    const up = new Updater(midi, log);
+    const up = updater(midi, log);
     /* progress: the bytes the device reads, against what it reads for this package (the size of the package,
        not a fixed request count). Step 1 (the running firmware): the UFW header, the loader's head twice, its
        body. Step 2 (fm1-base's loader): the header, the chip-key check, the whole flash.bin (checked before
@@ -392,7 +453,7 @@ async function run(img, product, isStock, sha256) {
     const ota = await up.find((id) => /^ota-/i.test(id.model));
     if (ota) {
       ota.link.close();
-      const done = await up.resume(img, step);
+      const done = await up.resume(img, step, product);
       if (done && withBoot) await up.installBoot(boot, product, step);
       else {
         if (done) $("bar").value = 100;
@@ -407,6 +468,7 @@ async function run(img, product, isStock, sha256) {
   } catch (e) {
     if (isStock && e && e.code === "mismatch") { $("bar").value = 100; sayK("stockdone"); }   /* stock names itself its own way */
     else if (e && e.code && TEXT[lang][e.code]) sayK(e.code, e.detail || "");
+    if (e && e.code === "notfound") showPorts(midi);
     else sayK("error", e && e.message);
     log(String(e && e.stack || e));
   }
@@ -435,7 +497,7 @@ $("reportgo").addEventListener("click", async () => {
   st("reportwait");
   const lines = [];
   try {
-    const dev = await new Updater(midi).find((id) => !IS_OTA(id));
+    const dev = await updater(midi).find((id) => !IS_OTA(id));
     if (dev) {
       lines.push(`${dev.id.text} (${dev.name}), ${new Date().toISOString()}`);
       dev.link.drain();
