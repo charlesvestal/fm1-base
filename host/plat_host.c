@@ -32,6 +32,7 @@
  *                                store_tries, clocks_out, midi_out, usb_play_gain, usb_audio_full, ... below; data.ADDR: the
  *                                flash's byte at ADDR, as plat_data reads it; -1 outside its windows)
  *   reboot                       re-run boot from the simulated flash (persistence test)
+ *                                (the app's plat_restart does the same, at the end of its millisecond; expect restarts)
  *   data FILE OFFSET             a file into the simulated data area (plat_data) at OFFSET, in any of its windows
  *                                (plat.h), up to that window's end
  *   res 0|1                      (FM1B_RES) the resource region there (1, at start) or not (0: an FM-1 updated
@@ -1118,6 +1119,10 @@ static void boot(void)
     app_ui_init();
 }
 
+static uint8_t restart_req;                         /* plat_restart: at the end of this millisecond */
+static uint32_t restarts;
+void plat_restart(void) { restart_req = 1; }
+
 /* one millisecond of the device, in three steps (run_ms; host/rfm1.c calls them on its host's clock): the clock and
  * what runs before the render (sim_ms_begin), the APP_BLOCK-frame renders that have fallen due (sim_render, each),
  * then the UI (sim_ms_end: a frame every 16 ms, else the input only) */
@@ -1209,6 +1214,15 @@ static void run_ms(uint32_t ms)
         } else {
             sim_ms_end(0);
         }
+        if (restart_req) {                          /* (as "reboot": the flash kept, the app's RAM forgotten) */
+            restart_req = 0;
+            restarts++;
+            printf("  restart (plat_restart) at %u ms\n", now_ms);
+#ifdef APP_HOST_REBOOT
+            app_host_reboot();
+#endif
+            boot();
+        }
     }
 }
 
@@ -1272,6 +1286,8 @@ static int expect(const char *what, const char *val)
 #endif
     if (!strcmp(what, "store_writes"))
         got = (int)store_writes;
+    else if (!strcmp(what, "restarts"))            /* plat_restart's since the start */
+        got = (int)restarts;
     else if (!strcmp(what, "store_tries"))
         got = (int)store_tries;
 #if FM1B_BACKUP

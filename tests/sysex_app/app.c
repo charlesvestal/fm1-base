@@ -15,7 +15,8 @@ static void sx_put21(uint8_t *b, uint32_t v)         /* 3 x 7 bits, the lowest f
     b[0] = (uint8_t)(v & 127u), b[1] = (uint8_t)(v >> 7 & 127u), b[2] = (uint8_t)(v >> 14 & 127u);
 }
 
-void app_init(void) {}
+static uint32_t sx_boots;
+void app_init(void) { sx_boots++; }
 void app_render(int32_t *lr, uint32_t n, uint32_t master_q12)
 {
     uint32_t i;
@@ -72,6 +73,8 @@ int app_sysex(const uint8_t *p, uint32_t n)
         rc |= rc ? 0 : plat_sysex_put(&END, 1u);
         rc |= plat_sysex_end();
         sx_stream = rc != 0;
+    } else if (p[3] == 5u) {                         /* restart */
+        plat_restart();
     }
     return 1;
 }
@@ -85,6 +88,8 @@ int app_expect(const char *what, int *got)
         *got = (int)sx_bytes;
     else if (!strcmp(what, "starts"))
         *got = (int)sx_starts;
+    else if (!strcmp(what, "boots"))
+        *got = (int)sx_boots;
     else if (!strcmp(what, "other"))
         *got = (int)sx_other;
     else if (!strcmp(what, "sent"))

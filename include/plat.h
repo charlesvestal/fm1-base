@@ -182,6 +182,11 @@ int plat_net_task(void (*fn)(void *), void *arg, const char *name);   /* a task 
 uint32_t plat_lock(void);
 void plat_unlock(uint32_t f);
 void plat_yield(void);
+/* the FM-1 restarts, on purpose (an app's own restore done, a session that starts from a clean boot): the sound
+ * stopped, USB let go (the computer sees the cable out and in), not counted as a failed start (no safe mode), the
+ * crash record and .noinit kept. Main loop; it does not return (the host simulator: the restart at the end of the
+ * millisecond, a "reboot"). Built for an app whose app.h defines APP_RESTART */
+void plat_restart(void);
 void plat_log(const char *line);
 /* the flash's data area, 0x97000..0xDFFFF, for an app's own big data (a table it builds, samples): its store objects
  * live there too, at the offsets it gave them (APP_STORE_MAP), so it keeps to the rest. Main loop only; an erase or a
