@@ -59,6 +59,8 @@
  *   sysex_out                    print the app's SysEx frames (plat_sysex_send) since the last "sysex_out" (and forget them)
  *   expect_sysex HEX..           check that this frame went out since the last "sysex_out" (F0 .. F7, hex)
  *   sysex_log FILE|off           every frame the app sends from now on, appended to FILE as it went out (raw)
+ *   usb unplug|plug|stall|read   the computer: the cable out, in again (a new plat_usb_session), the computer stops
+ *                                reading the device's SysEx, reads again
  * FILE "out:NAME" for backup, restore, backup_damage and mirror: NAME in OUTDIR (fbdump: always there).
  * NAME_host --serve [OUTDIR] (FM1B_MIRROR): driven over stdin by a tool, as an FM-1 over USB:
  *   sx HEX      one SysEx message from the host (F0 .. F7, hex): the mirror's requests (cmd 0x50, 0x54)
@@ -235,8 +237,10 @@ void plat_play_red(int red) { (void)red; }      /* the device's PLAY colour: gre
 void plat_leds(uint32_t b, uint32_t k) { plat_lights(b, k, glow_on ? ~b : 0u, 0, glow_on ? 2 : 0); }
 uint32_t plat_lock(void) { return 0; }  /* one thread: the tick runs between the main loop's steps (run_ms) */
 void plat_unlock(uint32_t f) { (void)f; }
+static void hsx_ms(void);
 void plat_yield(void)
 {
+    hsx_ms();                                   /* (a wait inside the app: the computer reads meanwhile) */
 #ifdef APP_YIELD
     app_yield();
 #endif
@@ -564,8 +568,28 @@ int plat_data_write(uint32_t off, const void *src, uint32_t n)
 static uint8_t hsx_out[HSX_KEEP];               /* the frames sent since the last "sysex_out", one after another */
 static uint32_t hsx_n, hsx_lost;
 static FILE *hsx_log;
-void plat_sysex_send(const uint8_t *frame, uint32_t n)
+/* the device's SysEx ring as the computer empties it (plat_sysex_room, plat_sysex_queued): HSX_RING packets of 3 bytes,
+ * HSX_READ a millisecond read while the computer reads (a 64-byte USB-MIDI transfer a 1 ms frame); a send that finds
+ * no room waits as the device's does, the computer reading meanwhile (or, stalled: -1 after its 200 ms). The script's
+ * "usb unplug | plug | stall | read" (plat_usb_session: a new number at each plug) */
+#define HSX_RING 128u                           /* (device/unity.c SXQ) */
+#define HSX_READ 16u
+static uint32_t hsx_q, hsx_session = 1, hsx_plugs = 1;
+static uint8_t hsx_stalled;
+uint32_t plat_sysex_room(void) { return hsx_session ? (HSX_RING - hsx_q) * 3u : 0u; }
+uint32_t plat_sysex_queued(void) { return hsx_q * 3u; }
+uint32_t plat_usb_session(void) { return hsx_session; }
+static void hsx_ms(void)                        /* one millisecond of USB: the computer reads */
 {
+    if (!hsx_stalled)
+        hsx_q -= hsx_q < HSX_READ ? hsx_q : HSX_READ;
+}
+int plat_sysex_send(const uint8_t *frame, uint32_t n)
+{
+    uint32_t pk = (n + 2u) / 3u;
+    if (!hsx_session || (hsx_stalled && pk > HSX_RING - hsx_q))
+        return -1;                              /* (no computer; or the ring full and nobody reading) */
+    hsx_q = hsx_q + pk > HSX_RING ? HSX_RING : hsx_q + pk;   /* (a wait: the computer read the rest meanwhile) */
     if (hsx_log)
         fwrite(frame, 1, n, hsx_log);
     if (n <= HSX_KEEP - hsx_n) {
@@ -574,6 +598,7 @@ void plat_sysex_send(const uint8_t *frame, uint32_t n)
     } else {
         hsx_lost += n;
     }
+    return 0;
 }
 #if FM1B_RES
 #include "fm1_res_data.h"                             /* fm1b_res_data: the build's resources (build.py, from the file) */
@@ -1098,6 +1123,7 @@ static void sim_ms_end(int frame)
     mirror_step();
     host_mirror_ms();
 #endif
+    hsx_ms();
 #ifdef APP_HOST_MS
     app_host_ms();
 #endif
@@ -1403,7 +1429,7 @@ static int hsx_in(const char *hex)
     }
     for (i = 1, ok = 1; i + 1u < n; i++)
         ok &= raw[i] < 0x80u;
-    if (!ok || n - 2u > HOST_SX_MAX)
+    if (!ok || n - 2u > HOST_SX_MAX || !hsx_session)
         return 0;                                 /* (a status byte inside, or too long: the device drops it) */
 #ifdef APP_SYSEX
     (void)app_sysex(raw + 1, n - 2u);
@@ -1426,7 +1452,7 @@ static int hsx_expect(const char *hex)            /* 0: this frame went out sinc
             printf("  ok sysex out (%u bytes)\n", n);
             return 0;
         }
-    printf("FAIL expect_sysex %s: not sent\n", hex);
+    printf("FAIL expect_sysex: not sent (%u bytes)\n", n);
     return 1;
 }
 static void hsx_print(void)
@@ -1782,7 +1808,19 @@ int main(int argc, char **argv)
             hsx_print();
         else if (!strcmp(cmd, "expect_sysex"))
             fails += hsx_expect(strstr(line, "expect_sysex") + 12);
-        else if (!strcmp(cmd, "sysex_log")) {
+        else if (!strcmp(cmd, "usb")) {
+            if (!strcmp(a, "unplug"))
+                hsx_session = 0, hsx_q = 0;
+            else if (!strcmp(a, "plug"))
+                hsx_session = ++hsx_plugs;
+            else if (!strcmp(a, "stall") || !strcmp(a, "read"))
+                hsx_stalled = a[0] == 's';
+            else {
+                printf("line %d: usb %s: unplug, plug, stall or read\n", lineno, a);
+                return 2;
+            }
+            run_ms(1);
+        } else if (!strcmp(cmd, "sysex_log")) {
             if (hsx_log)
                 fclose(hsx_log);
             hsx_log = 0;
