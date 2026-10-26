@@ -14,6 +14,17 @@
 #define FELUCCA_BT_DIAG 0
 #define FELUCCA_DUAL 0                            /* (the second core is fm1-base's: it keeps to RAM, cpu2.c) */
 #define IN_POOL PLAT_POOL
+#ifndef BTI_RING
+#define BTI_RING 12u                              /* receptions waiting for the main loop (Optimist's 32 overflowed only while
+                                                   * its console printed; there is none here): 7.3 KB of pool less */
+#endif
+#ifndef BA_ATTR
+#define BA_ATTR                                   /* the link's state (its receive frame, SDP) in RAM too */
+#endif
+#ifndef BP_MQ_ATTR
+#define BP_MQ_ATTR                                /* the audio packets' queue (40 x 332 B) in RAM, not the pool: the pool
+                                                   * is the tighter of the two in a big app (LOOM-8) */
+#endif
 /* the console Optimist's probe prints to: with FM1B_BT_LOG its lines go to the radio's log (radio.c shim_log, read by
  * tools/fm1_remote.py log), cut to the log's width; without it, nowhere */
 #ifndef FM1B_BT_LOG

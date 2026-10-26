@@ -10,6 +10,9 @@
 #include "bt_avrcp.c"                              /* the least AVRCP: the device's control channel, its volume set */
 #include "bt_avdtp.c"
 
+#ifndef BA_ATTR
+#define BA_ATTR IN_POOL                            /* (where the link's state lives: the pool, or RAM) */
+#endif
 #define BA_RXMAX 700u                              /* one L2CAP frame (the default MTU 672 + headers) */
 #define BA_SDPMAX 1024u                            /* the attribute lists, all continuations together */
 enum { BA_CH_SDP, BA_CH_SIG, BA_CH_MEDIA, BA_CH_SDPS, BA_CH_AVC, BA_NCH };   /* SDPS: the device's SDP channel to our
@@ -43,7 +46,7 @@ static struct {
     uint16_t tid, avdtp_psm;
     uint8_t sdp[BA_SDPMAX];
     uint32_t sdpn;
-} ba IN_POOL;
+} ba BA_ATTR;
 
 enum { BA_IDLE, BA_SDP, BA_SDP_DONE, BA_AV_SIG, BA_AV_DISC, BA_AV_CAPS, BA_AV_CONF, BA_AV_OPEN, BA_AV_MEDIA,
        BA_AV_START, BA_AV_READY, BA_FAILED };

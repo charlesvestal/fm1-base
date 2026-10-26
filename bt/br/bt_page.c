@@ -18,11 +18,16 @@
 #define BP_MQB 332u                                /* the longest audio packet queued: 17 B of L2CAP and media headers and
                                                     * BA_MFRAMES SBC frames at BA_BITPOOL (bt_acl.c asserts the sum; a
                                                     * lower agreed bitpool makes shorter ones); 7 B a slot less than a DH5 */
+#ifndef BP_MQ_ATTR
+#define BP_MQ_ATTR IN_POOL                         /* (where the audio queue lives: the pool, or RAM) */
+#endif
+#ifndef BP_MQ
 #define BP_MQ 40u                                 /* the audio packets queued (~350 ms of the stream at 3 SBC frames a
                                                     * packet; 4 = 23 ms overflowed on every radio hiccup: audio_drop
                                                     * 11 %, heard as crackles, 2026-10-21; 16 = 140 ms overflowed on the
                                                     * XM4's 100-150 ms refusals of our DH5s while it kept answering,
                                                     * 2026-10-23: a phone's sink buffer rides those out, so does this) */
+#endif
 #define BP_OFF_RX0 1088u                           /* the connection's two RX buffers: the table's link_rx_bulk (BR §3) */
 #define BP_OFF_RX1 (1088u + 680u)
 #define BP_LT_ADDR 1u
@@ -76,7 +81,7 @@ static struct {
     uint8_t d[BP_MQ][BP_MQB];
     uint16_t n[BP_MQ];
     volatile uint32_t w, r;
-} bp_mq IN_POOL;
+} bp_mq BP_MQ_ATTR;
 static int bp_media_queue(const uint8_t *frame, uint32_t len)   /* 1 queued; 0 dropped whole (full, too long, no 5 slots) */
 {
     uint32_t i, k;

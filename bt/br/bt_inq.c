@@ -80,9 +80,11 @@ struct bti_stat {
 static struct bti_stat bti_st = {BTI_MAGIC};
 
 /* the interrupts' ring: one FHS, EIR or ID each */
+#ifndef BTI_RING
 #define BTI_RING 32u                               /* (8 overflowed: the AirPods' SDP burst while the console
                                                     * printed; a packet acknowledged on air and dropped here is lost for
                                                     * good, bti_st.dropped, 2026-10-20) */
+#endif
 enum { BTI_K_FHS = 1, BTI_K_EIR = 2, BTI_K_ID = 3, BTI_K_PSTEP = 4, BTI_K_LMP = 5, BTI_K_CONN = 6, BTI_K_ACL = 7 };
 struct bti_rx {
     uint8_t kind, type, idx, rxfreq;
