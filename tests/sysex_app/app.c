@@ -3,7 +3,7 @@
 /* The SysEx test app: see app.h */
 static uint32_t sx_frames, sx_other;
 static uint8_t sx_reply[700];
-static uint32_t sx_sent;                             /* the last flood's frames sent whole */
+static uint32_t sx_sent, sx_stream;                             /* the last flood's frames sent whole */
 static void sx_put21(uint8_t *b, uint32_t v)         /* 3 x 7 bits, the lowest first */
 {
     b[0] = (uint8_t)(v & 127u), b[1] = (uint8_t)(v >> 7 & 127u), b[2] = (uint8_t)(v >> 14 & 127u);
@@ -53,6 +53,19 @@ int app_sysex(const uint8_t *p, uint32_t n)
         for (i = 0; i < p[4]; i++)
             sent += plat_sysex_send(sx_reply, 63u) == 0;
         sx_sent = sent;
+    } else if (p[3] == 4u && n >= 5u) {              /* stream */
+        static const uint8_t HEAD[5] = {0xF0, 0x7D, 0x53, 0x58, 4}, END = 0xF7;
+        uint8_t b[7];
+        uint32_t k, at = 0;
+        int rc = plat_sysex_begin() || plat_sysex_put(HEAD, 5u);
+        for (i = 0; i < p[4] && !rc; i++) {
+            for (k = 0; k < 7u; k++)
+                b[k] = (uint8_t)(at++ & 127u);
+            rc = plat_sysex_put(b, 7u);
+        }
+        rc |= rc ? 0 : plat_sysex_put(&END, 1u);
+        rc |= plat_sysex_end();
+        sx_stream = rc != 0;
     }
     return 1;
 }
@@ -66,6 +79,8 @@ int app_expect(const char *what, int *got)
         *got = (int)sx_other;
     else if (!strcmp(what, "sent"))
         *got = (int)sx_sent;
+    else if (!strcmp(what, "stream"))
+        *got = (int)sx_stream;
     else if (!strcmp(what, "room"))
         *got = (int)plat_sysex_room();
     else if (!strcmp(what, "queued"))
