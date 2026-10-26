@@ -31,6 +31,8 @@ run trs sh -c "$CC -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -Idevice -o $OUT/trs_test 
 run uac-mix sh -c "$CC -std=c99 -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -o $OUT/uac_mix_test tests/uac_mix_test.c && \
     $OUT/uac_mix_test && $CC -std=c99 -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -DTEST_NO_OUT -o $OUT/uac_mix_test_noout \
     tests/uac_mix_test.c && $OUT/uac_mix_test_noout"
+# plat_lock / plat_unlock over a simulated interrupt enable: inside an interrupt they leave interrupts off
+run lock sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/lock_test tests/lock_test.c && $OUT/lock_test"
 run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/storage_test"
 run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts

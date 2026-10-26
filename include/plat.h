@@ -172,7 +172,9 @@ int plat_net_task(void (*fn)(void *), void *arg, const char *name);   /* a task 
                                                                         * of stack); 0 = made */
 
 /* the 1 kHz tick (app_tick, an app with APP_TICK) runs in the timer interrupt: the main loop locks it out around
- * what they share (it nests) */
+ * what they share. It nests, and plat_unlock takes what its plat_lock returned: the outermost unlock switches the
+ * interrupts back on only if they were on at its lock, so a lock is safe inside an interrupt (app_render, app_tick)
+ * or with them already off: they stay off */
 uint32_t plat_lock(void);
 void plat_unlock(uint32_t f);
 void plat_yield(void);
