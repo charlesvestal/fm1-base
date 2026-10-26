@@ -56,6 +56,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              hash of the sources, lifts that bar for a new build
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
 app.h); the build prints what it has.
+  ble_stack = "own"          with ble: Optimist's own Bluetooth stack (bt/: Henri David's, docs/bt/BLE-STACK.md;
+                             FM1B_BLE_OWN) instead of JieLi's libraries: nothing of the SDK's linked, no shim
   ble = true                 Bluetooth MIDI (FM1B_BLE): ble/ on JieLi's BT libraries, from the AC79 SDK ($AC79_SDK);
                              --no-ble builds without it (NAME-usb.fwsc), and the build checks nothing of JieLi's is in
   wifi = true                WiFi (FM1B_WIFI): a station on JieLi's WiFi libraries and the SDK's lwIP (built from its
@@ -126,6 +128,7 @@ SDK_SHA256 = {
 PRODUCT = None                      # package identity (fm1.toml id_prefix; see main)
 VERSION = None                      # APP_VERSION for release builds (default: "DEV", device/unity.c)
 BLE = False                         # fm1.toml ble = true, unless --no-ble
+OWN = False                         # with BLE: fm1.toml ble_stack = "own" (bt/, no JieLi library)
 WIFI = False                        # fm1.toml wifi = true
 CPU2 = False                        # fm1.toml cpu2 = true (FM1B_CPU2=0 / 1 in the environment: without / with)
 STEM = None                         # the build's file names: NAME, or NAME-usb (--no-ble)
@@ -540,7 +543,15 @@ def radio_units():
 def build_app():
     flags = [*CFLAGS, *FPU, *inc(BSP / "chip", BSP / "boards" / "fm1", SRC / "device", SRC / "include", SRC / "lib", APP, GEN,
                                  *(APP / d for d in CONF.get("include", []) + CONF.get("device_include", [])))]
-    if BLE:
+    if BLE and OWN:                               # the own stack: its units in the unity build (device/bt_own.c)
+        flags += ["-DFM1B_BLE=1", "-DFM1B_BLE_OWN=1", *inc(SRC / "bt" / "ble", SRC / "bt" / "br")]
+        if CONF.get("ble_central"):
+            flags.append("-DFM1B_BLE_CENTRAL=1")
+        GEN.mkdir(parents=True, exist_ok=True)    # the radio's start-up program (fm1_ble_rf.h includes it)
+        tables = (SRC / "bt" / "radio" / "ble_rf_tables_v15.h").read_bytes()
+        if not (GEN / "ble_rf_tables.h").exists() or (GEN / "ble_rf_tables.h").read_bytes() != tables:
+            (GEN / "ble_rf_tables.h").write_bytes(tables)
+    elif BLE:
         flags += ["-DFM1B_BLE=1", *inc(SRC / "ble" / "shim")]
         if CONF.get("ble_central"):
             flags.append("-DFM1B_BLE_CENTRAL=1")
@@ -587,7 +598,8 @@ def build_app():
             units.append(("cc", *o2, *o2_more, *inc(f.parent), *ir_out, "-c", f, "-o", o.with_suffix(".ll") if ir else o))
             objs.append(o)
             o2_units.append((f, o))
-    b_units, b_objs, b_libs = radio_units() if BLE or WIFI else ([], [], [])
+    jieli = (BLE and not OWN) or WIFI             # JieLi's libraries linked (the shim, LTO)
+    b_units, b_objs, b_libs = radio_units() if jieli else ([], [], [])
     tc_all(*units, *b_units)
     if ir:                                        # the pass, then each unit's code from its IR at its own level
         def ir_pass(src, dst, unit=None):
@@ -609,7 +621,7 @@ def build_app():
     # mono reference paths for the host tests that the firmware no longer calls. The BT libraries are LTO
     # bitcode: the linker needs the toolchain's LLVM plugin
     lto = ["--plugin", "/opt/jieli/pi32v2/bin/LLVMgold.so" if use_docker() else str(toolchain() / "pi32v2/bin/LLVMgold.so"),
-           f"--plugin-opt=mcpu={CPU}", "--plugin-opt=-pi32v2-large-program=true"] if BLE or WIFI else []
+           f"--plugin-opt=mcpu={CPU}", "--plugin-opt=-pi32v2-large-program=true"] if jieli else []
     ld = SRC / "device" / ("app_wifi.ld" if WIFI else "app.ld")
     tc("pi32v2/bin/ld", *lto, "--gc-sections", "-e", "_start", "-T", ld, *objs, *b_objs,
        *b_libs, "-o", elf)
@@ -691,7 +703,8 @@ def check(img, syms, dis, rt):
     in_c1 = (lambda ln: (mm2 := LINE.match(ln)) is not None and c1[0] <= int(mm2.group(1), 16) < c1[1]) \
         if len(c1) == 2 else (lambda ln: False)   # (the second core's loop: it may call into the flash, see the top)
     rt_calls = [ln for ln in rt.splitlines() if re.search(r"\bcall\b", ln) and not in_c1(ln)]
-    if rt_calls and (BLE or WIFI):  # JieLi's .volatile_ram_code calls out; it runs with the flash on
+    jieli = (BLE and not OWN) or WIFI
+    if rt_calls and jieli:          # JieLi's .volatile_ram_code calls out; it runs with the flash on
         notes.append(f"the radio: .ram_text contains calls (JieLi's .volatile_ram_code): {rt_calls[:3]}")
     elif rt_calls:                  # RAM code runs with the flash off: no calls into XIP
         errors.append(f".ram_text contains calls: {rt_calls[:3]}")
@@ -718,6 +731,15 @@ def check(img, syms, dis, rt):
     else:
         notes.append("no 64-bit multiply inlined beside a load")
     bt = [n for n in BT_SYMS if re.search(r"\s" + n + r"$", syms, re.M)]
+    if BLE and OWN:                 # the own stack: nothing of JieLi's, and the radio's ramp in RAM (docs/bt/BLE-STACK.md §8.1)
+        bt = [n for n in bt if n != "ble_midi_send_many"]   # (radio.c's name, which bt_own.c gives too)
+        if bt:
+            errors.append(f"ble_stack = own links JieLi's Bluetooth code: {bt}")
+        rf = re.search(r"^([0-9a-f]+) .*\sfm1_rf_burst_run$", syms, re.M)
+        if not rf or not 0x01C00000 <= int(rf.group(1), 16) < 0x01C08000:
+            errors.append("fm1_rf_burst_run is not in .ram_text (the radio's crystal ramp must run from RAM)")
+        else:
+            notes.append("own Bluetooth stack: nothing of JieLi's linked, the radio's ramp in RAM")
     if CONF.get("ble") and not BLE:
         if bt:
             errors.append(f"--no-ble build links Bluetooth code: {bt}")
@@ -727,7 +749,7 @@ def check(img, syms, dis, rt):
         errors.append(f"image {len(img)} B exceeds the app slot")
     # the FPU is single precision; a soft-double routine in the image means a double crept in
     soft = sorted(set(re.findall(r"\s(__(?:add|sub|mul|div|neg|cmp|eq|ne|lt|le|gt|ge|un|extendsf|truncdf|fixdf|fixunsdf|floatsidf|floatunsidf|floatdidf)\w*df\w*)$", syms, re.M)))
-    if soft and (BLE or WIFI):
+    if soft and jieli:
         notes.append(f"soft-double routines linked (JieLi's radio setup): {soft[:6]}")
     elif soft:
         errors.append(f"soft-double routines linked: {soft[:6]} (a double in the code)")
@@ -912,7 +934,7 @@ def build_web():
 
 
 def main():
-    global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, WIFI, CPU2, STEM
+    global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, OWN, WIFI, CPU2, STEM
     ap = argparse.ArgumentParser()
     ap.add_argument("app", type=Path, help="the app's directory (with fm1.toml)")
     ap.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity id_prefix + XXYYZZ, version string X.Y[.Z]")
@@ -925,6 +947,9 @@ def main():
     CONF = read_conf(APP / "fm1.toml")
     NAME = CONF.get("name", APP.name).lower()
     BLE = bool(CONF.get("ble")) and not a.no_ble
+    OWN = BLE and CONF.get("ble_stack", "jieli") == "own"
+    if CONF.get("ble_stack", "jieli") not in ("jieli", "own"):
+        raise SystemExit(f"fm1.toml ble_stack {CONF['ble_stack']!r}: \"jieli\" or \"own\"")
     WIFI = bool(CONF.get("wifi"))
     CPU2 = (bool(CONF.get("cpu2")) and os.environ.get("FM1B_CPU2") != "0") or os.environ.get("FM1B_CPU2") == "1"
     if BLE and WIFI:

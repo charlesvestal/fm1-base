@@ -6,7 +6,12 @@
  * every boot, as the stock firmware does, unless the last radio run ended in a crash or a watchdog reset (then by
  * hand: plat_ble_start). WiFi's own part: wifi.c. Part of the unity build (unity.c). A short log and a crash note
  * survive a reset (plat_ble_log_line). */
+#if !FM1B_BLE_OWN
 #include "shim.h"
+#else
+void shim_log(const char *s);                     /* (the own stack has no shim: these are radio.c's, for both) */
+uint32_t shim_ms(void);
+#endif
 
 /* ---- the platform the shim asks for */
 /* milliseconds since boot, from TIMER4 (independent of the timer-5 tick). TIMER4 wraps every 2^32 / 24 MHz = 179 s,
@@ -78,6 +83,7 @@ volatile uint32_t shim_isr_blocks;               /* waits refused in an interrup
  * whichever context we are in (btstack_init waits in the main loop's) */
 static void radio_stuck_check(void);
 static void (*radio_idle_hook)(void);             /* while every task waits: what must still be answered (USB) */
+#if !FM1B_BLE_OWN
 void shim_idle(void)
 {
     static uint8_t in;
@@ -95,6 +101,7 @@ void shim_idle(void)
         in = 0;
     }
 }
+#endif
 void shim_reboot(void) { fm1_reboot(); }
 /* the shim's delays (JieLi's delay_us and friends): from RAM, timed by TIMER4, nothing called */
 __attribute__((section(".ram_text"), noinline, used)) void shim_delay_us(uint32_t us) { fm1_busy_us_inl(us); }
@@ -232,7 +239,11 @@ static void radio_boot_note(void)
         b[37] = 0;
         shim_log(b);
     } else if (blog.running && (fm1_boot.p3_rst & 4u)) {
+#if FM1B_BLE_OWN
+        const uint32_t shim_task_now = 0;         /* (no tasks: the main loop's) */
+#else
         extern uint32_t shim_task_now;
+#endif
         static const char *const T[4] = {"main", "1", "2", "3"};
         char *q = b;
         const char *t = "reset by the watchdog: task ";
@@ -255,6 +266,7 @@ static void radio_clean_exit(void) { blog.running = 0; }
 int shim_store_load(void *dst, uint32_t max) { return plat_store_load(OBJ_BLE, dst, max); }
 int shim_store_save(const void *src, uint32_t len) { return plat_store_save(OBJ_BLE, src, len); }
 
+#if !FM1B_BLE_OWN
 extern int syscfg_read(uint16_t id, void *buf, uint16_t len);
 extern int syscfg_write(uint16_t id, void *buf, uint16_t len);
 /* the BT address: the one kept, or one made from the chip's unique data (the SDK's own fallback is
@@ -301,6 +313,7 @@ void ble_midi_name(char *name)
         name[5 + i] = hex[h >> (12u - 4u * i) & 15u];
     name[9] = 0;
 }
+#endif
 
 
 /* ---- a radio's start (Bluetooth's, WiFi's): its log, the render held while it calibrates */
@@ -365,6 +378,9 @@ static void radio_begin(const char *what)
         irqs_masked = 1;
     }
 #endif
+#if FM1B_BLE_OWN
+    (void)os_up;
+#else
     if (!os_up) {                                 /* the shim, once (both radios share it) */
         os_up = 1;
         shim_os_init();
@@ -373,6 +389,7 @@ static void radio_begin(const char *what)
         task_create(sys_timer_task, 0, "sys_timer");
 #endif
     }
+#endif
 }
 /* the main loop: the render back a second into the start once the radio is ready (or after 15 s), and the input
  * timer if it was masked */
@@ -398,6 +415,7 @@ static void radio_settle(int ready)
     irq_restore(f);
     shim_log(ready ? "irqs back: ready" : "irqs back: 15 s, not ready");
 }
+#if !FM1B_BLE_OWN
 extern void shim_os_dump(void);
 static void radio_stuck_check(void)               /* still starting after 3 s: say what each task waits for */
 {
@@ -408,6 +426,7 @@ static void radio_stuck_check(void)               /* still starting after 3 s: s
         shim_os_dump();
     }
 }
+#endif
 
 #if FM1B_BLE
 /* ---- Bluetooth MIDI */
@@ -614,6 +633,9 @@ static void ble_midi_drain(int l)                 /* main loop: what waits for l
 }
 
 /* ---- the stack */
+#if FM1B_BLE_OWN
+#include "bt_own.c"                               /* Optimist's own (bt/): no JieLi library, no shim */
+#else
 static volatile uint32_t ble_events;
 extern void btstack_init(void);
 extern void bt_ble_init(void);
@@ -772,6 +794,7 @@ void plat_ble_disconnect(void) {}
 int plat_ble_device(void) { return BLE_DEV_OFF; }
 #endif
 void plat_ble_start(void) { ble_start(); }
+#endif                                            /* (FM1B_BLE_OWN) */
 #else
 #include "ble_none.c"
 #endif
