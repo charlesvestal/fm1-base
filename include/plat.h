@@ -17,8 +17,9 @@
 #define PLAT_POOL __attribute__((section(".pool")))
 #endif
 
-/* PLAT_RAM_CODE: a function that runs from RAM (section .app_ram, copied at boot with .ram_text, in the RAMTEXT
- * region they share: 32 KiB, 24 KiB with WiFi), out of the way of the XIP cache's misses: an audio path. It may call
+/* PLAT_RAM_CODE: a function that runs from RAM (section .app_ram, copied at boot with .ram_text, at the start of
+ * the packed SRAM, device/app.ld: as big as the SRAM's one budget lets it; WiFi's RAMTEXT 24 KiB), out of the way
+ * of the XIP cache's misses: an audio path. It may call
  * only RAM code (other PLAT_RAM_CODE functions, felucca-bsp's RAM functions) and nothing through a pointer; the build
  * checks it over the disassembly, to any depth (tools/ramcode.py; fm1.toml ram_code_allow names the exceptions an app
  * vouches for). Not for code that runs with the flash off: it may read constants in the flash. XIP code it may not
