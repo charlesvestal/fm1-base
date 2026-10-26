@@ -14,11 +14,55 @@
 #define FELUCCA_BT_DIAG 0
 #define FELUCCA_DUAL 0                            /* (the second core is fm1-base's: it keeps to RAM, cpu2.c) */
 #define IN_POOL PLAT_POOL
-/* the console Optimist's probe prints to: none here */
+/* the console Optimist's probe prints to: with FM1B_BT_LOG its lines go to the radio's log (radio.c shim_log, read by
+ * tools/fm1_remote.py log), cut to the log's width; without it, nowhere */
+#ifndef FM1B_BT_LOG
+#define FM1B_BT_LOG 0
+#endif
+#if FM1B_BT_LOG
+static char con_line[40];
+static uint32_t con_n;
+static void con_putc(char c)
+{
+    if (c == '\n' || c == '\r') {
+        if (con_n) {
+            con_line[con_n] = 0;
+            shim_log(con_line);
+            con_n = 0;
+        }
+        return;
+    }
+    if (con_n == sizeof con_line - 1u) {          /* (full: this part out, the rest on the next line) */
+        con_line[con_n] = 0;
+        shim_log(con_line);
+        con_n = 0;
+    }
+    con_line[con_n++] = c;
+    if (con_n == 8u && !memcmp(con_line, "btpage: ", 8))
+        con_n = 0;                                /* (the probe's prefix: the log's width is short) */
+}
+static void con_puts(const char *s)
+{
+    while (*s)
+        con_putc(*s++);
+}
+static void con_hex(uint32_t v, uint32_t n)
+{
+    while (n--)
+        con_putc("0123456789ABCDEF"[(v >> (4u * n)) & 15u]);
+}
+static void con_dec(uint32_t v)
+{
+    char t[12];
+    put_dec(t, v);
+    con_puts(t);
+}
+#else
 static void con_puts(const char *s) { (void)s; }
 static void con_putc(char c) { (void)c; }
 static void con_hex(uint32_t v, uint32_t n) { (void)v, (void)n; }
 static void con_dec(uint32_t v) { (void)v; }
+#endif
 #define SY_TPS_Q8 (24000000u * 256u / 44100u)    /* TIMER4 ticks a sample, Q8 (bt_acl.c's latency figure) */
 #include "bt_audio.h"
 static int own_bt_trims(struct ble_rf_trims *t);
@@ -51,6 +95,38 @@ static void own_bta_keep(void)                    /* ble_poll: a new key or addr
     ble_cpy(own.bta_mem, (const uint8_t *)bta.mem, sizeof bta.mem);
     own.bta_nmem = bta.nmem;
     own_dirty = 1;
+}
+
+/* ---- the main loop's part (bt_own.c ble_poll): after a fresh pairing the link is let go and the device paged again
+ * with the new key (bt_acl.c ba.rejoin, as BlueZ does; Optimist's screen did it). A device that has just let go may not
+ * answer at once (a SoundCore 2, 2026-10-26: no answer to three pages 1.5 s apart, one a minute later did): up to
+ * OWN_BTA_TRIES pages, OWN_BTA_GAP_MS after each failed one */
+#define OWN_BTA_TRIES 5u
+#define OWN_BTA_GAP_MS 4000u
+static uint8_t own_bta_tries;
+static uint32_t own_bta_t;
+static void own_bta_poll(void)
+{
+    if (bta.mode == BTA_OFF)
+        return;
+    if (bta_rejoin()) {                           /* (the link closed after the pairing: paged again) */
+        own_bta_tries = 1;
+        own_bta_t = fm1_ms;
+        shim_log("audio: paired, connecting with the key");
+        return;
+    }
+    if (own_bta_tries && bta_state() == BTA_S_STREAMING)
+        own_bta_tries = 0;
+    else if (own_bta_tries && bta_state() == BTA_S_FAILED && fm1_ms - own_bta_t >= OWN_BTA_GAP_MS) {
+        if (own_bta_tries >= OWN_BTA_TRIES || !bta.nmem) {
+            own_bta_tries = 0;
+            shim_log("audio: no answer after the pairing");
+        } else {
+            own_bta_tries++;
+            own_bta_t = fm1_ms;
+            (void)bta_page(bta.mem[0].addr);
+        }
+    }
 }
 
 /* ---- the radio's BR/EDR interrupts: their vectors once (masked until a run), as BLE's */

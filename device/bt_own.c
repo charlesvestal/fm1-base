@@ -28,6 +28,7 @@
 #if FM1B_BT_AUDIO
 static void own_bta_load(void);
 static void own_bta_keep(void);
+static void own_bta_poll(void);
 static void bti_poll(void);
 static uint8_t own_bta_attached;
 #endif
@@ -292,6 +293,7 @@ static void ble_poll(void)
 #if FM1B_BT_AUDIO
     if (own_bta_attached) {
         bti_poll();                               /* Bluetooth audio: the page, the link, the stream's packets */
+        own_bta_poll();
         own_bta_keep();
     }
 #endif

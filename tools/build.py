@@ -551,6 +551,8 @@ def build_app():
             flags.append("-DFM1B_BLE_CENTRAL=1")
         if CONF.get("bt_audio"):                   # Bluetooth audio out (A2DP source, bt/br)
             flags.append("-DFM1B_BT_AUDIO=1")
+            if CONF.get("bt_log"):                 # its step-by-step lines on the radio's log (fm1_remote.py log)
+                flags.append("-DFM1B_BT_LOG=1")
         if CONF.get("ble_pairing"):                # pairing and an encrypted link (LE legacy, Just Works; the bond kept)
             flags += ["-DBLE_LL_ENC=1", "-DBLE_SMP_LEGACY=1"]
         GEN.mkdir(parents=True, exist_ok=True)    # the radio's start-up program (fm1_ble_rf.h includes it)
