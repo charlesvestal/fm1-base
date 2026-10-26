@@ -34,31 +34,10 @@ uint32_t shim_ms(void)
     return r;
 }
 
-static volatile uint32_t shim_depth;
-uint32_t shim_off_max, shim_off_from;            /* the longest the stack kept interrupts off (us), and from where
-                                                  * (main_fm1.c's log reads and clears them) */
-static uint32_t shim_off_t0, shim_off_ra;
-uint32_t shim_irq_save(void)                     /* nests, unlike irq_save(): the shim calls itself */
-{
-    fm1_irq_off();
-    if (shim_depth == 0) {
-        shim_off_t0 = fm1_ticks();
-        shim_off_ra = (uint32_t)(uintptr_t)__builtin_return_address(0);
-    }
-    return shim_depth++;
-}
-void shim_irq_restore(uint32_t f)
-{
-    (void)f;
-    if (shim_depth && --shim_depth == 0) {
-        uint32_t us = (fm1_ticks() - shim_off_t0) / FM1_TICKS_PER_US;
-        if (us > shim_off_max) {
-            shim_off_max = us;
-            shim_off_from = shim_off_ra;
-        }
-        fm1_irq_on();
-    }
-}
+/* the shim's critical sections (shim_irq_save / shim_irq_restore: JieLi's local_irq_disable and the shim's own
+ * locks): they nest and restore the interrupts as they found them (shim_lock.c), so the radio's own interrupts can
+ * take them */
+#include "shim_lock.c"
 #if SHIM_WIFI
 /* the nesting is each task's own, as FreeRTOS keeps it: a task that waits inside a critical section must not leave
  * the interrupts off for the others (os.c switch_to; fm1-radio's) */
