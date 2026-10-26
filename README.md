@@ -26,7 +26,10 @@ parts it has.
 | Part | How to include it | What the app calls |
 | --- | --- | --- |
 | Bluetooth MIDI with a computer or tablet | `ble = true` (`tools/build.py --no-ble` leaves it out of one build) | `TO_BLE`, `PORT_BLE`; `plat_ble_state`, `plat_ble_connected`; `plat_ble_enable` |
-| Bluetooth MIDI devices (the FM-1 connects to a keyboard or controller) | `ble_central = true`, with `ble` | `plat_ble_scan`, `plat_ble_found`, `plat_ble_connect`, `plat_ble_disconnect`, `plat_ble_device`; `TO_BLE_HOST`, `TO_BLE_DEV`, `plat_midi_in_from` (one link at a time) |
+| Bluetooth MIDI devices (the FM-1 connects to a keyboard or controller) | `ble_central = true`, with `ble` | `plat_ble_scan`, `plat_ble_found`, `plat_ble_connect`, `plat_ble_disconnect`, `plat_ble_device`; `TO_BLE_HOST`, `TO_BLE_DEV`, `plat_midi_in_from` (one link at a time); `plat_ble_passkey` on the own stack |
+| Bluetooth on fm1-base's own stack instead of JieLi's libraries (below) | `ble_stack = "own"`, with `ble` | the same calls |
+| Pairing on the own stack (LE legacy pairing, the bond kept) | `ble_pairing = true`, with `ble_stack = "own"` | nothing |
+| Bluetooth audio to headphones and speakers (A2DP) | `bt_audio = true`, with `ble_stack = "own"`; `bt_log = true` puts its set-up on the radio's log | `plat_bta_on`, `plat_bta_scan`, `plat_bta_found`, `plat_bta_known`, `plat_bta_pick`, `plat_bta_reconnect`, `plat_bta_forget`, `plat_bta_hangup`, `plat_bta_state` |
 | USB audio: the FM-1 recorded over the cable | on unless `usb_audio_in = false` | nothing: the master output |
 | USB audio: a computer plays through the FM-1 | on unless `usb_audio_out = false` (needs the input too) | nothing: mixed after the app, at MASTER |
 | Velocity and pressure from the keys | `#define APP_TOUCH` in app.h | `touch_on`, `touch_poll`, `touch_keys`, `touch_vel`, `touch_pressure` (lib/touch.h) |
@@ -48,13 +51,45 @@ flash beyond the store with `plat_data*`, in the data area and two more windows 
 ## Bluetooth and WiFi
 
 A firmware has Bluetooth or WiFi, not both: each fills most of what the FM-1 has (the chip has no external RAM),
-and together they don't fit. Each needs JieLi's AC79 SDK (`$AC79_SDK`) for its libraries; a build without either
-links nothing of JieLi's.
+and together they don't fit. WiFi, and Bluetooth on JieLi's stack, need JieLi's AC79 SDK (`$AC79_SDK`) for its
+libraries. Bluetooth on fm1-base's own stack (`ble_stack = "own"`) links nothing of JieLi's, and neither does a
+build without a radio. Every build still takes the three SDK files a package needs (LICENSING.md).
+
+### Two Bluetooth stacks
+
+By default (`ble = true`), Bluetooth runs on JieLi's binary libraries from the SDK, through a shim (`ble/`). With
+`ble_stack = "own"` it runs instead on Henri David's stack from [Optimist](https://github.com/w0ts/optimist),
+in `bt/` under MPL-2.0, with felucca-bsp's radio drivers. Nothing of JieLi's is linked, there is no shim and no
+task, and the build checks it. The radio calibrates itself at every start, so an FM-1 whose stock calibration was
+overwritten works the same. The own stack is smaller and does more:
+
+- Bluetooth MIDI with a computer or a phone, as on JieLi's.
+- With `ble_pairing = true` it pairs and encrypts the link (LE legacy pairing), and keeps the bond in `OBJ_BLE`.
+  Without it a pairing is refused; macOS and iOS connect anyway.
+- With `ble_central = true` the FM-1 connects to Bluetooth MIDI devices, as on JieLi's. A device that asks for a
+  code gets one on the FM-1's screen (`plat_ble_passkey`).
+- With `bt_audio = true` it sends its sound to headphones and speakers (A2DP, SBC), beside Bluetooth MIDI on the
+  one radio. While it streams, the FM-1's own output is muted. Four devices are remembered, the last one first, and
+  `plat_bta_reconnect(0)` at power-on connects it again. `bt_log = true` adds the audio set-up's steps to the
+  radio's log.
+
+It was tried on one FM-1 with a Mac, an iPhone (GarageBand; Cubasis as host and as a peripheral with the code),
+headphones (AIAIAI TMA-2) and a speaker (Anker SoundCore 2), MIDI and audio at once. Its limits:
+
+- One Bluetooth MIDI link at a time: while the FM-1 is connected to a device, a computer can't connect to it
+  (JieLi's keeps both).
+- Audio reaches the ear 150-300 ms after a key (the device's own buffer): for listening, not for playing in time.
+- After an abrupt drop, a speaker may not answer for a minute or two.
+- Each firmware keeps its own keys. After switching firmware, forget the FM-1 on the phone or speaker and pair
+  again.
+
+`examples/ble_own` is the template on the own stack with every option. For how the stack works, see
+[docs/bt/README.md](docs/bt/README.md).
 
 ### Turning Bluetooth on
 
 1. In fm1.toml, `ble = true`. Add `ble_central = true` for the FM-1 to connect to MIDI devices too (a keyboard,
-   a controller), beside a computer.
+   a controller), beside a computer. For the own stack, add `ble_stack = "own"` and its options (above).
 2. In app.h, give it a store object: `OBJ_BLE` in the app's object enum, and its offset in `APP_STORE_MAP` (the
    radio's address and pairing are kept there).
 3. In the app: MIDI goes out with `TO_BLE` and comes in on `PORT_BLE`, as USB's does. For a page of devices, add
@@ -99,11 +134,18 @@ The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss`
 | The template without a radio (`--no-ble`) | 77 | 27 | 68 |
 | Bluetooth MIDI with a computer (`ble`) | + 124 | + 45 | + 24 |
 | Bluetooth MIDI devices too (`ble_central`) | + 8 | + 1 | 0 |
+| Bluetooth MIDI with a computer on the own stack (`ble_stack = "own"`) | + 41 to 46 | + 10 | + 1 |
+| Pairing, devices and Bluetooth audio too (`ble_pairing`, `ble_central`, `bt_audio`) | + 57 to 62 | + 8 | + 30 |
 | WiFi (`wifi`, from fm1-radio's measurements) | + about 300 | + about 100 | + about 276 |
 
 - Bluetooth: JieLi's BT controller and stack (the flash), its 24 KB heap and their tables (the RAM), three task
-  stacks of 8 KB (the pool). The template with Bluetooth and devices is 210 KB of flash, 74 of 96 KB of RAM: room
+  stacks of 8 KB (the pool). The template with Bluetooth and devices is 214 KB of flash, 75 of 96 KB of RAM: room
   for a big app (CTL-1, with a General MIDI synth, is 491 KB).
+- The own stack: the template with Bluetooth MIDI alone is 118 to 123 KB of flash, 37 KB of RAM and 69 KB of pool;
+  with pairing, devices and audio, 180 KB, 45 KB and 99 KB. On a big app the
+  difference shows: LOOM-8 on JieLi's stack is 506 KB of flash, 88 KB of RAM and 327 KB of pool; on the own stack
+  with MIDI alone, 454 KB, 68 KB and 318 KB; with pairing, devices, audio and its pages for them, 512 KB, 91 KB and
+  328 KB.
 - WiFi: JieLi's driver (146 KB), the WPA supplicant (77 KB), lwIP (51 KB), the radio layer, crypto and the shim
   (25 KB) in the flash; the driver's buffers, lwIP, the shim's task table and 24 KB of the heap (about 100 KB) in
   the RAM; the rest of the heap (248 KB) and lwIP's packet buffers (28 KB) in the pool. The heap, 272 KB, holds the
