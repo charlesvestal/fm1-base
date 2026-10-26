@@ -122,6 +122,25 @@ int plat_ble_device(void);             /* BLE_DEV_*: READY is connected, MIDI bo
  * default 1) */
 void plat_ble_enable(int on);
 
+/* Bluetooth audio out (fm1.toml bt_audio = true, with ble_stack = "own": FM1B_BT_AUDIO 1): an A2DP source to headphones
+ * and speakers (SBC), beside Bluetooth MIDI on the one radio. While it streams, the render goes to the device and the
+ * FM-1's own output is muted. Four devices are remembered with their keys (in OBJ_BLE), the last one first. Expect
+ * 150-300 ms from a key to the ear (the device's own buffer): for listening, not for playing in time. */
+#ifndef FM1B_BT_AUDIO
+#define FM1B_BT_AUDIO 0
+#endif
+enum { PLAT_BTA_OFF, PLAT_BTA_SCANNING, PLAT_BTA_FOUND, PLAT_BTA_NONE, PLAT_BTA_PAGING, PLAT_BTA_LINKED, PLAT_BTA_SETUP,
+       PLAT_BTA_STREAMING, PLAT_BTA_REFUSED, PLAT_BTA_NO_LAST, PLAT_BTA_FAILED, PLAT_BTA_READY };
+void plat_bta_on(int on);              /* on: the radio up (Bluetooth MIDI's start, if not yet), ready to scan / connect */
+void plat_bta_scan(int on);            /* look for devices (about 10 s) */
+int plat_bta_found(int i, char *name); /* found device i: its name (17 bytes) -> 0: none */
+int plat_bta_known(int i, char *name); /* remembered device i (0 the last one) -> 0: none */
+void plat_bta_pick(int i);             /* connect found device i (pairing if new; it becomes the last one) */
+int plat_bta_reconnect(int i);         /* connect remembered device i -> 0 paging */
+void plat_bta_forget(int i);
+void plat_bta_hangup(void);
+int plat_bta_state(void);              /* PLAT_BTA_* */
+
 /* WiFi (fm1.toml wifi = true: FM1B_WIFI 1): a station on JieLi's WiFi libraries and the SDK's lwIP, on the same shim.
  * Off until the app turns it on; then it joins the networks it joined before (kept in the app's store object OBJ_WIFI,
  * six, the most recent first). The app's network code runs in a task of its own (plat_net_task) with lwIP's sockets
