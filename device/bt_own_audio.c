@@ -233,7 +233,9 @@ int plat_bta_reconnect(int i)                     /* remembered device i (0 the 
     if ((st == BTA_S_LINKED || st == BTA_S_SETUP || st == BTA_S_STREAMING || st == BTA_S_PAGING) &&
         ble_eq(bp.remote, bta.mem[i].addr, 6))
         return 0;                                 /* (that device already: paging it again would end its link) */
-    return bta_page(bta.mem[i].addr) ? 0 : -1;
+    if (i)
+        bta_front((uint32_t)i);                   /* it becomes the last one: the next power-on reconnects it */
+    return bta_page(bta.mem[0].addr) ? 0 : -1;
 }
 void plat_bta_forget(int i)
 {
