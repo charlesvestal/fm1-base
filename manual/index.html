@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manual · TEMPLATE</title>
+<meta name="description" content="The manual for TEMPLATE, a firmware for the M-VAVE FM-1.">
+<style>
+/* paper and ink: warm white paper, ink-blue type, vermilion for what is played, mustard for asides; a shade of the
+   paper for code and callouts (CTL-1's; a firmware may restyle its site) */
+:root {
+  --paper: #fbf8f1; --sheet: #efe9dc; --rule: #ddd4c2; --ink: #1e2b5a; --muted: #5d6585;
+  --hot: #e5482e; --hot-t: #f8d3c9; --cool: #d9a21b; --cool-t: #f5e4b8;
+  --hot-ink: #c23a22;                                 /* the vermilion as text: 4.5:1 on the paper */
+  color-scheme: light;
+}
+body {
+  background: var(--paper); color: var(--ink); margin: 0;
+  font: 400 17px/1.6 "Helvetica Neue", Helvetica, Arial, sans-serif;
+  padding-inline: 16px; padding-block: 32px 64px;
+}
+main { max-width: 46rem; margin: 0 auto; }
+.page > .site { max-width: 46rem; margin-inline: auto; }
+main:focus { outline: none; }
+h1, h2, h3 { font-family: inherit; text-wrap: balance; line-height: 1.2; }
+h1 { font-size: 2.2rem; font-weight: 700; margin: 0 0 .4rem; letter-spacing: .02em; }
+h2 { font-size: 1.3rem; font-weight: 700; margin: 3rem 0 .8rem; padding-top: .8rem; border-top: 2px solid var(--ink); }
+h2 .num { color: var(--hot); margin-right: .5em; font-variant-numeric: tabular-nums; }
+h3 { font-size: 1.1rem; font-weight: 700; margin: 2rem 0 .5rem; }
+p, li { max-width: 65ch; }
+p { margin: 0 0 1rem; }
+ul, ol { padding-left: 1.3rem; margin: 0 0 1rem; }
+li { margin: .2rem 0; }
+li::marker { color: var(--hot); }
+strong { font-weight: 700; }
+a { color: var(--ink); text-decoration-color: var(--hot); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+a:hover { background: var(--hot-t); }
+:focus-visible { outline: 3px solid var(--hot-ink); outline-offset: 2px; }
+.skip { position: absolute; left: 16px; top: -100px; background: var(--ink); color: var(--paper); padding: 8px 14px; border-radius: 0 0 6px 6px; z-index: 1; }
+.skip:focus { top: 0; }
+code, pre { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .86em; }
+code { background: var(--sheet); padding: .08em .35em; border-radius: 3px; }
+pre { background: var(--sheet); border-radius: 6px; padding: 14px 16px; overflow-x: auto; line-height: 1.45; margin: 0 0 1.2rem; }
+pre code { background: none; padding: 0; font-size: inherit; }
+hr { display: none; }
+.table { overflow-x: auto; margin: 0 0 1.3rem; }
+table { border-collapse: collapse; width: 100%; font-size: .95rem; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; vertical-align: top; padding: .45rem .7rem .45rem 0; border-bottom: 1px solid var(--rule); }
+th { font-weight: 700; text-transform: uppercase; letter-spacing: .06em; font-size: .78rem; color: var(--muted); border-bottom: 2px solid var(--ink); }
+td:first-child { white-space: nowrap; }
+.lede { margin-bottom: 1.6rem; }
+.status { background: var(--sheet); border-radius: 6px; padding: 12px 16px; }
+.status p { margin: 0; }
+.site { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem 1.2rem; margin: 0 0 1.6rem; padding-bottom: .5rem; border-bottom: 2px solid var(--ink); }
+.site .home { font-size: 1.1rem; font-weight: 700; letter-spacing: .04em; color: var(--ink); text-decoration: none; }
+.site .home:hover { color: var(--hot-ink); background: none; }
+.site nav { margin-left: auto; display: flex; flex-wrap: wrap; gap: .2rem 1rem; font-size: .92rem; }
+.site nav a { color: var(--ink); text-underline-offset: 3px; }
+.site nav a[aria-current] { text-decoration: none; color: var(--hot-ink); }
+a.home { color: inherit; text-decoration: none; }
+a.home:hover { background: none; color: var(--hot-ink); }
+main > a.home { display: inline-block; font-size: .9rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 .4rem; }
+.callout { border-left: 4px solid var(--cool); background: var(--cool-t); padding: 10px 16px; margin: 0 0 1.2rem; max-width: 65ch; border-radius: 0 6px 6px 0; }
+.callout p { margin: 0; }
+details { background: var(--sheet); border-radius: 6px; padding: 0 16px; margin: 0 0 1.2rem; }
+details > summary { cursor: pointer; padding: 10px 0; }
+details[open] > summary { margin-bottom: .4rem; }
+details > :last-child { margin-bottom: 1rem; }
+.swatch { display: inline-block; width: .7em; height: .7em; margin-right: .4em; vertical-align: .02em; }
+nav.contents ol { columns: 2 14rem; column-gap: 2rem; padding-left: 1.3rem; }
+.figs { display: flex; flex-wrap: wrap; gap: 20px; margin: .4rem 0 1.6rem; }
+figure { margin: 0; flex: 0 1 auto; }
+figure img { display: block; max-width: 100%; height: auto; }
+figure.shot img { width: 300px; image-rendering: pixelated; border-radius: 4px; box-shadow: 0 0 0 1px var(--rule); }
+figure.wide { flex-basis: 100%; }
+figure.wide img { width: 100%; }
+figcaption { color: var(--muted); font-size: .88rem; margin-top: .4rem; max-width: 300px; }
+figure.wide figcaption { max-width: none; }
+nav.contents li { break-inside: avoid; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<div class="page">
+<header class="site"><a class="home" href="../">TEMPLATE</a><nav><a href="../emu/">Emulator</a><a href="../install/">Install</a><a href="../manual/" aria-current="page">Manual</a><a href="https://github.com/charlesvestal/fm1-base">Source</a></nav></header>
+<main id="content" tabindex="-1"><h1>Manual</h1>
+<p class="lede">TEMPLATE is the smallest complete firmware for the M-VAVE FM-1, made to be copied. Every control shows on the screen by its name as you use it, the keys play a simple voice with velocity and pressure, and a few controls do something: the octave, the wave, the volume and saving. MIDI goes out over USB and Bluetooth. It installs, updates, runs in the browser and speaks to a screen reader, as a finished firmware does.</p>
+<p>This manual is also an example: copy it with the template and write your firmware's own.</p>
+<div class="figs"><figure class="shot"><img src="img/screen-ready.png" alt="The TEMPLATE screen at rest: the name at the top, the 14 buttons in four rows, the seven knobs with their counts, the keys, then OCT +0, PRESET SINE, VOL 50%" loading="lazy"><figcaption>TEMPLATE at rest</figcaption></figure></div>
+<hr>
+<nav class="contents" aria-label="Contents"><h2 id="contents">Contents</h2>
+<ol><li><a href="#s1">Install</a></li><li><a href="#s2">The screen</a></li><li><a href="#s3">Controls</a></li><li><a href="#s4">Saving</a></li><li><a href="#s5">MIDI and audio</a></li><li><a href="#s6">The screen reader</a></li><li><a href="#s7">Troubleshooting</a></li></ol>
+</nav>
+<hr>
+<h2 id="s1"><span class="num">1</span>Install</h2>
+<p><strong>Try it first:</strong> the emulator runs the same code in the browser, with sound, played with the mouse, a touch screen or the computer keyboard.</p>
+<p><strong>Install from the browser:</strong> in Chrome or Edge, connect the FM-1 by USB, open the installer and press Install. The browser asks once to allow MIDI: allow it. Don't unplug the cable while it writes.</p>
+<p><strong>Install from a terminal:</strong> <code>python3 tools/fm1_install.py template-VERSION.fwsc</code>.</p>
+<p><strong>Back to the stock firmware:</strong> the installer's last section writes M-VAVE's own firmware back. An FM-1 that doesn't start can be recovered too. For details, see felucca-bsp's <code>tools/fm1_rescue.sh</code>.</p>
+<hr>
+<h2 id="s2"><span class="num">2</span>The screen</h2>
+<div class="figs"><figure class="shot"><img src="img/screen-playing.png" alt="TEMPLATE while a key is held: C4 in the header with V 90 P 64, FX lit among the buttons, K3 at 3, the key filled on the keyboard" loading="lazy"><figcaption>A key held, FX pressed, K3 turned</figcaption></figure></div>
+<div class="table" tabindex="0" role="region" aria-label="Table: The screen (Part, What it shows)"><table><thead><tr><th>Part</th><th>What it shows</th></tr></thead><tbody><tr><td>Header</td><td>The name, and BLE: lit while a computer or tablet is connected over Bluetooth. While a key plays, its note, the velocity it landed at (V) and how hard it's pressed (P). A message for a moment after a change.</td></tr><tr><td>Buttons</td><td>All 14, by their names. A button lights while it's held.</td></tr><tr><td>Knobs</td><td>The seven encoders, each with a count of its turns. A knob lights for a moment as it turns.</td></tr><tr><td>Keys</td><td>The 27 keys, black above white. A held key fills to its velocity, and white over that shows its pressure.</td></tr><tr><td>Bottom line</td><td>The octave, the wave (on PRESET) and the volume (MASTER).</td></tr></tbody></table></div>
+<hr>
+<h2 id="s3"><span class="num">3</span>Controls</h2>
+<div class="table" tabindex="0" role="region" aria-label="Table: Controls (Control, What it does)"><table><thead><tr><th>Control</th><th>What it does</th></tr></thead><tbody><tr><td>Keys</td><td>Play the voice, louder the harder they land, and send the note over USB and Bluetooth on channel 1, with its velocity. Pressing a held key harder sends aftertouch. The last key pressed sounds.</td></tr><tr><td>OCT− · OCT+</td><td>The octave, from −2 to +2.</td></tr><tr><td>PRESET</td><td>The wave: sine or triangle.</td></tr><tr><td>MASTER</td><td>The volume.</td></tr><tr><td>SAVE</td><td>Saves the octave, the wave and Bluetooth on or off. SAVE lights while there's something to save.</td></tr><tr><td>REC</td><td>Press: find and connect a Bluetooth MIDI device. Hold a second: Bluetooth off or on. For details, see MIDI and audio.</td></tr><tr><td>Every other button and knob</td><td>Shows its name on the screen, and nothing else. This is where a firmware wires its own.</td></tr></tbody></table></div>
+<hr>
+<h2 id="s4"><span class="num">4</span>Saving</h2>
+<p>Press SAVE to keep the octave, the wave and whether Bluetooth is on. They come back the next time the FM-1 starts. SAVE stays lit while there are changes to save.</p>
+<div class="figs"><figure class="shot"><img src="img/screen-settings.png" alt="After OCT+ and PRESET: OCT +1 and PRESET TRIANGLE, SAVE waiting" loading="lazy"><figcaption>OCT+ and PRESET changed, not saved yet</figcaption></figure></div>
+<hr>
+<h2 id="s5"><span class="num">5</span>MIDI and audio</h2>
+<p>MIDI comes in over USB, Bluetooth and the TRS jack. A note on any channel plays the voice; a note off releases it. The keys send notes, with their velocity, and poly aftertouch out over USB and Bluetooth.</p>
+<p>Over Bluetooth, TEMPLATE advertises as "FM-1". On a Mac, open Audio MIDI Setup, choose Window &gt; Show MIDI Studio, click the Bluetooth button, then Connect next to FM-1. On an iPad or iPhone, connect from a music app's Bluetooth MIDI settings.</p>
+<p>To switch Bluetooth off, hold REC for a second: the screen says BLUETOOTH OFF, and the FM-1 stops advertising and drops any connection. Hold REC again to switch it back on. Press SAVE to keep the choice: it stays so the next time the FM-1 starts.</p>
+<p>To connect TEMPLATE to a Bluetooth MIDI device, such as a keyboard or a controller, put the device in its pairing or advertising mode, then press REC: the screen says BLE SCANNING. Turn ALGORITHM to pick the device by its name, and press REC again to connect. DEV in the header lights while it's connected, and the bottom line shows the last message it sent. Press REC once more to disconnect.</p>
+<p>The keys sense how hard they're played, with no change to the FM-1. The 20 lowest keys (F3 to C5) give velocity and pressure; the top seven give velocity only.</p>
+<p>Over the USB cable the FM-1 is also a sound card. A computer can record what it plays (an input named "TEMPLATE FM-1"), and can play through it: choose "TEMPLATE FM-1" as the output, and its sound comes out of the FM-1's speaker and headphones, mixed with the FM-1's own, at MASTER's volume.</p>
+<hr>
+<h2 id="s6"><span class="num">6</span>The screen reader</h2>
+<p>TEMPLATE tells a screen reader what's on its screen, through the <a href="https://charlesvestal.github.io/fm1-reader/">FM-1 Screen Reader</a>: the name and the settings when the reader starts listening, then each change as it happens. The emulator does the same, with your own screen reader or with its built-in voice.</p>
+<hr>
+<h2 id="s7"><span class="num">7</span>Troubleshooting</h2>
+<p><strong>No sound:</strong> turn MASTER up. The voice plays only while a key is held.</p>
+<p><strong>The installer doesn't find the FM-1:</strong> use Chrome or Edge, allow MIDI when asked, and close other programs that use the FM-1's MIDI port.</p>
+<p><strong>The FM-1 doesn't start after an install:</strong> after two failed starts it waits in the chip's update mode. Put the stock firmware back, then install again. For details, see felucca-bsp's <code>tools/fm1_rescue.sh</code>.</p>
+</main>
+</div>
+</body>
+</html>
