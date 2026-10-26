@@ -170,5 +170,8 @@ run cpukhz-app sh -c "$PY tools/build.py tests/cpukhz_app --host && \
 # plat_core on both cores (cpu2 = true) in the host simulator: tests/core_app
 run core-app sh -c "$PY tools/build.py tests/core_app --host && \
     tests/core_app/build/host/coretest_host tests/core_app/tests/core.txt tests/core_app/build/host"
+# SysEx between the computer and an app (APP_SYSEX, plat_sysex_send) in the host simulator: tests/sysex_app
+run sysex-app sh -c "$PY tools/build.py tests/sysex_app --host && \
+    tests/sysex_app/build/host/sxtest_host tests/sysex_app/tests/sysex.txt tests/sysex_app/build/host"
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL
