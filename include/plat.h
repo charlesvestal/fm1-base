@@ -214,7 +214,18 @@ int plat_data_write(uint32_t off, const void *src, uint32_t n);   /* src in RAM;
  * bits taken one by one. Guaranteed on the device (felucca-bsp's fl_write: page program, no erase, no read-back) and
  * in the host simulator (the same AND). A 1 written over a 0 stays 0, and is not an error: plat_data_write does not
  * read back; an app that must know reads plat_data after. */
-void plat_sysex_send(const uint8_t *frame, uint32_t n);   /* a whole SysEx frame (F0 .. F7) out over USB */
+/* SysEx to the computer over USB (main loop): whole frames, F0 .. F7, into felucca-bsp's SysEx ring (sent before
+ * the notes), which the USB interrupt empties as the computer reads. plat_sysex_room, plat_sysex_queued and
+ * plat_usb_session (and plat_sysex_send's -1 without a computer) are built for an app with APP_SYSEX (below) */
+int plat_sysex_send(const uint8_t *frame, uint32_t n);   /* 0 = queued whole; -1 = not sent: no computer has set
+                                                         * the FM-1 up (plat_usb_session 0), or it stopped reading
+                                                         * (no room for 200 ms; what was queued goes out) */
+uint32_t plat_sysex_room(void);        /* the bytes of SysEx the ring takes now without a wait: 0 with no computer, the
+                                        * bus asleep, or a send under way. A send that must never wait checks it */
+uint32_t plat_sysex_queued(void);      /* the bytes still in the ring, not yet read (0: all out) */
+uint32_t plat_usb_session(void);       /* 0: no computer has set the FM-1 up; else a number that changes at every new
+                                        * one (a bus reset, the cable out and in): what an app keeps for a connection
+                                        * (a client's session) it drops when this changes */
 /* the resource region (fm1.toml resources = FILE, FM1B_RES; app.h APP_RES_BASE, APP_RES_SECTORS: device/res.c):
  * the file's bytes read in place, *len their count; 0 (and *len 0) while the FM-1 does not hold this build's (not
  * yet written after an update, torn, another build's): the app does without. The host writes it

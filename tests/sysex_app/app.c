@@ -3,6 +3,11 @@
 /* The SysEx test app: see app.h */
 static uint32_t sx_frames, sx_other;
 static uint8_t sx_reply[700];
+static uint32_t sx_sent;                             /* the last flood's frames sent whole */
+static void sx_put21(uint8_t *b, uint32_t v)         /* 3 x 7 bits, the lowest first */
+{
+    b[0] = (uint8_t)(v & 127u), b[1] = (uint8_t)(v >> 7 & 127u), b[2] = (uint8_t)(v >> 14 & 127u);
+}
 
 void app_init(void) {}
 void app_render(int32_t *lr, uint32_t n, uint32_t master_q12)
@@ -32,6 +37,22 @@ int app_sysex(const uint8_t *p, uint32_t n)
             sx_reply[1u + i] = p[i];
         sx_reply[1u + n] = 0xF7;
         plat_sysex_send(sx_reply, n + 2u);
+    } else if (p[3] == 2u) {                         /* room */
+        uint32_t v[3] = {plat_sysex_room(), plat_sysex_queued(), plat_usb_session()}, k = 5;
+        sx_reply[0] = 0xF0, sx_reply[1] = 0x7D, sx_reply[2] = 0x53, sx_reply[3] = 0x58, sx_reply[4] = 2;
+        for (i = 0; i < 3u; i++, k += 3u)
+            sx_put21(sx_reply + k, v[i]);
+        sx_reply[k++] = 0xF7;
+        plat_sysex_send(sx_reply, k);
+    } else if (p[3] == 3u && n >= 5u) {              /* flood */
+        uint32_t sent = 0;
+        sx_reply[0] = 0xF0, sx_reply[1] = 0x7D, sx_reply[2] = 0x53, sx_reply[3] = 0x58, sx_reply[4] = 3;
+        for (i = 5; i < 62u; i++)
+            sx_reply[i] = 0;
+        sx_reply[62] = 0xF7;
+        for (i = 0; i < p[4]; i++)
+            sent += plat_sysex_send(sx_reply, 63u) == 0;
+        sx_sent = sent;
     }
     return 1;
 }
@@ -43,6 +64,14 @@ int app_expect(const char *what, int *got)
         *got = (int)sx_frames;
     else if (!strcmp(what, "other"))
         *got = (int)sx_other;
+    else if (!strcmp(what, "sent"))
+        *got = (int)sx_sent;
+    else if (!strcmp(what, "room"))
+        *got = (int)plat_sysex_room();
+    else if (!strcmp(what, "queued"))
+        *got = (int)plat_sysex_queued();
+    else if (!strcmp(what, "session"))
+        *got = (int)plat_usb_session();
     else
         return 0;
     return 1;

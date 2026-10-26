@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Henri David */
 /* The SysEx test app (tests/run_tests.sh): the platform's SysEx with the computer as an app sees it. It answers frames
- * F0 7D 53 58 cmd args F7 ("SX"); cmd 1 echo: the same frame back. Nothing else: no sound, a black screen. */
+ * F0 7D 53 58 cmd args F7 ("SX"); cmd 1 echo: the same frame back; 2 room: plat_sysex_room, plat_sysex_queued,
+ * plat_usb_session (3 x 7 bits each, as the frame's three numbers); 3 flood N: N frames of 63 bytes at once, then the
+ * number sent whole (plat_sysex_send 0). Nothing else: no sound, a black screen. */
 #pragma once
 #include <stdint.h>
 #include "plat.h"
