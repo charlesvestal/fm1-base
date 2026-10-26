@@ -2,6 +2,12 @@
  * Copyright (C) 2026 Henri David */
 /* The SysEx test app: see app.h */
 static uint32_t sx_frames, sx_other;
+static volatile uint32_t sx_bytes, sx_starts;
+void app_sysex_byte(uint8_t b)
+{
+    sx_bytes++;
+    sx_starts += b == 0xF0u;
+}
 static uint8_t sx_reply[700];
 static uint32_t sx_sent, sx_stream;                             /* the last flood's frames sent whole */
 static void sx_put21(uint8_t *b, uint32_t v)         /* 3 x 7 bits, the lowest first */
@@ -75,6 +81,10 @@ int app_expect(const char *what, int *got)
 {
     if (!strcmp(what, "frames"))
         *got = (int)sx_frames;
+    else if (!strcmp(what, "bytes"))
+        *got = (int)sx_bytes;
+    else if (!strcmp(what, "starts"))
+        *got = (int)sx_starts;
     else if (!strcmp(what, "other"))
         *got = (int)sx_other;
     else if (!strcmp(what, "sent"))

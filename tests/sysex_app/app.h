@@ -28,6 +28,11 @@ void app_say(const char *a, const char *b);
 #define APP_SYSEX
 int app_sysex(const uint8_t *p, uint32_t n);
 
-/* the host simulator's checks: frames (taken by the app), other (offered, not the app's) */
+/* every SysEx byte from USB as it comes (the USB interrupt): counted, for frames longer than app_sysex takes */
+#define APP_SYSEX_BYTE
+void app_sysex_byte(uint8_t b);
+
+/* the host simulator's checks: frames (taken by the app), other (offered, not the app's),
+ * bytes (seen by app_sysex_byte), starts (its F0s) */
 #define APP_HOST_EXPECT
 int app_expect(const char *what, int *got);
