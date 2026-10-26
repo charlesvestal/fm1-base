@@ -61,6 +61,8 @@ run ram-run "$PY" tests/ram_run_test.py
 run romref "$PY" tests/romref_test.py
 # fm1.toml cpu2_stack (tools/build.py cpu2_stack_flags): the second core's job stack, its range and its stop message
 run cpu2-stack "$PY" tests/cpu2_stack_test.py
+# the check on an app's RAM code (tools/ramcode.py, plat.h PLAT_RAM_CODE): RAM -> RAM passes, into XIP fails
+run ramcode "$PY" tests/ramcode_test.py
 # the web installer's m-bootloader step (web/fm1ota.js installBoot) against a simulated FM-1, and finding the FM-1 by
 # its port (unusual names, the loader under a new name, M-VAVE's Open firmware, resume's check, package checksums),
 # and writing the resource region after it
