@@ -31,6 +31,10 @@ static uint32_t wdt_stage __attribute__((section(".noinit")));   /* the main loo
                                                                   * 2 Bluetooth, 3 the app's loop, 4 USB, 5 a frame,
                                                                   * 6 input (fm1b_dbg.stage) */
 
+#if FM1B_BT_AUDIO
+static int own_bta_feed(const int32_t *o, uint32_t n);   /* bt_own_audio.c */
+static int bta_frame(const uint8_t *p, uint32_t n);
+#endif
 static void render_block(int32_t *o)                /* ALNK0: one half, measured */
 {
     uint32_t t0 = fm1_ticks(), us, budget = HALF_FRAMES * 1000000u / FS;
@@ -76,6 +80,13 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
                 for (i = 0; i < 2u * REND_FRAMES; i++)
                     o[2u * k + i] = (int32_t)((float)o[2u * k + i] * g);
             }
+#if FM1B_BT_AUDIO
+            if (own_bta_feed(o + 2u * k, REND_FRAMES)) {   /* Bluetooth audio streams: the FM-1's own output muted */
+                uint32_t i;
+                for (i = 0; i < 2u * REND_FRAMES; i++)
+                    o[2u * k + i] = 0;
+            }
+#endif
         }
     }
     us = (fm1_ticks() - t0) / FM1_TICKS_PER_US;
@@ -987,6 +998,9 @@ static void fm1_main(void)
             if (ota_frame_get(&p, &n) && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || remote_frame(p, n)
 #if FM1B_WIFI
                                           || wifi_frame(p, n)
+#endif
+#if FM1B_BT_AUDIO
+                                          || bta_frame(p, n)
 #endif
 #ifdef APP_SYSEX
                                           || app_sysex(p, n)

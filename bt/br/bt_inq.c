@@ -193,7 +193,12 @@ static int bti_radio_up(void)                      /* the radio's start-up, once
         bti_st.rf_up = 1;
         return 1;
     }
+#ifdef BTI_RADIO_TRIMS                             /* (the firmware gives the trims: fm1-base's measured calibration) */
+    (void)info;
+    if (!BTI_RADIO_TRIMS(&t)) {
+#else
     if (!ble_vm_scan(bti_vm_rd, 0, &info, &t, 0, 0)) {
+#endif
         bti_st.phase = BTI_NO_TRIMS;
         return 0;
     }

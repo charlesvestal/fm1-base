@@ -58,6 +58,8 @@ Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio
 app.h); the build prints what it has.
   ble_stack = "own"          with ble: Optimist's own Bluetooth stack (bt/: Henri David's, docs/bt/BLE-STACK.md;
                              FM1B_BLE_OWN) instead of JieLi's libraries: nothing of the SDK's linked, no shim
+  ble_pairing = true         with ble_stack = "own": pairing and an encrypted link (LE legacy pairing, Just Works),
+                             the bond kept in OBJ_BLE; without it a pairing is refused (macOS and iOS connect anyway)
   ble = true                 Bluetooth MIDI (FM1B_BLE): ble/ on JieLi's BT libraries, from the AC79 SDK ($AC79_SDK);
                              --no-ble builds without it (NAME-usb.fwsc), and the build checks nothing of JieLi's is in
   wifi = true                WiFi (FM1B_WIFI): a station on JieLi's WiFi libraries and the SDK's lwIP (built from its
@@ -547,6 +549,10 @@ def build_app():
         flags += ["-DFM1B_BLE=1", "-DFM1B_BLE_OWN=1", *inc(SRC / "bt" / "ble", SRC / "bt" / "br")]
         if CONF.get("ble_central"):
             flags.append("-DFM1B_BLE_CENTRAL=1")
+        if CONF.get("bt_audio"):                   # Bluetooth audio out (A2DP source, bt/br)
+            flags.append("-DFM1B_BT_AUDIO=1")
+        if CONF.get("ble_pairing"):                # pairing and an encrypted link (LE legacy, Just Works; the bond kept)
+            flags += ["-DBLE_LL_ENC=1", "-DBLE_SMP_LEGACY=1"]
         GEN.mkdir(parents=True, exist_ok=True)    # the radio's start-up program (fm1_ble_rf.h includes it)
         tables = (BSP / "chip" / "ble_rf_tables_v15.h").read_bytes()   # (Apache-2.0: JieLi's rf_init, from V15)
         if not (GEN / "ble_rf_tables.h").exists() or (GEN / "ble_rf_tables.h").read_bytes() != tables:

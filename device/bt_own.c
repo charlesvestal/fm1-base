@@ -25,13 +25,21 @@
 #include "ble_diag.c"
 #endif
 
+#if FM1B_BT_AUDIO
+static void own_bta_load(void);
+static void own_bta_keep(void);
+static void bti_poll(void);
+static uint8_t own_bta_attached;
+#endif
 /* ---- what is kept (OBJ_BLE): the address, the radio calibration's copy, the bond */
-#define OWN_MAGIC 0x4F574E32u                     /* "OWN2": the JieLi build's records in OBJ_BLE read as none */
+#define OWN_MAGIC 0x4F574E33u                     /* "OWN3": the JieLi build's records in OBJ_BLE read as none */
 static struct own_store {
     uint32_t magic;
     uint8_t addr[6], have_bond, pad;
     uint8_t bond_rand[8], bond_ltk[16];
     uint16_t bond_ediv, pad2;
+    uint8_t bta_own[6], bta_own_set, bta_nmem;    /* Bluetooth audio (bt_own_audio.c): our BR/EDR address, the devices */
+    uint8_t bta_mem[4 * 40];                      /* (struct bta_mem x BTA_MEMS, bt_audio.h) */
 } own;
 static volatile uint8_t own_dirty;               /* the main loop saves it (a flash write: never from an interrupt) */
 
@@ -198,6 +206,9 @@ static void ble_start(void)
         own_addr(own.addr);
         own_dirty = 1;
     }
+#if FM1B_BT_AUDIO
+    own_bta_load();
+#endif
     ble_init(own.addr, 1);
 #if BLE_SMP_LEGACY
     if (own.have_bond)
@@ -260,6 +271,10 @@ static void own_diag_line(void)                   /* the link layer's counters, 
 }
 #endif
 
+#if FM1B_BLE_CENTRAL
+static void own_central_poll(void);
+#endif
+
 static void ble_poll(void)
 {
     static uint32_t seen_events, last_diag;
@@ -271,6 +286,15 @@ static void ble_poll(void)
     radio_settle(1);
     if (ble_state != BLE_READY)
         return;
+#if FM1B_BLE_CENTRAL
+    own_central_poll();
+#endif
+#if FM1B_BT_AUDIO
+    if (own_bta_attached) {
+        bti_poll();                               /* Bluetooth audio: the page, the link, the stream's packets */
+        own_bta_keep();
+    }
+#endif
     while (oi_r != oi_w) {                        /* MIDI in, to radio.c's rings (and its clock smoothing) */
         ble_midi_receive(own_in[oi_r % IQ].pkt, own_in[oi_r % IQ].ts);
         RING_PUBLISH();
@@ -332,6 +356,9 @@ void plat_ble_enable(int on)
     if (!on)
         shim_log("switched off");
 }
+#if FM1B_BT_AUDIO
+#include "bt_own_audio.c"
+#endif
 #if FM1B_BLE_CENTRAL
 #include "bt_own_central.c"
 #else

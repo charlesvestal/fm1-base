@@ -21,6 +21,10 @@ or by a program (an agent). Needs mido with python-rtmidi.
                                             the networks kept
     wifi join SSID [PASSWORD]               join a network (kept once joined); no password: a kept one's, or none
     wifi forget N                           forget the network kept at N (0 = the most recent)
+    bta on | bta off | bta scan             Bluetooth audio (ble_stack = "own" with bt_audio = true): on, off, look
+    bta status | bta found | bta known      for headphones and speakers; its state; the devices found; remembered
+    bta pick N | bta connect N              connect found device N / remembered device N (0 = the last one)
+    bta hangup | bta forget N               end the link; forget remembered device N
   e.g.  tools/fm1_remote.py tap REC wait 800 screen
 
 The firmware's side: device/main_fm1.c remote_frame (F0 7D 4C 43 ...), log_frame (F0 7D 4C 47), wifi_frame
@@ -35,6 +39,9 @@ BTN = ["FX", "SEL", "ENV", "LFO", "EDIT", "GLO", "HOME", "SAVE", "ARP", "SEQ", "
 ENC = ["SELECT", "ALGO", "PRESET", "K1", "K2", "K3", "K4"]
 LC, LG, LW, SR = [0x7D, 0x4C, 0x43], [0x7D, 0x4C, 0x47], [0x7D, 0x4C, 0x57], [0x7D, 0x53, 0x52]
 WIFI_OP = {"on": 1, "off": 2, "scan": 3, "status": 4, "saved": 5, "forget": 6, "join": 7, "found": 8}
+LA = [0x7D, 0x4C, 0x41]                    # Bluetooth audio (device/bt_own_audio.c bta_frame)
+BTA_OP = {"on": 1, "off": 2, "scan": 3, "status": 4, "found": 5, "pick": 6, "connect": 7, "known": 8, "hangup": 9,
+          "forget": 10}
 
 
 def nibbles(text):
@@ -160,6 +167,16 @@ class FM1:
                 for f in self.frames(LW, 3.0, until=lambda f: f[:1] == b"\x11"):
                     if f[:1] == b"\x10":
                         print("wifi:", f[1:].decode("latin1", "replace"))
+                i += used
+            elif c == "bta":
+                op = BTA_OP.get(a)
+                if op is None:
+                    raise SystemExit(f"bta {a!r}: " + ", ".join(BTA_OP))
+                data, used = ([int(b)], 3) if a in ("pick", "connect", "forget") else ([], 2)
+                self.sysex(LA + [op] + data)
+                for f in self.frames(LA, 3.0, until=lambda f: f[:1] == b"\x11"):
+                    if f[:1] == b"\x10":
+                        print("bta:", f[1:].decode("latin1", "replace"))
                 i += used
             elif c == "release-all":
                 self.btn = self.keys = 0           # a frame at a time: three back to back, the FM-1 may drop one

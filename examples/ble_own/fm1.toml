@@ -7,6 +7,8 @@ o2 = []                        # separate units compiled at -O2 (an app's DSP)
 words = "words.tsv"
 ble = true                     # Bluetooth MIDI (--no-ble builds without it)
 ble_stack = "own"              # Optimist's own Bluetooth stack (bt/), no JieLi library
+ble_pairing = true             # pairing and an encrypted link (the bond kept)
+bt_audio = true                # Bluetooth audio out to headphones and speakers (A2DP)
 # the site (tools/make_site.py, tools/publish_site.sh)
 tagline = "a starting point for FM-1 firmware"
 repo = "https://github.com/charlesvestal/fm1-base"
