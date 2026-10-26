@@ -72,6 +72,20 @@ e.g. `(set.bluetooth != 0)`). Off ends every link and stops advertising and scan
 should say where the setting is (the template's: for details, see template/docs/MANUAL.md).
 `tools/build.py --no-ble` builds the same firmware without Bluetooth (NAME-usb.fwsc).
 
+### Open Bluetooth (peripheral)
+
+`ble = "open"` (with `ble_central = false`) builds an open Bluetooth LE stack instead of JieLi's: a clean-room
+controller for the FM-1's radio, Apache NimBLE 1.10.0 as the host, and the BLE-MIDI service. It links nothing of
+JieLi's except a few transcribed radio tables (Apache-2.0); a package still takes its three data files from
+`$AC79_SDK`. It is one link to a computer or a phone (tested with macOS, iOS and Linux), with pairing, bonds for
+eight of them, and MIDI clock timed by the sender's timestamps. Devices (`ble_central`, `TO_BLE_DEV`) are not there
+yet. An app needs nothing new: the steps above (`OBJ_BLE`, `TO_BLE`, `PORT_BLE`) are the same.
+`tools/build.py template --open-ble` builds the template with it once (`template-open.fwsc`).
+
+A new bond is saved when the link closes: after the first pairing, disconnect once (on a Mac or an iPhone, turn
+Bluetooth off and on) before switching the FM-1 off. `ble_no_pairing = true` drops pairing: MIDI in plaintext, for
+anyone nearby. Details, sizes, tests and limitations: [docs/OPEN-BLE.md](docs/OPEN-BLE.md).
+
 ### Turning WiFi on
 
 1. In fm1.toml, `wifi = true` (and not `ble`). Leave USB audio out (`usb_audio_in = false`, `usb_audio_out =
@@ -99,6 +113,8 @@ The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss`
 | The template without a radio (`--no-ble`) | 77 | 27 | 68 |
 | Bluetooth MIDI with a computer (`ble`) | + 124 | + 45 | + 24 |
 | Bluetooth MIDI devices too (`ble_central`) | + 8 | + 1 | 0 |
+| Open Bluetooth MIDI with a computer (`ble = "open"`, `ble_diag = false`) | + 107 | + 6 | + 31 |
+| The same with its diagnostics (`ble_diag = true`, the default) | + 127 | + 7 | + 84 |
 | WiFi (`wifi`, from fm1-radio's measurements) | + about 300 | + about 100 | + about 276 |
 
 - Bluetooth: JieLi's BT controller and stack (the flash), its 24 KB heap and their tables (the RAM), three task
@@ -114,6 +130,9 @@ The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss`
   hear). `examples/wifi` is 420 KB of
   flash, 119 of 128 KB of RAM and 299 of 304 KB of pool; fm1-radio (MP3 and HE-AAC decoders, HTTPS) is
   576 KB, 127 KB and 300 KB.
+- Open Bluetooth: measured on the template against its own `--no-ble` build (both October 2026, the same BSP); its
+  controller, NimBLE, the crypto and the pools for one link. Diagnostics also take 20 KB of RAMTEXT for a trace. In
+  the same measurement JieLi's Bluetooth (with devices) is + 134, + 47 and + 24. See docs/OPEN-BLE.md.
 - In a WiFi build, fm1-base's large font (the splash's name, the panel's screens) can go too:
   `#define APP_BIG_FONT FONT_M` in app.h saves 20 KB of flash.
 - An app with fonts of its own can give them to fm1-base's screens (crash, safe mode, update, restore,
