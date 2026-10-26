@@ -78,7 +78,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   mirror = true              the screen and panel mirrored over USB (FM1B_MIRROR: device/mirror.c; web/mirror/,
                              tools/fm1_mirror.py), the panel played from the host; FM1B_MIRROR=1 in the environment
                              builds it in whatever fm1.toml says (an app's demo build), FM1B_POOL_SPARE=N the
-                             pool spare the build insists on (8192 B; a demo build may spend it)
+                             spare the build insists on (8192 B of the SRAM, device/app.ld; of the pool with WiFi;
+                             a demo build may spend it)
   msc = true                 disk mode: the FM-1 as a USB drive of the app's blocks (FM1B_MSC: device/msc.c, plat_disk_* in
                              plat.h; felucca-bsp usb.c FELUCCA_MSC), no USB MIDI or audio meanwhile
   backup = true              backup and restore of the app's saved objects over USB (FM1B_BACKUP: device/backup.c;
@@ -157,6 +158,7 @@ SRC = Path(__file__).resolve().parents[1]        # fm1-base
 BSP = SRC / "bsp"                                 # felucca-bsp (git submodule)
 APP = OUT = GEN = LDR = ROOT = None               # set by main() from APP_DIR
 CONF = {}
+LAYOUT = {}                                       # the linked script's MEMORY regions: {name: (origin, length)}
 sys.path.insert(0, str(SRC / "tools"))
 import fm1pkg_make  # noqa: E402
 import boot_pack  # noqa: E402
@@ -748,7 +750,9 @@ def build_app():
     # bitcode: the linker needs the toolchain's LLVM plugin
     lto = ["--plugin", "/opt/jieli/pi32v2/bin/LLVMgold.so" if use_docker() else str(toolchain() / "pi32v2/bin/LLVMgold.so"),
            f"--plugin-opt=mcpu={CPU}", "--plugin-opt=-pi32v2-large-program=true"] if jieli else []
+    global LAYOUT
     ld = SRC / "device" / ("app_wifi.ld" if WIFI else "app.ld")
+    LAYOUT = memory_regions(ld.read_text())
     tc("pi32v2/bin/ld", *lto, "--gc-sections", "-e", "_start", "-T", ld, *objs, *b_objs,
        *b_libs, "-o", elf)
     for sect in ("text.bin", "data.bin", "ramtext.bin"):
@@ -791,6 +795,18 @@ def build_app():
     img += b"\xff" * (-len(img) % 4)
     (OUT / (NAME + ".bin")).write_bytes(img)
     return bytes(img), syms, dis, rt
+
+
+def memory_regions(script):
+    """a linker script's MEMORY regions: {name: (origin, length)} (lengths in hex, decimal or K)"""
+    block = re.search(r"\bMEMORY\s*\{(.*?)\}", script, re.S)
+    if not block:
+        raise SystemExit("build: the linker script has no MEMORY block")
+
+    def num(v):
+        return int(v[:-1]) * 1024 if v.endswith("K") else int(v, 0)
+    return {m.group(1): (num(m.group(2)), num(m.group(3))) for m in re.finditer(
+        r"^\s*(\w+)\s*\([a-z]+\)\s*:\s*ORIGIN\s*=\s*(\w+)\s*,\s*LENGTH\s*=\s*(\w+)", block.group(1), re.M)}
 
 
 def mul64_near_loads(dis, window=4):
@@ -895,12 +911,25 @@ def check(img, syms, dis, rt):
     def sym(name):
         mm = re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M)
         return int(mm.group(1), 16) if mm else 0
-    bss = sym("_bss_end") - 0x01C08000
-    pool = sym("_pool_end") - sym("_pool_start")
-    ram, pool_max, spare = (128 * 1024, 0x4C000, 2048) if WIFI else (96 * 1024, 0x54000, 8192)   # (app_wifi.ld)
+    rt, bss, pool = (sym("_rt_end") - sym("_rt_start"), sym("_bss_end") - sym("_data_start"),
+                     sym("_pool_end") - sym("_pool_start"))
+    spare = 2048 if WIFI else 8192
     if os.environ.get("FM1B_POOL_SPARE", "").isdigit():   # an app's own build for itself (a demo build with mirror)
         spare = int(os.environ["FM1B_POOL_SPARE"])
-    notes.append(f"image {len(img)} B; RAM .data+.bss {bss} B of {ram}; pool {pool} B of {pool_max}")
+    if "SRAM" in LAYOUT:                          # device/app.ld: one packed region, one budget
+        org, size = LAYOUT["SRAM"]
+        used = sym("_pool_end") - org
+        notes.append(f"image {len(img)} B; SRAM {used} B of {size}: RAM code {rt} B, .data+.bss {bss} B, pool {pool} B; "
+                     f"free {size - used} B ({spare} kept spare)")
+        if size - used < spare:                   # keep some of the SRAM spare
+            errors.append(f"SRAM headroom {size - used} B < {spare} B")
+        if BOOT_PACKED:                           # the boot decoder runs from the flash alone (tools/boot_pack.py)
+            errors += boot_pack.check_decoder(syms, dis, APP_XIP, APP_XIP + APP_SLOT)
+            notes.append(f"boot_pack: .ram_text + .data {BOOT_PACKED[0]} B stored as {BOOT_PACKED[1]} B (LZMA, unpacked at boot)")
+        return errors, notes
+    (_, rt_max), (_, ram), (_, pool_max) = LAYOUT["RAMTEXT"], LAYOUT["RAM"], LAYOUT["POOL"]   # (app_wifi.ld)
+    notes.append(f"image {len(img)} B; RAM code .ram_text {rt} B of {rt_max}; RAM .data+.bss {bss} B of {ram}; "
+                 f"pool {pool} B of {pool_max}")
     if BOOT_PACKED:                               # the boot decoder runs from the flash alone (tools/boot_pack.py)
         errors += boot_pack.check_decoder(syms, dis, APP_XIP, APP_XIP + APP_SLOT)
         notes.append(f"boot_pack: .ram_text + .data {BOOT_PACKED[0]} B stored as {BOOT_PACKED[1]} B (LZMA, unpacked at boot)")

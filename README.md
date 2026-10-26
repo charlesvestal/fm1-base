@@ -128,8 +128,9 @@ For a working example, see `examples/wifi`; for a whole firmware, fm1-radio.
 
 ### What each costs
 
-The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss` (128 KB in a WiFi build), and a
-336 KB pool of RAM for big buffers (304 KB in a WiFi build). Measured on the template (October 2026), in KB:
+The FM-1 has a 581 KB app slot in the flash and 464 KB of SRAM, one budget packed from its bottom for the RAM code,
+`.data` and `.bss`, and the pool of big buffers, 8 KB kept spare (`device/app.ld`; a WiFi build keeps fixed
+regions: 24 KB of RAM code, 128 KB of RAM, a 304 KB pool). Measured on the template (October 2026), in KB:
 
 | | Flash | RAM | Pool |
 | --- | --- | --- | --- |
@@ -141,7 +142,7 @@ The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss`
 | WiFi (`wifi`, from fm1-radio's measurements) | + about 300 | + about 100 | + about 276 |
 
 - Bluetooth: JieLi's BT controller and stack (the flash), its 24 KB heap and their tables (the RAM), three task
-  stacks of 8 KB (the pool). The template with Bluetooth and devices is 214 KB of flash, 75 of 96 KB of RAM: room
+  stacks of 8 KB (the pool). The template with Bluetooth and devices is 214 KB of flash, 75 KB of RAM: room
   for a big app (CTL-1, with a General MIDI synth, is 491 KB).
 - The own stack: the template with Bluetooth MIDI alone is 118 to 123 KB of flash, 37 KB of RAM and 69 KB of pool;
   with pairing, devices and audio, 180 KB, 45 KB and 99 KB. On a big app the
