@@ -107,8 +107,22 @@ static uint8_t own_bta_tries;
 static uint32_t own_bta_t;
 static void own_bta_poll(void)
 {
+    static uint8_t was_scanning;
+    uint32_t st;
     if (bta.mode == BTA_OFF)
         return;
+    st = bta_state();
+    if (was_scanning && st != BTA_S_SCANNING) {   /* a scan over: the answers heard (FHS) and the devices listed */
+        char b[40], *q = b;
+        for (const char *t = "audio scan: heard "; *t; )
+            *q++ = *t++;
+        q = put_dec(q, bti_st.fhs);
+        for (const char *t = ", listed "; *t; )
+            *q++ = *t++;
+        put_dec(q, bta.n);
+        shim_log(b);
+    }
+    was_scanning = (uint8_t)(st == BTA_S_SCANNING);
     if (bta_rejoin()) {                           /* (the link closed after the pairing: paged again) */
         own_bta_tries = 1;
         own_bta_t = fm1_ms;
@@ -201,8 +215,13 @@ void plat_bta_pick(int i)                         /* found device i: connect (it
 }
 int plat_bta_reconnect(int i)                     /* remembered device i (0 the last one): connect */
 {
+    uint32_t st;
     if (bta.mode == BTA_OFF || i < 0 || (uint32_t)i >= bta.nmem)
         return -1;
+    st = bta_state();
+    if ((st == BTA_S_LINKED || st == BTA_S_SETUP || st == BTA_S_STREAMING || st == BTA_S_PAGING) &&
+        ble_eq(bp.remote, bta.mem[i].addr, 6))
+        return 0;                                 /* (that device already: paging it again would end its link) */
     return bta_page(bta.mem[i].addr) ? 0 : -1;
 }
 void plat_bta_forget(int i)
