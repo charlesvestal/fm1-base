@@ -199,6 +199,27 @@ static char *put_dec(char *b, uint32_t v)
     return b;
 }
 
+#include "fm1_rf_regs.h"
+/* the radio's calibration as it stands (both stacks): the TX LO trims, RX DC, the RX filter codes and the VCO
+ * bank, one log line each pair (docs/bt/RF-CALIBRATION.md §4.1: what a measurement of ours must match) */
+static void radio_cal_log(void)
+{
+    uint32_t v[FM1_RF_CAL_NREGS], i;
+    char b[40];
+    fm1_rf_cal_regs(v);
+    for (i = 0; i < FM1_RF_CAL_NREGS; i += 2u) {
+        b[0] = 'r'; b[1] = 'f'; b[2] = (char)('1' + i / 2u);   /* (rf1..rf7: the log folds lines that start alike) */
+        hex8(b + 3, FM1_RF_CAL_REGS[i] & 0xFFFFFu);
+        b[3] = ' ';
+        b[11] = ' ';
+        hex8(b + 12, v[i]);
+        b[20] = ' ';
+        hex8(b + 21, v[i + 1]);
+        b[29] = 0;
+        shim_log(b);
+    }
+}
+
 /* at boot: what ended the last run. The crash note: the fault's pc, vector and debug register, its
  * return address and how long Bluetooth had run, and the core's last four branches (ETM). */
 static uint8_t radio_last_bad;                      /* the last BT run ended in a crash or a watchdog reset */
@@ -667,6 +688,7 @@ void shim_bt_event(int from, const void *event, int len)
             shim_log(b);
         }
         bt_ble_init();
+        radio_cal_log();
         ble_state = BLE_READY;
     }
 }

@@ -9,9 +9,9 @@
  * ble_poll, ble_midi_send_many, ble_midi_connected and the plat_ble_* calls. One link at a time: the computer's
  * (link 0, the FM-1 the peripheral) or, with ble_central, a device's (link 1, the FM-1 the central).
  *
- * The radio needs this FM-1's calibration, which the stock firmware left in the SDK's VM area (flash 0x0E8000, never
- * written by fm1-base): read there at every start, and a copy kept in OBJ_BLE in case the area is ever wiped. With
- * neither the radio is never started (BLE_FAILED, "no radio calibration" on the log).
+ * The radio is calibrated at every start, by our own measurement (felucca-bsp chip/fm1_rf_cal.h, after JieLi's SDK;
+ * docs/bt/RF-CALIBRATION.md): nothing stored is needed, so a unit whose stock calibration was overwritten (the SDK's
+ * VM at 0x0E8000 lies in PLAT_XDATA1) works the same. Records 106, 107 and 108 are the SDK board's constants.
  *
  * Part of radio.c (the unity build). */
 #ifndef BLE_DEVICE_NAME
@@ -21,17 +21,15 @@
 #define BLE_CENTRAL 1
 #endif
 #include "ble_stack.c"
-#include "ble_vm.c"
 #if BLE_DIAG
 #include "ble_diag.c"
 #endif
 
 /* ---- what is kept (OBJ_BLE): the address, the radio calibration's copy, the bond */
-#define OWN_MAGIC 0x4F574E31u                     /* "OWN1": the JieLi build's records in OBJ_BLE read as none */
+#define OWN_MAGIC 0x4F574E32u                     /* "OWN2": the JieLi build's records in OBJ_BLE read as none */
 static struct own_store {
     uint32_t magic;
     uint8_t addr[6], have_bond, pad;
-    uint8_t rf[BLE_RF_COPY_SIZE];
     uint8_t bond_rand[8], bond_ltk[16];
     uint16_t bond_ediv, pad2;
 } own;
@@ -148,24 +146,47 @@ int ble_midi_send_many(int link, const uint32_t *pkts, const uint16_t *ms, int n
 int ble_midi_peripheral_connected(void) { return own_role == 1u && ble_midi_ready(); }
 int ble_midi_peripheral_linked(void) { return own_role == 1u; }
 
-static int own_flash_rd(void *ctx, uint32_t off, uint8_t *dst, uint32_t n)
-{
-    (void)ctx;
-    return st_read(off, dst, n);
-}
-
 static void own_held(int hold)                    /* the BLE interrupts held while the main loop changes the stack */
 {
     fm1_ble_irqs_hold(hold);
 }
 
-static const char *const OWN_RF_FROM[3] = {"none", "the VM", "the copy"};
+/* the SDK board's values for the three constant records (RF-CALIBRATION.md §3.1, §3.3, §3.4): crystal load, PA bias,
+ * Wi-Fi per-rate gains (zero: the defaults kept). 187 is measured (fm1_rf_cal_on) */
+static const struct ble_rf_trims OWN_TRIMS = {{0x0B, 0x0B}, {1, 7, 4, 7, 11, 1, 7}, {0}, {0}};
+
+static void own_cal_log(void)                     /* what the calibration measured, on the log */
+{
+    char b[40], *q = b;
+    for (const char *t = "cal "; *t; )
+        *q++ = *t++;
+    hex8(q, (uint32_t)fm1_rfc_scan_rc << 24 | (uint32_t)(fm1_rfc_trim_rc & 0xFF) << 16 | fm1_rfc.mid << 8 | fm1_rfc.bank121);
+    q += 8;
+    *q++ = ' ';
+    hex8(q, (uint32_t)fm1_rfc.flt[0] << 16 | fm1_rfc.flt[1] << 8 | fm1_rfc.flt[2]);
+    q += 8;
+    *q++ = ' ';
+    hex8(q, (uint32_t)fm1_rfc.txlo_i << 8 | fm1_rfc.txlo_q);
+    q[8] = 0;
+    shim_log(b);
+    q = b;
+    for (const char *t = "cal us "; *t; )
+        *q++ = *t++;
+    q = put_dec(q, fm1_rfc.us_scan);
+    *q++ = ' ';
+    q = put_dec(q, fm1_rfc.us_filter);
+    *q++ = ' ';
+    q = put_dec(q, fm1_rfc.us_txlo);
+    *q++ = ' ';
+    q = put_dec(q, fm1_rfc.us_rxdc);
+    *q++ = ' ';
+    q = put_dec(q, fm1_rfc.to_dem);
+    shim_log(b);
+}
+
 static void ble_start(void)
 {
-    struct ble_vm_info info;
-    struct ble_rf_trims vm, use;
-    int complete, from, save;
-    char b[40], *q;
+    char b[40];
     uint32_t f;
     if (ble_state != BLE_OFF)
         return;
@@ -176,46 +197,6 @@ static void ble_start(void)
         own.magic = OWN_MAGIC;
         own_addr(own.addr);
         own_dirty = 1;
-    }
-    complete = ble_vm_scan(own_flash_rd, 0, &info, &vm, 0, 0);
-    from = ble_rf_choose(complete, &vm, info.area, own.rf, &use, &save);
-    if (save)
-        own_dirty = 1;
-    q = b;
-    for (const char *t = "radio calibration: "; *t; )
-        *q++ = *t++;
-    for (const char *t = OWN_RF_FROM[from]; *t; )
-        *q++ = *t++;
-    *q = 0;
-    shim_log(b);
-    if (from == BLE_RF_NONE) {
-        q = put_dec(b + 3, info.have);
-        b[0] = 'v'; b[1] = 'm'; b[2] = ' ';
-        *q++ = ' ';
-        hex8(q, info.area);
-        q[8] = 0;
-        shim_log(b);
-        for (uint32_t i = 0, sz; ble_vm_cand(i, &sz); i++) {   /* what each place holds: its first 8 bytes */
-            uint8_t w[8];
-            uint32_t a = ble_vm_cand(i, &sz), k;
-            hex8(b, a);
-            b[8] = ' ';
-            if (st_read(a, w, 8)) {
-                b[9] = '?';
-                b[10] = 0;
-            } else {
-                for (k = 0; k < 8u; k++) {
-                    b[9 + 2 * k] = "0123456789ABCDEF"[w[k] >> 4];
-                    b[10 + 2 * k] = "0123456789ABCDEF"[w[k] & 15u];
-                }
-                b[25] = 0;
-            }
-            shim_log(b);
-        }
-        shim_log("no radio calibration: not started");
-        ble_state = BLE_FAILED;
-        radio_settle(1);
-        return;
     }
     ble_init(own.addr, 1);
 #if BLE_SMP_LEGACY
@@ -228,7 +209,10 @@ static void ble_start(void)
     fm1_ble_irqs_hold(1);
     fm1_guard_lock_top();
     irq_restore(f);
-    ble_hw_wl82_start(&use);                      /* the radio's start-up (its crystal ramp from RAM, IRQs off) */
+    fm1_rf_cal_on = 1;                            /* (our own measurement, not a stored 187) */
+    ble_hw_wl82_start(&OWN_TRIMS);                /* the radio's start-up, its calibration (crystal ramp from RAM) */
+    own_cal_log();
+    radio_cal_log();
     {
         const uint8_t *p;
         uint8_t n = ble_gap_name(&p), i;
@@ -263,7 +247,15 @@ static void own_diag_line(void)                   /* the link layer's counters, 
     *q++ = ':';
     q = put_dec(q, ble_dg.close_reason);
     *q++ = ' ';
-    put_dec(q, ble_dg.isr_max_us);
+    q = put_dec(q, ble_dg.isr_max_us);
+    *q++ = ' ';
+    *q++ = 'i';                                   /* MIDI messages in from the link, out to it, in lost */
+    q = put_dec(q, oi_w);
+    *q++ = ' ';
+    *q++ = 'o';
+    q = put_dec(q, oo_r);
+    *q++ = ' ';
+    put_dec(q, oi_lost);
     shim_log(b);
 }
 #endif
