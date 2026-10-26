@@ -124,6 +124,8 @@ def main(app, pkg, version, out):
     boot_name = f"m-bootloader-{MBOOT_VERSION}.fwsc"
     shutil.copy(boot, out / "firmware" / boot_name)
     shutil.copy(SRC / "web" / "m-bootloader" / "LICENSE", out / "firmware" / "m-bootloader-LICENSE.txt")
+    for lic in sorted((SRC / "LICENSES").glob("*.txt")):   # the packages' parts under other licences (the JieLi SDK
+        shutil.copy(lic, out / "firmware" / lic.name)      # files, an own-stack build's Apache / BSD parts): beside them
     # the installer
     html = (SRC / "web" / "installer.html").read_text(encoding="utf-8")
     lib = strip_module((SRC / "web" / "fm1pkg.js").read_text(encoding="utf-8")) + "\n" + \
