@@ -81,6 +81,14 @@ void plat_ble_disconnect(void)
     ble_central_cancel();
     own_held(0);
 }
+int plat_ble_passkey(void)
+{
+#if BLE_CEN_PAIR
+    return ble_state == BLE_READY && ble_central_passkey() != BLE_NO_PASSKEY ? (int)ble_central_passkey() : -1;
+#else
+    return -1;
+#endif
+}
 int plat_ble_device(void)
 {
     if (ble_state != BLE_READY)
@@ -119,7 +127,20 @@ static int dev_frame(const uint8_t *p, uint32_t n)
     if (n < 4u || p[0] != 0x7Du || p[1] != 0x4Cu || p[2] != 0x44u)
         return 0;
     switch (p[3]) {
-    case 1: plat_ble_scan(1); break;
+    case 1:
+        plat_ble_scan(1);
+        q = b;                                    /* (what the link layer did with it: our state, its state, enabled) */
+        for (const char *t = "scan: "; *t; )
+            *q++ = *t++;
+        q = put_dec(q, ble_state);
+        *q++ = ' ';
+        q = put_dec(q, bll.state);
+        *q++ = ' ';
+        q = put_dec(q, bll.enabled);
+        *q++ = ' ';
+        put_dec(q, bll.scan_want);
+        dev_line(b);
+        break;
     case 2: plat_ble_scan(0); break;
     case 3:
         for (i = 0; plat_ble_found(i, nm, &rssi); i++) {
@@ -141,7 +162,17 @@ static int dev_frame(const uint8_t *p, uint32_t n)
         *q++ = ' ';
         q = put_dec(q, ble_central_fail());
         *q++ = ' ';
-        put_dec(q, ble_central_code());
+        q = put_dec(q, ble_central_code());
+#if BLE_CEN_PAIR
+        if (ble_central_passkey() != BLE_NO_PASSKEY) {   /* (a passkey pairing waits: the phone's user types it) */
+            uint32_t k = ble_central_passkey(), d;
+            for (const char *t = " passkey "; *t; )
+                *q++ = *t++;
+            for (d = 100000u; d; d /= 10u)
+                *q++ = (char)('0' + k / d % 10u);
+            *q = 0;
+        }
+#endif
         dev_line(b);
         break;
     default: break;

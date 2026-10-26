@@ -354,6 +354,7 @@ void plat_ble_disconnect(void)
     bdev_state = BLE_DEV_OFF;
 }
 int plat_ble_device(void) { return bdev_state; }
+int plat_ble_passkey(void) { return -1; }
 void plat_ble_enable(int on)
 {
     if (!on) {

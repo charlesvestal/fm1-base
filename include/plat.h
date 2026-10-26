@@ -117,6 +117,8 @@ int plat_ble_found(int i, char *name, int *rssi);   /* device i of the scan (nam
 int plat_ble_connect(int i);           /* 0 = connecting */
 void plat_ble_disconnect(void);
 int plat_ble_device(void);             /* BLE_DEV_*: READY is connected, MIDI both ways */
+int plat_ble_passkey(void);            /* a pairing with a device waits for its user to type this code (0..999999):
+                                        * show it; -1: none (ble_stack = "own" only: an iPhone app asks for one) */
 /* Bluetooth on or off, as the player asks: off ends every link, stops advertising and scanning (the radio quiet);
  * on starts it (or advertises again). Whether it starts at power-on: APP_BLE_AT_BOOT (app.h, e.g. a saved setting;
  * default 1) */
