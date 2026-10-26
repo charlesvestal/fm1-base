@@ -35,10 +35,16 @@ SECTIONS
                   . = ALIGN(4); _c1_start = .; KEEP(*(.c1_text*)) . = ALIGN(4); _c1_end = .;
                   _rt_end = .; } > RAMTEXT AT > XIP
     _rt_load = LOADADDR(.ram_text);
+    /* Open controller trace is diagnostic SRAM, never a flash payload. */
+    .ble_trace (NOLOAD) : { . = ALIGN(4); _ble_trace_start = .; *(.ble_trace) _ble_trace_end = .; } > RAMTEXT
+    ASSERT(_ble_trace_end <= ORIGIN(RAMTEXT) + LENGTH(RAMTEXT), "open BLE trace overflows RAMTEXT")
     .data : { . = ALIGN(4); _data_start = .; *(.data*) *(.sdata*) *(.*_data) . = ALIGN(4); _data_end = .; } > RAM AT > XIP
     _data_load = LOADADDR(.data);
-    .bss (NOLOAD) : { _bss_start = .; *(.bss*) *(.sbss*) *(COMMON) *(.*_bss) *(.bd_base) . = ALIGN(4); _bss_end = .; } > RAM
-    .pool (NOLOAD) : { _pool_start = .; *(.pool*) . = ALIGN(4); _pool_end = .; } > POOL
+    .bss (NOLOAD) : { _bss_start = .; * (.ble_host_ring) *(EXCLUDE_FILE (*nimble_*.o) .bss* .sbss*) *(COMMON) *(.*_bss) *(.bd_base) . = ALIGN(4); _bss_end = .; } > RAM
+    .pool (NOLOAD) : { _pool_start = .; *(.pool*) *nimble_*.o(.bss* .sbss*)
+              . = ALIGN(4); _ble_dma_start = .; *(.ble_dma) _ble_dma_end = .;
+              . = ALIGN(4); _pool_end = .; } > POOL
+    ASSERT(_ble_dma_start >= ORIGIN(POOL) && _ble_dma_end <= ORIGIN(POOL) + LENGTH(POOL), "open BLE DMA outside verified SRAM")
     .noinit (NOLOAD) : { *(.noinit*) } > NOINIT
     _guard0 = 0x01C74000; _ustack_lo = 0x01C74100; _ustack_top = 0x01C7A000;
     _guard1 = 0x01C7A000; _sstack_lo = 0x01C7A100; _sstack_top = 0x01C7C000;

@@ -20,6 +20,8 @@ static int um_put(uint32_t pkt)                    /* into midi_in_q (usb.c): 0 
 {
     if (mi_w - mi_r >= MQ)
         return 0;
+    midi_in_source[mi_w % MQ] = 2u;
+    midi_in_ms[mi_w % MQ] = fm1_ms;
     midi_in_q[mi_w % MQ] = pkt | 0x10u;           /* cable 1: from the jack */
     RING_PUBLISH();
     mi_w++;

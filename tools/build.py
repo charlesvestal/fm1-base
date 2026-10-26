@@ -4,7 +4,7 @@
 # Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 """Build an fm1-base firmware: the app, the update loader (felucca-bsp's) and an installable .fwsc package.
 
-  tools/build.py APP_DIR [--release X.Y[.Z][-suffix]] [--no-ble]
+  tools/build.py APP_DIR [--release X.Y[.Z][-suffix]] [--no-ble | --open-ble]
   tools/build.py APP_DIR --host        the host simulator instead: APP_DIR/build/host/NAME_host (cc, no toolchain)
   tools/build.py APP_DIR --web         the browser emulator instead: APP_DIR/build/emu/ (emcc); the page is the
                                        simulator alone (panel, screen, sound, screen reader), for a site to link or frame;
@@ -36,7 +36,7 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   ble_heap_kb = 16           its heap, KB (default 24, in RAM; the same log line's "heap": its most ever)
   ble_trim = true            Bluetooth as a MIDI peripheral only: JieLi's central, classic and test code cut (flash and
                              RAM: Melodee's measure ~18 KB and ~4 KB); not with ble_central
-  ble_no_pairing = true      with ble_trim: no pairing or encryption either (~19 KB more flash; iOS and macOS connect)
+  ble_no_pairing = true      vendor: with ble_trim; open: independently; no pairing/encryption (open: plaintext MIDI, no bonds; see docs/OPEN-BLE.md)
   ble_central = true         and the FM-1 connects to Bluetooth MIDI devices too (FM1B_BLE_CENTRAL), beside a computer
   usb_audio_in = true        the FM-1 recordable over USB (FM1B_UAC; the default: true)
   usb_audio_out = true       a computer plays through the FM-1 over USB (FM1B_UAC_OUT; the default: true)
@@ -56,6 +56,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              hash of the sources, lifts that bar for a new build
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
 app.h); the build prints what it has.
+  ble = "open"               open peripheral BLE-MIDI (FM1B_BLE_OPEN=1 and FM1B_BLE=1), NimBLE 1.10.0;
+                             requires ble_central = false. --open-ble selects it for one build and disables central.
   ble = true                 Bluetooth MIDI (FM1B_BLE): ble/ on JieLi's BT libraries, from the AC79 SDK ($AC79_SDK);
                              --no-ble builds without it (NAME-usb.fwsc), and the build checks nothing of JieLi's is in
   wifi = true                WiFi (FM1B_WIFI): a station on JieLi's WiFi libraries and the SDK's lwIP (built from its
@@ -125,6 +127,7 @@ SDK_SHA256 = {
 
 PRODUCT = None                      # package identity (fm1.toml id_prefix; see main)
 VERSION = None                      # APP_VERSION for release builds (default: "DEV", device/unity.c)
+BLE_OPEN = False
 BLE = False                         # fm1.toml ble = true, unless --no-ble
 WIFI = False                        # fm1.toml wifi = true
 CPU2 = False                        # fm1.toml cpu2 = true (FM1B_CPU2=0 / 1 in the environment: without / with)
@@ -537,10 +540,42 @@ def radio_units():
 
 
 
+def open_ble_units():
+    """No SDK calls: pinned NimBLE/TinyCrypt and the open controller only."""
+    import nimble_build as nb
+    out=OUT / "open_ble"
+    out.mkdir(parents=True,exist_ok=True)
+    units,objects=[],[]
+    own=[SRC / "open_ble" / (n+".c") for n in
+         ("ble_logic","ble_controller","ble_link_logic","ble_link","ble_midi",
+          "ble_heap","ble_crypto","ble_seed","ble_bonds","ble_timing","ble_privacy",
+          "ble_npl","ble_host","ble_store","ble_health")]
+    for f in [*own,*nb.sources()]:
+        prefix="ble_" if f in own and f.stem not in ("ble_host","ble_npl","ble_bonds") else "nimble_"
+        obj=out / (prefix+"_".join(f.relative_to(SRC).with_suffix("").parts)+".o")
+        flags=[*CFLAGS,*FPU,"-DFM1B_BLE_OPEN=1","-DFELUCCA_BLE=1","-DFELUCCA_BLE_STAGE=3",
+               "-DFELUCCA_BLE_S31=1",f"-DFM1B_BLE_DIAG={int(CONF.get('ble_diag',True))}",
+               f"-DFM1B_BLE_NO_PAIRING={int(CONF.get('ble_no_pairing',False))}",*nb.flags(target=True,vendor=f not in own)]
+        if VERSION:
+            flags.append(f'-DAPP_VERSION="{VERSION}"')
+        # nb's include paths are absolute; target Docker also sees ROOT at /work.
+        flags=[("-I"+str(Path(a[2:]).relative_to(ROOT))) if a.startswith("-I") and Path(a[2:]).is_absolute() else a
+               for a in flags]
+        flags=[Path(a) if a.startswith(str(SRC)) else a for a in flags]
+        units.append(("cc",*flags,"-c",f,"-o",obj)); objects.append(obj)
+    return units,objects,[]
+
+
 def build_app():
     flags = [*CFLAGS, *FPU, *inc(BSP / "chip", BSP / "boards" / "fm1", SRC / "device", SRC / "include", SRC / "lib", APP, GEN,
                                  *(APP / d for d in CONF.get("include", []) + CONF.get("device_include", [])))]
-    if BLE:
+    if BLE_OPEN:
+        import nimble_build as nb
+        flags += ["-DFM1B_BLE=1", "-DFM1B_BLE_OPEN=1", "-DFELUCCA_BLE=1",
+                  "-DFELUCCA_BLE_STAGE=3", "-DFELUCCA_BLE_S31=1",
+                  f"-DFM1B_BLE_DIAG={int(CONF.get('ble_diag',True))}",
+               f"-DFM1B_BLE_NO_PAIRING={int(CONF.get('ble_no_pairing',False))}", *nb.flags(target=True,vendor=False)]
+    elif BLE:
         flags += ["-DFM1B_BLE=1", *inc(SRC / "ble" / "shim")]
         if CONF.get("ble_central"):
             flags.append("-DFM1B_BLE_CENTRAL=1")
@@ -562,12 +597,15 @@ def build_app():
         flags.append(f'-DAPP_VERSION="{VERSION}"')
     if CPU2:
         flags += ["-DFM1_CPU1=1", f"-DFM1B_BUILD={build_id():#010x}u", f"-DFM1_CPU1_FALLBACK={int(bool(CONF.get('cpu2_fallback')))}"]
+    if BLE_OPEN:
+        flags=[("-I"+str(Path(f[2:]).relative_to(ROOT))) if f.startswith("-I") and Path(f[2:]).is_absolute() else f for f in flags]
+        flags=[Path(f) if isinstance(f,str) and f.startswith(str(SRC)) else f for f in flags]
     o2 = [f if f != "-Os" else "-O2" for f in flags]
     ir = CONF.get("ir_pass")                      # the app's pass over the IR (see the top)
     ir_out = ["-S", "-emit-llvm", "-Xclang", "-disable-llvm-optzns"] if ir else []
     units = [("cc", "-c", BSP / "chip" / "crt0.S", "-o", OUT / "crt0.o"),
              ("cc", "-c", BSP / "chip" / "fm1_vec.S", "-o", OUT / "fm1_vec.o"),
-             ("cc", "-c", BSP / "chip" / "fm1_isr.S", "-o", OUT / "fm1_isr.o"),
+             ("cc", *([*inc(SRC / "device"), '-DFM1_ISR_ENTRIES="ble_open_isr.inc"'] if BLE_OPEN else []), "-c", BSP / "chip" / "fm1_isr.S", "-o", OUT / "fm1_isr.o"),
              ("cc", *flags, *ir_out, "-c", SRC / "device" / "unity.c", "-o", OUT / ("unity.ll" if ir else "unity.o"))]
     objs = [OUT / "crt0.o", OUT / "fm1_vec.o", OUT / "fm1_isr.o", OUT / "unity.o"]
     if CPU2:                                      # the second core's entry and stacks
@@ -587,7 +625,7 @@ def build_app():
             units.append(("cc", *o2, *o2_more, *inc(f.parent), *ir_out, "-c", f, "-o", o.with_suffix(".ll") if ir else o))
             objs.append(o)
             o2_units.append((f, o))
-    b_units, b_objs, b_libs = radio_units() if BLE or WIFI else ([], [], [])
+    b_units, b_objs, b_libs = open_ble_units() if BLE_OPEN else radio_units() if BLE or WIFI else ([], [], [])
     tc_all(*units, *b_units)
     if ir:                                        # the pass, then each unit's code from its IR at its own level
         def ir_pass(src, dst, unit=None):
@@ -609,10 +647,10 @@ def build_app():
     # mono reference paths for the host tests that the firmware no longer calls. The BT libraries are LTO
     # bitcode: the linker needs the toolchain's LLVM plugin
     lto = ["--plugin", "/opt/jieli/pi32v2/bin/LLVMgold.so" if use_docker() else str(toolchain() / "pi32v2/bin/LLVMgold.so"),
-           f"--plugin-opt=mcpu={CPU}", "--plugin-opt=-pi32v2-large-program=true"] if BLE or WIFI else []
+           f"--plugin-opt=mcpu={CPU}", "--plugin-opt=-pi32v2-large-program=true"] if (BLE and not BLE_OPEN) or WIFI else []
     ld = SRC / "device" / ("app_wifi.ld" if WIFI else "app.ld")
     tc("pi32v2/bin/ld", *lto, "--gc-sections", "-e", "_start", "-T", ld, *objs, *b_objs,
-       *b_libs, "-o", elf)
+       *b_libs, "-Map", OUT / (STEM + ".map"), "-o", elf)
     for sect in ("text.bin", "data.bin", "ramtext.bin"):
         (OUT / sect).unlink(missing_ok=True)
     *_, syms, dis, rt = tc_all(("common/bin/objcopy", "-O", "binary", "-j", ".text", elf, OUT / "text.bin"),
@@ -639,6 +677,8 @@ def build_app():
             img += blob
     img += b"\xff" * (-len(img) % 4)
     (OUT / (NAME + ".bin")).write_bytes(img)
+    (OUT / (STEM + ".bin")).write_bytes(img)
+    (OUT / (STEM + ".symbols")).write_text(syms)
     return bytes(img), syms, dis, rt
 
 
@@ -691,7 +731,7 @@ def check(img, syms, dis, rt):
     in_c1 = (lambda ln: (mm2 := LINE.match(ln)) is not None and c1[0] <= int(mm2.group(1), 16) < c1[1]) \
         if len(c1) == 2 else (lambda ln: False)   # (the second core's loop: it may call into the flash, see the top)
     rt_calls = [ln for ln in rt.splitlines() if re.search(r"\bcall\b", ln) and not in_c1(ln)]
-    if rt_calls and (BLE or WIFI):  # JieLi's .volatile_ram_code calls out; it runs with the flash on
+    if rt_calls and ((BLE and not BLE_OPEN) or WIFI):  # JieLi's .volatile_ram_code calls out; it runs with the flash on
         notes.append(f"the radio: .ram_text contains calls (JieLi's .volatile_ram_code): {rt_calls[:3]}")
     elif rt_calls:                  # RAM code runs with the flash off: no calls into XIP
         errors.append(f".ram_text contains calls: {rt_calls[:3]}")
@@ -718,6 +758,23 @@ def check(img, syms, dis, rt):
     else:
         notes.append("no 64-bit multiply inlined beside a load")
     bt = [n for n in BT_SYMS if re.search(r"\s" + n + r"$", syms, re.M)]
+    if BLE_OPEN or (CONF.get("ble") and not BLE and not WIFI):
+        link_map=(OUT / (STEM + ".map")).read_text()
+        # The open path constructs its inputs from source only; reject archives,
+        # SDK paths, and closed-stack units in the actual linker map as well.
+        forbidden=[line for line in link_map.splitlines()
+                   if re.search(r"(?:\.a(?:\(|\s|$)|(?:^|/)ble/(?:sdk|o|shim|midi|wifi)/)",line)]
+        if forbidden:
+            errors.append(f"source-only radio build links forbidden inputs: {forbidden[:3]}")
+        if BLE_OPEN and not re.search(r"\sble_host_start$",syms,re.M):
+            errors.append("open BLE build is missing its NimBLE adapter")
+        if not BLE and re.search(r"\s(?:ble_init|ble_host_start|fm1_ble_worker_irq)$",syms,re.M):
+            errors.append("--no-ble build links open radio code")
+    if BLE_OPEN:
+        if bt:
+            errors.append(f"open BLE build links closed Bluetooth code: {bt}")
+        else:
+            notes.append("open BLE: source-only link map; no JieLi objects, archives or shim")
     if CONF.get("ble") and not BLE:
         if bt:
             errors.append(f"--no-ble build links Bluetooth code: {bt}")
@@ -727,7 +784,7 @@ def check(img, syms, dis, rt):
         errors.append(f"image {len(img)} B exceeds the app slot")
     # the FPU is single precision; a soft-double routine in the image means a double crept in
     soft = sorted(set(re.findall(r"\s(__(?:add|sub|mul|div|neg|cmp|eq|ne|lt|le|gt|ge|un|extendsf|truncdf|fixdf|fixunsdf|floatsidf|floatunsidf|floatdidf)\w*df\w*)$", syms, re.M)))
-    if soft and (BLE or WIFI):
+    if soft and ((BLE and not BLE_OPEN) or WIFI):
         notes.append(f"soft-double routines linked (JieLi's radio setup): {soft[:6]}")
     elif soft:
         errors.append(f"soft-double routines linked: {soft[:6]} (a double in the code)")
@@ -739,9 +796,19 @@ def check(img, syms, dis, rt):
         return int(mm.group(1), 16) if mm else 0
     bss = sym("_bss_end") - 0x01C08000
     pool = sym("_pool_end") - sym("_pool_start")
+    if BLE_OPEN:
+        dma0,dma1=sym("_ble_dma_start"),sym("_ble_dma_end")
+        trace0,trace1=sym("_ble_trace_start"),sym("_ble_trace_end")
+        if not (0x01C20000 <= dma0 < dma1 <= 0x01C74000 and dma1-dma0 >= 4324):
+            errors.append("open BLE DMA is not in the verified pool SRAM class")
+        expected_trace=20480 if CONF.get("ble_diag",True) else 0
+        if not (sym("_rt_end") <= trace0 <= trace1 <= 0x01C08000 and trace1-trace0 == expected_trace):
+            errors.append("open BLE trace is not reserved in RAMTEXT")
+        notes.append(f"open BLE: DMA {dma0:#010x}..{dma1:#010x}; trace {trace1-trace0} B of RAMTEXT")
     ram, pool_max, spare = (128 * 1024, 0x4C000, 2048) if WIFI else (96 * 1024, 0x54000, 8192)   # (app_wifi.ld)
     if os.environ.get("FM1B_POOL_SPARE", "").isdigit():   # an app's own build for itself (a demo build with mirror)
         spare = int(os.environ["FM1B_POOL_SPARE"])
+    notes.append(f"RAMTEXT code {sym('_rt_end')-0x01C00000} B")
     notes.append(f"image {len(img)} B; RAM .data+.bss {bss} B of {ram}; pool {pool} B of {pool_max}")
     if bss > ram:
         errors.append("RAM region overflow")
@@ -771,7 +838,7 @@ def mmio_check():
         s = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), s, flags=re.S)
         return re.sub(r"//[^\n]*", "", s)
     defs = {}
-    for h in sorted([*(BSP / "chip").glob("*.h"), *(BSP / "boards" / "fm1").glob("*.h")]):
+    for h in sorted([*(BSP / "chip").glob("*.h"), *(BSP / "boards" / "fm1").glob("*.h"), *(SRC / "open_ble" / "hal").glob("*.h")]):
         for m in re.finditer(r"^#define\s+(\w+)(?:\([^)]*\))?\s+(.*)$", strip(h.read_text()), re.M):
             defs[m.group(1)] = m.group(2)
     regs = {n for n, b in defs.items() if re.search(r"\bvolatile\b", b)}
@@ -782,10 +849,16 @@ def mmio_check():
         regs |= more
     errors = []
     skip = CONF.get("mmio_skip", [])
-    files = [*(SRC / "device").glob("*.[ch]"), *(SRC / "include").glob("*.h"), *(SRC / "lib").glob("*.[ch]"),
+    # open_ble/hal is the controller's dedicated BSP extension: radio/baseband
+    # registers, TIMER0 and AES. All software in open_ble/ is checked too.
+    files = [*[f for f in (SRC / "open_ble").rglob("*.[ch]") if "hal" not in f.relative_to(SRC / "open_ble").parts], *(SRC / "device").glob("*.[ch]"), *(SRC / "include").glob("*.h"), *(SRC / "lib").glob("*.[ch]"),
              *[f for f in APP.rglob("*.[ch]") if "build" not in f.relative_to(APP).parts
                and not any(str(f.relative_to(APP)).startswith(v) for v in CONF.get("vendored", []))]]
     for f in sorted(files):
+        # This closed-radio adapter is excluded from open/no-radio compilation.
+        # Keep its original audit for builds that actually compile it.
+        if f == SRC / "device/radio.c" and (BLE_OPEN or not (BLE or WIFI)):
+            continue
         for no, ln in enumerate(strip(f.read_text()).splitlines(), 1):
             where = f"{f.relative_to(ROOT)}:{no}"
             for rx, what in ((MMIO_LIT, "register/window address"), (MMIO_CAST, "volatile pointer cast"),
@@ -830,9 +903,13 @@ def build_id():
     """this build's sources (the app's, fm1-base's, felucca-bsp's chip/) and version, hashed: the second core's bar
     (fm1_cpu1_bar_build) is lifted for a new build"""
     h = hashlib.sha1((VERSION or "").encode())
-    for d in (APP, SRC / "device", SRC / "include", BSP / "chip"):
+    if BLE_OPEN:
+        h.update(repr(sorted(CONF.items())).encode())
+    for d in (APP, SRC / "device", SRC / "include", BSP / "chip", *([SRC / "open_ble"] if BLE_OPEN else [])):
         for f in sorted(d.rglob("*")):
-            if f.suffix in (".c", ".h", ".S", ".toml", ".ld") and "build" not in f.relative_to(d).parts:
+            if f == SRC / "device" / "radio.c" and (BLE_OPEN or not (BLE or WIFI)):
+                continue
+            if f.suffix in (".c", ".h", ".S", ".inc", ".toml", ".ld") and "build" not in f.relative_to(d).parts:
                 h.update(str(f.relative_to(d)).encode())
                 h.update(f.read_bytes())
     return int.from_bytes(h.digest()[:4], "little")
@@ -854,7 +931,7 @@ def build_host():
     o2_objs = o2_objects(os.environ.get("CC", "cc"), ["-O2", "-ffp-contract=off", "-std=c99", "-w", "-DPLAT_HOST", *inc_dirs],
                          out / "o2")
     cmd = [os.environ.get("CC", "cc"), "-O2", "-ffp-contract=off", "-std=c99", "-Wall", "-Wextra",
-           "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *opt_flags(), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI,
+           "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *opt_flags(), *["-DFM1B_BLE=1"] * (BLE and not BLE_OPEN), *["-DFM1B_BLE_OPEN=1"] * BLE_OPEN, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI,
            *(f"-I{d}" for d in (SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            "-o", str(exe), str(SRC / "host" / "plat_host.c"), *o2_objs, "-lm"]
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -875,7 +952,7 @@ def build_web():
     o2_objs = o2_objects("emcc", ["-O2", "-ffp-contract=off", "-std=gnu99", "-w", "-DPLAT_HOST", "-DPLAT_WEB", *web_inc],
                          emu / "o2")
     cmd = ["emcc", "-O2", "-ffp-contract=off", "-std=gnu99", "-Wall", "-Wno-unused-function", "-Wno-unused-parameter",
-           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *opt_flags(), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
+           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *opt_flags(), *["-DFM1B_BLE=1"] * (BLE and not BLE_OPEN), *["-DFM1B_BLE_OPEN=1"] * BLE_OPEN, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
            *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            "--no-entry", "-sSTANDALONE_WASM", "-sSTACK_SIZE=1048576", "-sINITIAL_MEMORY=33554432", "-sFILESYSTEM=0",
            "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *o2_objs]
@@ -912,11 +989,14 @@ def build_web():
 
 
 def main():
-    global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, WIFI, CPU2, STEM
+    global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, BLE_OPEN, WIFI, CPU2, STEM
     ap = argparse.ArgumentParser()
     ap.add_argument("app", type=Path, help="the app's directory (with fm1.toml)")
     ap.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity id_prefix + XXYYZZ, version string X.Y[.Z]")
     ap.add_argument("--no-ble", action="store_true", help="without Bluetooth (fm1.toml ble = true): NAME-usb.fwsc")
+    ap.add_argument("--open-ble", action="store_true", help="open peripheral stack; overrides ble and disables ble_central")
+    ap.add_argument("--ble-diag", choices=("on","off"), help="override open-stack diagnostics (default: fm1.toml ble_diag, true)")
+    ap.add_argument("--package-name", help="package basename in APP_DIR/build (preserve a benched image)")
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
     ap.add_argument("--host", action="store_true", help="build the host simulator instead of the firmware")
     ap.add_argument("--web", action="store_true", help="build the browser emulator instead of the firmware")
@@ -924,12 +1004,32 @@ def main():
     APP = a.app.resolve()
     CONF = read_conf(APP / "fm1.toml")
     NAME = CONF.get("name", APP.name).lower()
+    if CONF.get("ble",False) not in (True,False,"open"):
+        raise SystemExit('fm1.toml: ble must be true, false, or "open"')
+    if a.open_ble and a.no_ble:
+        raise SystemExit("--open-ble and --no-ble are mutually exclusive")
+    if a.open_ble:
+        CONF["ble"]="open"
+        CONF["ble_central"]=False
+    if a.ble_diag is not None:
+        CONF["ble_diag"]=a.ble_diag=="on"
+    if not isinstance(CONF.get("ble_diag",True),bool):
+        raise SystemExit("fm1.toml: ble_diag must be true or false")
     BLE = bool(CONF.get("ble")) and not a.no_ble
+    BLE_OPEN = BLE and CONF.get("ble")=="open"
+    if BLE_OPEN and CONF.get("ble_central"):
+        raise SystemExit('ble = "open" supports peripheral BLE-MIDI only; set ble_central = false (see docs/OPEN-BLE.md; central is not implemented)')
+    if not isinstance(CONF.get("ble_no_pairing",False),bool):
+        raise SystemExit("fm1.toml: ble_no_pairing must be true or false")
+    if BLE_OPEN:
+        for option in ("ble_trim", "ble_heap_kb", "ble_stack_kb"):
+            if option in CONF:
+                print(f"open BLE: {option} not used by the open stack (fixed pools; see docs/OPEN-BLE.md)")
     WIFI = bool(CONF.get("wifi"))
     CPU2 = (bool(CONF.get("cpu2")) and os.environ.get("FM1B_CPU2") != "0") or os.environ.get("FM1B_CPU2") == "1"
     if BLE and WIFI:
         raise SystemExit("fm1.toml: ble and wifi together are not supported yet (one radio a build; --no-ble for WiFi)")
-    STEM = NAME + ("-usb" if CONF.get("ble") and not BLE else "")
+    STEM = NAME + ("-open" if BLE_OPEN else "-usb" if CONF.get("ble") and not BLE else "")
     OUT = APP / "build"
     GEN, LDR = OUT / "gen", OUT / "loader"
     ROOT = Path(os.path.commonpath([SRC, APP]))
@@ -947,6 +1047,10 @@ def main():
         PRODUCT = prefix + "%02d%02d%02d" % (int(m[1]), int(m[2]), int(m[3] or 0))
         VERSION = a.release.upper()
         name = f"{STEM}-{a.release}.fwsc"
+    if a.package_name:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.fwsc",a.package_name):
+            raise SystemExit("--package-name must be a .fwsc basename")
+        name = a.package_name
     if a.host or a.web:
         generate()
         return build_host() if a.host else build_web()
@@ -964,7 +1068,7 @@ def main():
     hal_err = mmio_check()
     errors += hal_err
     if not hal_err:
-        notes.append("register access: felucca-bsp only (device/, include/ and the app clean)")
+        notes.append("register access: felucca-bsp and open_ble/hal only (platform and app checked)")
     for n in notes:
         print("  ok   ", n)
     for e in errors:

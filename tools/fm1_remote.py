@@ -12,6 +12,7 @@ or by a program (an agent). Needs mido with python-rtmidi.
     wait MS                                 let it run (with listen: print what it says meanwhile)
     listen                                  a screen reader starts listening: every message it says is printed
     screen                                  what is on the screen, in words (the screen reader's channel)
+    ble                                     compact BLE health counters (USB only)
     log                                     the last crash, the registers at the last four, the supplies, the
                                             clock as the boot loader left it, and the radio's log
                                             (all survive a restart)
@@ -42,21 +43,44 @@ def nibbles(text):
 
 
 class FM1:
-    def __init__(self):
-        names = [n for n in mido.get_output_names() if "FM-1" in n]
+    def __init__(self, port=None):
+        # Explicit selection avoids the identically named BlueZ BLE-MIDI port.
+        names = [n for n in mido.get_output_names() if (n == port if port else "FM-1" in n)]
         if not names:
             raise SystemExit("no FM-1 on USB-MIDI")
         self.out = mido.open_output(names[0])
-        self.inp = mido.open_input([n for n in mido.get_input_names() if "FM-1" in n][0])
+        inputs = [n for n in mido.get_input_names() if (n == port if port else "FM-1" in n)]
+        if not inputs:
+            self.out.close()
+            raise RuntimeError("no matching FM-1 USB-MIDI input")
+        self.inp = mido.open_input(inputs[0])
         self.btn = self.keys = 0
         self.listening = False
+
+    def close(self):
+        self.inp.close()
+        self.out.close()
+
+    def read_log(self, compact=False):
+        # A reconnect can interrupt an LG transfer. Retry the whole snapshot,
+        # discard incomplete attempts, and bound the operation to three reads.
+        for attempt in range(3):
+            if attempt:
+                time.sleep(0.25)
+            for _ in self.inp.iter_pending():
+                pass
+            self.sysex(LG + ([1] if compact else []))
+            frames = self.frames(LG, 8.0, until=lambda f: f == b"end")
+            if frames and frames[-1] == b"end":
+                return "\n".join(f.decode("ascii", "replace") for f in frames[:-1]) + "\n"
+        raise RuntimeError("USB log incomplete (missing end) after 3 attempts; close other FM-1 clients")
 
     def sysex(self, data):
         self.out.send(mido.Message("sysex", data=data))
 
     def frames(self, head, secs, until=None):
-        got, t = [], time.time()
-        while time.time() - t < secs:
+        got, t = [], time.monotonic()
+        while time.monotonic() - t < secs:
             for m in self.inp.iter_pending():
                 if m.type == "sysex" and list(m.data[:3]) == head:
                     got.append(bytes(m.data[3:]))
@@ -139,11 +163,9 @@ class FM1:
                     if f and f[0] == 16:
                         print("screen:", f[2:].decode("latin1", "replace"))
                 i += 1
-            elif c == "log":
-                self.sysex(LG)
-                for f in self.frames(LG, 2.0, until=lambda f: f == b"end"):
-                    if f != b"end":
-                        print("log:", f.decode("latin1", "replace"))
+            elif c in ("log", "ble"):
+                for line in self.read_log(compact=c == "ble").splitlines():
+                    print("log:", line)
                 i += 1
             elif c == "wifi":
                 op = WIFI_OP.get(a)
@@ -177,4 +199,13 @@ class FM1:
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.exit(__doc__)
-    FM1().run(sys.argv[1:])
+    args=sys.argv[1:]
+    port=None
+    if args[:1]==["--port"]:
+        if len(args)<3: sys.exit("--port USB_MIDI_NAME COMMAND ...")
+        port,args=args[1],args[2:]
+    remote=FM1(port)
+    try:
+        remote.run(args)
+    finally:
+        remote.close()

@@ -227,7 +227,11 @@ static char *log_dec(char *b, uint32_t v)            /* v in decimal at b; the e
  * Bluetooth's log, the oldest first (it survives a reset) */
 static void log_line_send(const char *t)
 {
+#if FM1B_BLE_OPEN
+    uint8_t f[192];                         /* full counter rows on the log channel */
+#else
     uint8_t f[48];
+#endif
     uint32_t n = 0;
     f[n++] = 0xF0; f[n++] = 0x7D; f[n++] = 0x4C; f[n++] = 0x47;
     while (*t && n < sizeof f - 1u)
@@ -235,12 +239,22 @@ static void log_line_send(const char *t)
     f[n++] = 0xF7;
     ota_wire_send(f, n);
 }
+#if FM1B_BLE_OPEN
+static void open_ble_audio_dump(void)
+{
+    ob_kv("audio_late",(int32_t)fm1b_dbg.late); ob_kv("audio_max_wall_us",(int32_t)fm1b_dbg.max_us);
+    ob_kv("audio_xruns",(int32_t)plat_xruns());
+}
+#endif
 static int log_frame(const uint8_t *p, uint32_t n)
 {
     char b[48], *q;
     int k;
     if (n < 3u || p[0] != 0x7Du || p[1] != 0x4Cu || p[2] != 0x47u)
         return 0;
+#if FM1B_BLE_OPEN
+    if(n==4u && p[3]==1u) { open_ble_health_dump(); log_line_send("end"); return 1; }
+#endif
     if (fm1_crash.magic == FM1_CRASH_MAGIC) {
         const uint32_t v[6] = {fm1_crash.count, fm1_crash.vec, fm1_crash.pc, fm1_crash.rets, fm1_crash.sp,
                                fm1_crash.uptime_ms};
@@ -411,7 +425,7 @@ static int log_frame(const uint8_t *p, uint32_t n)
         log_line_send(b);
         t5_gap_max = t5_late = t5_run_max = lock_max = 0;
     }
-#if FM1B_BLE
+#if FM1B_BLE && !FM1B_BLE_OPEN
     {
         extern uint32_t shim_off_max, shim_off_from;
         const char *l = "BT irqs off max us ";
@@ -475,6 +489,32 @@ static int log_frame(const uint8_t *p, uint32_t n)
         bj_gap_min = 0xFFFFu;
         bj_gap_max = bj_gap_zero = bj_ticks = bj_rel_max = 0;
     }
+#endif
+#if FM1B_BLE_OPEN
+    {
+        ble_midi_clock_diag_t d;
+        char line[128];
+        const char *labels[]={"BT clk "," gap ",".."," z "," late ","/"};
+        ble_host_clock_read(&d);
+        const uint32_t v[]={d.ticks,d.gap_min,d.gap_max,d.gap_zero,d.late_max,d.allowed};
+        char *at=line;
+        for(unsigned i=0;i<6;i++) {
+            const char *l=labels[i]; while(*l) *at++=*l++;
+            at=log_dec(at,v[i]);
+        }
+        *at=0; log_line_send(line);
+    }
+#endif
+#if FM1B_BLE_OPEN
+    ob_kv("peripheral_state",plat_ble_state());
+    ob_kv("peripheral_linked",plat_ble_linked());
+    ob_kv("peripheral_connected",plat_ble_connected());
+    ob_kv("audio_late",(int32_t)fm1b_dbg.late);
+    ob_kv("audio_max_wall_us",(int32_t)fm1b_dbg.max_us);
+    ob_kv("audio_xruns",(int32_t)plat_xruns());
+    ob_kv("midi_ble_in",(int32_t)plat_midi_count(PORT_BLE,0));
+    ob_kv("midi_ble_out",(int32_t)plat_midi_count(PORT_BLE,1));
+    open_ble_dump();
 #endif
     log_line_send("end");
     return 1;
@@ -670,6 +710,7 @@ static void usb_cmd(uint32_t d)
         ota_try_ms = 300u;                          /* its head first: a host that does not answer costs a second */
         ota_deadline = ota_now_ms() + 3000u;
         rc = restore_rx(len, crc, &begun);
+        flash_quiet_end();                          /* Bluetooth as it was (open BLE: held quiet from rs_begin) */
         ota_try_ms = 5000u;
         ota_deadline = 0;
         if (begun)
@@ -698,6 +739,10 @@ static void usb_cmd(uint32_t d)
 
 static void fm1_fault(const fm1_crash_t *c)
 {
+#if FM1B_BLE_OPEN
+    ble_breadcrumb_fault(&fm1_ble_breadcrumb,c->count);
+    ble_started=0;
+#endif
     char b[12];
     uint32_t t0;
 #ifdef APP_FAULT
@@ -858,6 +903,9 @@ static void fm1_main(void)
             fl_plain_window_init();                 /* the data area read in place, unencrypted (plat_data) */
         }
     }
+#if FM1B_BLE_OPEN
+    ble_platform_prepare();
+#endif
     lcd_init();
     palette_set(APP_PALETTE);
     splash();
@@ -903,6 +951,9 @@ static void fm1_main(void)
 #endif
     /* above ALNK0 (3): the key / encoder / LED matrix is scanned one column per tick and must keep
      * its rhythm through a render (X0X's finding: below the audio, turns lost steps and LEDs flickered) */
+#if FM1B_BLE_OPEN
+    fm1_ble_attach();
+#endif
     fm1_timer5_start(isr_timer5, 4);
     fm1_guard_lock_top();
     fm1_irq_enable_all();
@@ -980,8 +1031,12 @@ static void fm1_main(void)
         if (usb.ota_req) {
             usb.ota_req = 0;
             app_panic();                            /* silence: the update rewrites the flash */
-            if (flash_ok)
+            if (flash_ok) {
+                flash_quiet_begin(FLASH_QUIET_UPDATE);   /* open BLE: no advertising, no link (its writes are refused
+                                                          * otherwise); else refused: FAILED, nothing changed */
                 ota_session();                      /* returns only if nothing was committed */
+                flash_quiet_end();                  /* (an install restarts: Bluetooth comes back at the start) */
+            }
             app_ui_init();
         }
         if (usb.uboot_req)
@@ -1037,6 +1092,10 @@ void fm1_cstart(void)
     fm1_irq_init();
     for (d = _bss_start; d < _bss_end; d++)
         *d = 0;
+#if FM1B_BLE_OPEN
+    { extern uint32_t _ble_trace_start[],_ble_trace_end[];
+      for(d=_ble_trace_start;d<_ble_trace_end;d++) *d=0; }
+#endif
     for (d = _pool_start; d < _pool_end; d++)
         *d = 0;
     for (s = _data_load, d = _data_start; d < _data_end; s++, d++)

@@ -53,6 +53,11 @@
 #if FM1B_WIFI
 #define FL_UID 1                          /* the flash's unique ID: the WiFi MAC (plat_chip_uid) */
 #endif
+#if FM1B_BLE_OPEN
+#include "../open_ble/ble_store.h"
+#include "../open_ble/ble_health.h"
+#include "../open_ble/hal/fm1_ble_flash.h"   /* fm1_flash.h with the open build's settings */
+#endif
 #include "fm1_flash.h"
 #include "fm1_xip.h"
 #include "fm1_perf.h"
@@ -116,7 +121,17 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #endif
 #define FELUCCA_USB_HOST FM1B_USB_HOST /* the USB MIDI host (plat_usb_host) */
 #define SXQ 128u                  /* the SysEx send ring, in packets: a whole screen-reader SAY (ANN_MAX + 9 bytes) */
+#if FM1B_BLE_OPEN && FELUCCA_USB_HOST
+/* BSP's only feed calls in usb.c are the main-context host EP0/wait loops.
+ * Keep NimBLE serviced during hub power/reset/enumeration without reentering
+ * app code or touching SIE INDEX. TIMER0 continues to own the LL executor. */
+static void ble_usb_host_wait(void);
+#define fm1_wdt_feed() ble_usb_host_wait()
+#endif
 #include "usb.c"
+#if FM1B_BLE_OPEN && FELUCCA_USB_HOST
+#undef fm1_wdt_feed
+#endif
 #ifndef FM1B_TRS
 #define FM1B_TRS 1
 #endif
@@ -131,6 +146,9 @@ static uint8_t flash_uid[16];     /* the flash's factory unique ID (plat_chip_ui
 static void audio_silence(void);
 static int st_read(uint32_t off, void *dst, uint32_t n)   /* 256-byte IRQ-off windows: audio keeps up */
 {
+#if FM1B_BLE_OPEN
+    return fl_read_plain(off,dst,n);
+#else
     uint8_t *d = dst;
     while (n) {
         uint32_t k = n > 256u ? 256u : n, f = irq_save();
@@ -143,20 +161,38 @@ static int st_read(uint32_t off, void *dst, uint32_t n)   /* 256-byte IRQ-off wi
         n -= k;
     }
     return 0;
+#endif
 }
 static int st_erase(uint32_t off)
 {
     uint32_t took;
+#if FM1B_BLE_OPEN
+    if(!fm1_ble_flash_allowed()) return -8;
+#endif
     if (!FL_STORE_OK(off, 0x1000u))
         return -8;
     audio_silence();
-    return fl_erase4k(off, &took);
+#if FM1B_BLE_OPEN
+    uint32_t k=irq_save(); ble_health_begin(BLE_GAP_FLASH); irq_restore(k);
+#endif
+    int rc=fl_erase4k(off, &took);
+#if FM1B_BLE_OPEN
+    k=irq_save(); ble_health_end(BLE_GAP_FLASH); irq_restore(k);
+#endif
+    return rc;
 }
 static int st_prog(uint32_t off, const void *src, uint32_t n)
 {
     if (!FL_STORE_OK(off, n))
         return -8;
-    return fl_write(off, src, n);
+#if FM1B_BLE_OPEN
+    uint32_t k=irq_save(); ble_health_begin(BLE_GAP_FLASH); irq_restore(k);
+#endif
+    int rc=fl_write(off, src, n);
+#if FM1B_BLE_OPEN
+    k=irq_save(); ble_health_end(BLE_GAP_FLASH); irq_restore(k);
+#endif
+    return rc;
 }
 #include "storage.c"
 
@@ -221,11 +257,24 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)   /* never waits: no room
     return ota_wire_send(p, n);
 }
 #include "panel.c"
-#if FM1B_BLE || FM1B_WIFI
+#if FM1B_BLE_OPEN
+#include "../open_ble/hal/fm1_ble.h"
+#include "../open_ble/hal/fm1_ble_crypto.h"
+#include "ble_open_platform.c"
+#include "ble_open.c"
+#include "ble_open_diag.c"
+#elif FM1B_BLE || FM1B_WIFI
 #include "radio.c"                /* the shim's platform, a radio's start; Bluetooth MIDI (FM1B_BLE, ble/: the shim, the
                                    * MIDI service) */
 #else
 #include "radio_none.c"           /* the build with no radio: nothing of JieLi's linked */
+#endif
+#if !FM1B_BLE_OPEN                /* Bluetooth held quiet for a flash job: only the open stack's flash gate needs it */
+#define FLASH_QUIET_UPDATE 1
+#define FLASH_QUIET_RESTORE 2
+static inline int flash_quiet_begin(int why) { (void)why; return 0; }
+static inline void flash_quiet_end(void) {}
+static inline void flash_quiet_saves(int on) { (void)on; }
 #endif
 #if FM1B_WIFI
 #include "wifi.c"                 /* WiFi (ble/wifi/, the SDK's lwIP) */
@@ -296,6 +345,7 @@ static void rs_screen(const char *a, const char *b)
 static void rs_begin(void)                          /* a backup is coming: patient now (5 s a read, 2 min in all) */
 {
     app_panic();
+    flash_quiet_begin(FLASH_QUIET_RESTORE);         /* open BLE: no advertising, no link until it ends (usb_cmd) */
     ota_try_ms = 5000u;
     ota_deadline = ota_now_ms() + 120000u;
 }
@@ -347,7 +397,12 @@ static int bu_room(void)                            /* the SysEx ring empty: a f
     return so_w == so_r;
 }
 static int bu_send(const uint8_t *p, uint32_t n) { return ota_wire_send(p, n); }
-static void bu_flush(void) { app_backup_flush(); }
+static void bu_flush(void)                          /* (open BLE: a save it makes during a link ends the link first) */
+{
+    flash_quiet_saves(1);
+    app_backup_flush();
+    flash_quiet_saves(0);
+}
 static void bu_hold(int on) { app_backup_hold(on); }
 #endif
 #ifdef APP_TOUCH

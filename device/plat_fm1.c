@@ -145,9 +145,17 @@ static volatile uint8_t in_tick;
 static uint32_t lock_depth;
 uint32_t lock_max, lock_from;                     /* the longest the app kept interrupts off (us), and from where */
 static uint32_t lock_t0, lock_ra;
+#if FM1B_BLE_OPEN
+static uint32_t lock_irq;
+#endif
 uint32_t plat_lock(void)
 {
+#if FM1B_BLE_OPEN
+    uint32_t f = irq_save();
+    if (!lock_depth) lock_irq=f;
+#else
     fm1_irq_off();
+#endif
     if (lock_depth == 0) {
         lock_t0 = fm1_ticks();
         lock_ra = (uint32_t)(uintptr_t)__builtin_return_address(0);
@@ -163,7 +171,11 @@ void plat_unlock(uint32_t f)
             lock_max = us;
             lock_from = lock_ra;
         }
+#if FM1B_BLE_OPEN
+        irq_restore(lock_irq);
+#else
         fm1_irq_on();
+#endif
     }
 }
 void plat_sysex_send(const uint8_t *frame, uint32_t n) { ota_wire_send(frame, n); }
@@ -182,13 +194,27 @@ int plat_data_erase(uint32_t off)
     uint32_t took;
     if (!flash_ok || (off & 0xFFFu) || !PLAT_DATA_OK(off, 0x1000u))
         return -1;
+#if FM1B_BLE_OPEN
+    if(ble_open_store_begin()) return -8;
+#endif
     fm1_wdt_feed();                               /* (a run of erases: tens of ms each) */
     audio_silence();
-    return fl_erase4k(off, &took);
+    int rc=fl_erase4k(off, &took);
+#if FM1B_BLE_OPEN
+    ble_open_store_end();
+#endif
+    return rc;
 }
 int plat_data_write(uint32_t off, const void *src, uint32_t n)
 {
-    return flash_ok && PLAT_DATA_OK(off, n) ? fl_write(off, src, n) : -1;
+#if FM1B_BLE_OPEN
+    if(ble_open_store_begin()) return -8;
+#endif
+    int rc=flash_ok && PLAT_DATA_OK(off, n) ? fl_write(off, src, n) : -1;
+#if FM1B_BLE_OPEN
+    ble_open_store_end();
+#endif
+    return rc;
 }
 /* a pull from the host in the update's framing (ota.c ota_read), and how long it may take */
 int plat_host_read(uint32_t addr, uint8_t *dst, uint32_t n) { return n > 512u ? -1 : ota_read(addr, dst, n); }
@@ -212,8 +238,8 @@ void plat_yield(void)
 }
 
 /* MIDI: the rings carry 4-byte USB-MIDI event packets, byte 0 = cable / CIN. USB and the TRS jack share midi_in_q
- * (both from TIMER5); the jack's packets carry cable 1 (midi_uart.c), which the single-jack USB descriptor never
- * does. Bluetooth has its own queue (radio.c, main loop), and its out rings, one a link. */
+ * (both from TIMER5). BSP's source tags distinguish USB (including a host device's cable 1) from TRS;
+ * the external cable nibble is stripped. Bluetooth has its own receive and per-link output queues. */
 /* each port's messages, in and out (plat_midi_count): for the app's MIDI lights and counters */
 static uint32_t midi_n[NPORTS][2], midi_t[NPORTS][2];
 static void midi_counted(int port, int out, uint32_t pkt)
@@ -231,10 +257,20 @@ uint32_t plat_midi_ago(int port, int out)
 uint32_t plat_midi_out_room(uint32_t to)
 {
     uint32_t room = 0xFFFFFFFFu, r;
+#if FM1B_BLE_OPEN
+    /* A subscribed port with a full queue participates with zero free slots. */
+    if ((to & TO_USB) && usb_midi_out_ready() && !usb.suspended) {
+        r=midi_out_room(); if(r<room) room=r;
+    }
+    if ((to & TO_BLE_HOST) && plat_ble_connected()) {
+        r=ble_midi_out_room(to); if(r<room) room=r;
+    }
+#else
     if ((to & TO_USB) && (r = midi_out_room()) && r < room)
         room = r;
     if ((to & TO_BLE) && (r = ble_midi_out_room(to)) && r < room)
         room = r;
+#endif
     return room == 0xFFFFFFFFu ? 0u : room;
 }
 uint32_t plat_midi_out_link(void) { return midi_out_link(); }
@@ -245,9 +281,9 @@ int plat_midi_in(uint32_t *pkt, int *port)
     int from;
     if (mi_r != mi_w) {
         uint32_t p = midi_in_q[mi_r % MQ];
+        from = midi_in_source[mi_r % MQ] == 2u ? PORT_TRS : PORT_USB;
         RING_PUBLISH();
         mi_r++;
-        from = (p >> 4 & 0xFu) == 1u ? PORT_TRS : PORT_USB;
         midi_in_from = from == PORT_USB ? TO_USB : 0u;
         *pkt = p & ~0xF0u;
     }
@@ -269,7 +305,11 @@ void plat_midi_send(uint32_t pkt, uint32_t to)    /* the main loop's and the tic
         midi_out_event(pkt);
         midi_counted(PORT_USB, 1, pkt);
     }
+#if FM1B_BLE_OPEN
+    if (to & TO_BLE_HOST) {
+#else
     if (to & TO_BLE) {
+#endif
         ble_midi_tap(pkt, to);
         midi_counted(PORT_BLE, 1, pkt);
     }
@@ -330,7 +370,17 @@ const uint8_t *plat_chip_uid(void) { return 0; }
 int plat_store_load(uint32_t obj, void *dst, uint32_t max) { return flash_ok ? st_load(obj, dst, max) : -1; }
 int plat_store_head(uint32_t obj, void *dst, uint32_t n) { return flash_ok ? st_load_head(obj, dst, n) : -1; }
 int plat_store_size(uint32_t obj) { return flash_ok ? st_size(obj) : -1; }
-int plat_store_save(uint32_t obj, const void *src, uint32_t len) { return flash_ok ? st_save(obj, src, len) : -9; }
+int plat_store_save(uint32_t obj, const void *src, uint32_t len)
+{
+#if FM1B_BLE_OPEN
+    if(ble_open_store_begin()) return -8;
+#endif
+    int rc=flash_ok ? st_save(obj,src,len) : -9;
+#if FM1B_BLE_OPEN
+    ble_open_store_end();
+#endif
+    return rc;
+}
 
 static volatile uint32_t audio_cpu_pct, audio_xruns;
 uint32_t plat_cpu_pct(void) { return audio_cpu_pct; }

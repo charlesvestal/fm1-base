@@ -1,3 +1,4 @@
 [submodule "bsp"]
 	path = bsp
-	url = https://github.com/hugelton/felucca-bsp
+	url = https://github.com/jvitkauskas/felucca-bsp
+	branch = open-ble-pr
