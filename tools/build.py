@@ -548,7 +548,7 @@ def build_app():
         if CONF.get("ble_central"):
             flags.append("-DFM1B_BLE_CENTRAL=1")
         GEN.mkdir(parents=True, exist_ok=True)    # the radio's start-up program (fm1_ble_rf.h includes it)
-        tables = (SRC / "bt" / "radio" / "ble_rf_tables_v15.h").read_bytes()
+        tables = (BSP / "chip" / "ble_rf_tables_v15.h").read_bytes()   # (Apache-2.0: JieLi's rf_init, from V15)
         if not (GEN / "ble_rf_tables.h").exists() or (GEN / "ble_rf_tables.h").read_bytes() != tables:
             (GEN / "ble_rf_tables.h").write_bytes(tables)
     elif BLE:
