@@ -1,3 +1,10 @@
+/* fm1-base change, Copyright (c) 2026 Julius Vitkauskas:
+ * the conditional multiply call is MIT OR MPL-2.0. Original notices below
+ * remain in force. Keep pi32v2 32x32->64 multiplies clear of loads (bsp/docs/CPU.md). */
+#if FM1B_BLE_OPEN
+#include <stdint.h>
+extern uint64_t ble_wl82_mul32(uint32_t a,uint32_t b);
+#endif
 /* ecc.c - TinyCrypt implementation of common ECC functions */
 
 /*
@@ -246,7 +253,11 @@ static void muladd(uECC_word_t a, uECC_word_t b, uECC_word_t *r0,
 		   uECC_word_t *r1, uECC_word_t *r2)
 {
 
+#if FM1B_BLE_OPEN
+	uECC_dword_t p = ble_wl82_mul32(a,b);
+#else
 	uECC_dword_t p = (uECC_dword_t)a * b;
+#endif
 	uECC_dword_t r01 = ((uECC_dword_t)(*r1) << uECC_WORD_BITS) | *r0;
 	r01 += p;
 	*r2 += (r01 < p);

@@ -25,6 +25,9 @@
 #include "nimble/ble.h"
 #include "host/ble_uuid.h"
 #include "ble_hs_priv.h"
+#if FM1B_BLE_DIAG && FELUCCA_BLE_STAGE >= 3
+#include "ble_host.h"
+#endif
 
 #if NIMBLE_BLE_CONNECT
 /**
@@ -407,6 +410,10 @@ ble_att_svr_read(uint16_t conn_handle,
     if (conn_handle != BLE_HS_CONN_HANDLE_NONE) {
         rc = ble_att_svr_check_perms(conn_handle, 1, entry, &att_err);
         if (rc != 0) {
+#if FM1B_BLE_DIAG && FELUCCA_BLE_STAGE >= 3
+            ble_host_event(BLE_HE_ATT_REJECT, conn_handle, entry->ha_handle_id,
+                           BLE_ATT_ACCESS_OP_READ, att_err);
+#endif
             goto err;
         }
     }

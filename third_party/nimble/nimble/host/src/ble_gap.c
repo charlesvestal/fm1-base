@@ -25,6 +25,11 @@
 #include "host/ble_hs_adv.h"
 #include "host/ble_hs_hci.h"
 #include "ble_hs_priv.h"
+/* FM-1 diagnostics: metadata only, main context, no key material. */
+#if FM1B_BLE_DIAG && FELUCCA_BLE_STAGE >= 3
+#include "ble_host.h"
+#endif
+
 #include "ble_gap_priv.h"
 
 #ifndef min
@@ -6132,6 +6137,9 @@ ble_gap_update_entry_remove(uint16_t conn_handle)
 static void
 ble_gap_update_l2cap_cb(uint16_t conn_handle, int status, void *arg)
 {
+#if FM1B_BLE_DIAG && FELUCCA_BLE_STAGE >= 3
+    ble_host_event(BLE_HE_PARAM_RESULT, conn_handle, status, 0, 0);
+#endif
     struct ble_gap_update_entry *entry;
 
     /* Report failures and rejections.  Success gets reported when the

@@ -26,6 +26,9 @@
 #include "host/ble_uuid.h"
 #include "host/ble_store.h"
 #include "ble_hs_priv.h"
+#if FM1B_BLE_DIAG && FELUCCA_BLE_STAGE >= 3
+#include "ble_host.h"
+#endif
 
 #define BLE_GATTS_INCLUDE_SZ    6
 #define BLE_GATTS_CHR_MAX_SZ    19
@@ -790,6 +793,14 @@ ble_gatts_clt_cfg_access(uint16_t conn_handle, uint16_t attr_handle,
     uint8_t prev_flags;
     uint8_t cur_flags;
     int rc;
+#if FM1B_BLE_DIAG && FELUCCA_BLE_STAGE >= 3
+    uint8_t diag_cfg[2];
+    uint32_t diag_flags = 0xffff;
+    if (op == BLE_ATT_ACCESS_OP_WRITE && OS_MBUF_PKTLEN(*om) == 2 &&
+        os_mbuf_copydata(*om, 0, 2, diag_cfg) == 0) {
+        diag_flags = get_le16(diag_cfg);
+    }
+#endif
 
     ble_hs_lock();
 
@@ -803,6 +814,13 @@ ble_gatts_clt_cfg_access(uint16_t conn_handle, uint16_t attr_handle,
     }
 
     ble_hs_unlock();
+#if FM1B_BLE_DIAG && FELUCCA_BLE_STAGE >= 3
+    /* Subscribe events also fire on CCCD reads in this pin. Log actual writes,
+     * including rejected values, rather than labelling every access a write. */
+    if (op == BLE_ATT_ACCESS_OP_WRITE) {
+        ble_host_event(BLE_HE_CCCD_WRITE, conn_handle, attr_handle, diag_flags, rc);
+    }
+#endif
 
     if (rc != 0) {
         return rc;

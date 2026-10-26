@@ -47,6 +47,11 @@
 #include "nimble/nimble_opt.h"
 #include "host/ble_sm.h"
 #include "ble_hs_priv.h"
+/* FM-1 diagnostics: metadata only, main context, no key material. */
+#if FM1B_BLE_DIAG && FELUCCA_BLE_STAGE >= 3
+#include "ble_host.h"
+#endif
+
 
 #if NIMBLE_BLE_CONNECT
 
@@ -954,6 +959,13 @@ ble_sm_process_result(uint16_t conn_handle, struct ble_sm_result *res,
             ble_sm_persist_keys(proc);
         }
 
+#if FM1B_BLE_DIAG && FELUCCA_BLE_STAGE >= 3
+        if (res->enc_cb && !res->restore && proc != NULL) {
+            ble_host_event(BLE_HE_SMP_RESULT, conn_handle, res->app_status,
+                           (proc->flags & BLE_SM_PROC_F_SC) ? 2 : 1,
+                           proc->pair_alg);
+        }
+#endif
         if (res->enc_cb &&
             res->app_status != BLE_HS_ENOTCONN) {
             /* Do not send this event on broken connection */
@@ -2735,6 +2747,13 @@ ble_sm_rx(struct ble_l2cap_chan *chan, struct os_mbuf **om)
     if (rx_cb != NULL) {
         memset(&res, 0, sizeof res);
 
+#if FM1B_BLE_DIAG && FELUCCA_BLE_STAGE >= 3
+        if (op == BLE_SM_OP_PAIR_REQ) {
+            uint8_t auth = 0;
+            os_mbuf_copydata(*om, 2, 1, &auth);
+            ble_host_event(BLE_HE_SMP_START, conn_handle, op, auth, 0);
+        }
+#endif
         rx_cb(conn_handle, om, &res);
         ble_sm_process_result(conn_handle, &res, op == BLE_SM_OP_PAIR_FAIL ?
                               false : true);
