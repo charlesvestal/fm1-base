@@ -23,7 +23,7 @@ static void want(const char *what, const uint32_t *pk, uint32_t n)
     uint32_t i, got = mi_w - mi_r;
     int ok = got == n;
     for (i = 0; ok && i < n; i++)
-        ok = midi_in_q[(mi_r + i) % MQ] == pk[i];
+        ok = midi_in_q[(mi_r + i) % MQ] == pk[i] && midi_in_source[(mi_r+i)%MQ]==2u;
     printf("  %s %s (%u packets)\n", ok ? "ok  " : "FAIL", what, got);
     if (!ok) {
         fails++;
