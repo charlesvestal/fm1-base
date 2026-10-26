@@ -34,8 +34,10 @@ SECTIONS
               *(.*_const)
               *(.crypto_code)           /* the SDK's byte swaps (htons): named here, or it lands outside the image */
               . = ALIGN(4); _etext = .; } > XIP
+    /* .app_ram: the app's own RAM code (plat.h PLAT_RAM_CODE), calling only RAM code (tools/ramcode.py checks) */
     .ram_text : { _rt_start = .; KEEP(*(.ram_text*)) *(.volatile_ram_code) *(*.rf.text.cache.L2.rf_trim)
-                  . = ALIGN(4); _rt_end = .; } > RAMTEXT AT > XIP
+                  . = ALIGN(4); _ar_start = .; *(.app_ram .app_ram.*) . = ALIGN(4); _ar_end = .;
+                  _rt_end = .; } > RAMTEXT AT > XIP
     _rt_load = LOADADDR(.ram_text);
     _app_xip_end = ORIGIN(XIP) + 0x8DFBC;            /* the app slot's end (the boot's bound on the packed load
                                                       * images: main_fm1.c) */

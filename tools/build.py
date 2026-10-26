@@ -126,6 +126,13 @@ app.h); the build prints what it has.
                              `ir_pass IN.ll OUT.ll [UNIT]` (UNIT: an o2 unit's path relative to APP_DIR; none for
                              unity.c), then compiles OUT.ll at the unit's level (an app marking its cold code
                              minsize: Melodee's idea). Without changes the round trip makes the same code
+The app's own code that runs from RAM (out of the XIP cache's way: an audio path) goes in section .app_ram (plat.h
+PLAT_RAM_CODE): copied at boot with .ram_text, inside the guard's RAM code window (between _ar_start and _ar_end). It
+may call only RAM code, to any depth, and nothing through a pointer (tools/ramcode.py, over the disassembly). XIP code
+calls it through a pointer (PLAT_FAR: a direct call does not reach); a call from it into XIP, direct or through a
+pointer, the check refuses, unless:
+  ram_code_allow = ["fn"]    the app's RAM functions whose calls out of RAM or through a pointer it vouches for (a cold
+                             path; a pointer that only holds RAM code); printed by every build
 The second core's code that runs from RAM goes in section .c1_text: in .ram_text (copied at boot, inside the guard's
 RAM code window), between _c1_start and _c1_end; the check that RAM code calls nothing in the flash leaves it out
 (core 1 runs only while core 0 waits for it in the audio interrupt, and core 0 turns the flash off only with
@@ -824,6 +831,7 @@ def mul64_near_loads(dis, window=4):
 
 
 def check(img, syms, dis, rt):
+    import ramcode                                # (tools/, on the path above)
     errors, notes = [], []
     m = re.search(r"^([0-9a-f]+) .*\s_start$", syms, re.M)
     if not m or int(m.group(1), 16) != APP_XIP:
@@ -834,14 +842,21 @@ def check(img, syms, dis, rt):
           for m2 in [re.search(r"^([0-9a-f]+) .*\s" + n + r"$", syms, re.M)] if m2]
     in_c1 = (lambda ln: (mm2 := LINE.match(ln)) is not None and c1[0] <= int(mm2.group(1), 16) < c1[1]) \
         if len(c1) == 2 else (lambda ln: False)   # (the second core's loop: it may call into the flash, see the top)
-    rt_calls = [ln for ln in rt.splitlines() if re.search(r"\bcall\b", ln) and not in_c1(ln)]
+    ar = [symv for n in ("_ar_start", "_ar_end") for symv in [ramcode.symbol(syms, n)] if symv is not None]
+    in_ar = (lambda ln: (mm2 := LINE.match(ln)) is not None and ar[0] <= int(mm2.group(1), 16) < ar[1]) \
+        if len(ar) == 2 else (lambda ln: False)   # (the app's RAM code: checked apart, tools/ramcode.py)
+    rt_calls = [ln for ln in rt.splitlines() if re.search(r"\bcall\b", ln) and not in_c1(ln) and not in_ar(ln)]
     jieli = (BLE and not OWN) or WIFI
     if rt_calls and jieli:          # JieLi's .volatile_ram_code calls out; it runs with the flash on
         notes.append(f"the radio: .ram_text contains calls (JieLi's .volatile_ram_code): {rt_calls[:3]}")
     elif rt_calls:                  # RAM code runs with the flash off: no calls into XIP
         errors.append(f".ram_text contains calls: {rt_calls[:3]}")
     else:
-        notes.append(f".ram_text: {len([ln for ln in rt.splitlines() if LINE.match(ln)])} insns, no calls")
+        insns = [ln for ln in rt.splitlines() if LINE.match(ln) and not in_ar(ln)]
+        notes.append(f".ram_text: {len(insns)} insns, no calls")
+    ar_errors, ar_notes = ramcode.check(syms, dis, CONF.get("ram_code_allow", []))
+    errors += ar_errors
+    notes += ar_notes
     import romref                                 # nothing may call the chip ROM or use its addresses (tools/romref.py;
     for val in romref.rom_refs(dis, set(CONF.get("rom_check_skip", []))):   # rom_check_skip: a vendored function whose
         errors.append(f"reference to ROM address {val:#010x}")              # constant only looks like a ROM address)

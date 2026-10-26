@@ -17,6 +17,31 @@
 #define PLAT_POOL __attribute__((section(".pool")))
 #endif
 
+/* PLAT_RAM_CODE: a function that runs from RAM (section .app_ram, copied at boot with .ram_text, in the RAMTEXT
+ * region they share: 32 KiB, 24 KiB with WiFi), out of the way of the XIP cache's misses: an audio path. It may call
+ * only RAM code (other PLAT_RAM_CODE functions, felucca-bsp's RAM functions) and nothing through a pointer; the build
+ * checks it over the disassembly, to any depth (tools/ramcode.py; fm1.toml ram_code_allow names the exceptions an app
+ * vouches for). Not for code that runs with the flash off: it may read constants in the flash. XIP code it may not
+ * call: the compiler's own calls (memcpy for a struct copy, a 64-bit divide), and a static inline helper the compiler
+ * keeps out of line (at -Os it often does: fastmath.h's fm_exp2f), whose one copy is in XIP; a helper RAM code uses
+ * is always_inline, or PLAT_RAM_CODE itself.
+ * PLAT_FAR(fn): fn through a pointer the compiler cannot turn back into a direct call. RAM code and XIP code are
+ * mostly farther apart than a direct call reaches (+-4 MiB), so XIP code calls RAM code this way (the linker refuses
+ * a direct call that does not reach: "relocation truncated to fit"); a call from RAM code into XIP this way is one
+ * the check refuses, unless allowed. The host: plain calls. */
+#ifdef PLAT_HOST
+#define PLAT_RAM_CODE
+#define PLAT_FAR(fn) (&(fn))
+#else
+#define PLAT_RAM_CODE __attribute__((section(".app_ram")))
+static inline __attribute__((always_inline)) void *plat_far_ptr(void *fn)
+{
+    void *volatile held = fn;           /* read back from memory: the compiler no longer knows the target */
+    return held;
+}
+#define PLAT_FAR(fn) ((__typeof__(&(fn)))plat_far_ptr((void *)&(fn)))
+#endif
+
 /* panel controls, by printed label (Felucca's panel.c map turns these into matrix ids; Felucca
  * calls the second button SCL, the panel prints SEL) */
 enum { B_FX, B_SEL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B_PLAY, B_REC,
