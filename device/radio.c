@@ -610,7 +610,9 @@ void shim_bt_event(int from, const void *event, int len)
             extern const char *ble_midi_name(void);
             char b[40] = "BT ready: advertising as ";
             const char *n = ble_midi_name();
-            uint32_t i = 24;                      /* sizeof "BT ready: advertising as " - 1 */
+            uint32_t i = 0;
+            while (b[i])
+                i++;                              /* the end of the fixed part */
             while (*n && i < sizeof b - 1u)
                 b[i++] = *n++;
             b[i] = 0;
