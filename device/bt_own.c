@@ -30,6 +30,7 @@ static void own_bta_load(void);
 static void own_bta_keep(void);
 static void own_bta_poll(void);
 static void bti_poll(void);
+static uint8_t ba_live;
 static uint8_t own_bta_attached;
 #endif
 /* ---- what is kept (OBJ_BLE): the address, the radio calibration's copy, the bond */
@@ -295,6 +296,11 @@ static void ble_poll(void)
         bti_poll();                               /* Bluetooth audio: the page, the link, the stream's packets */
         own_bta_poll();
         own_bta_keep();
+        own_held(1);                              /* while it streams, the MIDI link asked to slow to 30-45 ms (the
+                                                   * audio's air; ble_host.c ble_sig_audio: at 7.5-15 ms half the MIDI
+                                                   * packets failed CRC beside the stream, 2026-10-26) */
+        ble_sig_audio(ba_live);
+        own_held(0);
     }
 #endif
     while (oi_r != oi_w) {                        /* MIDI in, to radio.c's rings (and its clock smoothing) */

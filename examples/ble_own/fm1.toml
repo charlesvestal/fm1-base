@@ -9,6 +9,8 @@ ble = true                     # Bluetooth MIDI (--no-ble builds without it)
 ble_stack = "own"              # Optimist's own Bluetooth stack (bt/), no JieLi library
 ble_pairing = true             # pairing and an encrypted link (the bond kept)
 bt_audio = true                # Bluetooth audio out to headphones and speakers (A2DP)
+bt_log = true                  # the audio set-up step by step on the log (diagnostics)
+ble_central = true             # and connects to Bluetooth MIDI devices (one link at a time)
 # the site (tools/make_site.py, tools/publish_site.sh)
 tagline = "a starting point for FM-1 firmware"
 repo = "https://github.com/charlesvestal/fm1-base"

@@ -96,3 +96,56 @@ int plat_ble_device(void)
         return ble_ll_scanning() ? BLE_DEV_SCANNING : BLE_DEV_OFF;
     }
 }
+
+/* ---- the USB remote (main_fm1.c; tools/fm1_remote.py dev ...): F0 7D 4C 44 cmd [arg] F7
+ *   1 scan on  2 scan off  3 the devices found, a line each ("<i> <name>")  4 i: connect  5 disconnect
+ *   6 the state ("<BLE_DEV_*> <fail> <code>") */
+static void dev_line(const char *t)
+{
+    uint8_t f[48];
+    uint32_t n = 0;
+    f[n++] = 0xF0; f[n++] = 0x7D; f[n++] = 0x4C; f[n++] = 0x44; f[n++] = 0x10;
+    while (*t && n < sizeof f - 1u)
+        f[n++] = (uint8_t)(*t++ & 0x7Fu);
+    f[n++] = 0xF7;
+    ota_wire_send(f, n);
+}
+static int dev_frame(const uint8_t *p, uint32_t n)
+{
+    static const char *const ST[] = {"off", "scanning", "connecting", "searching", "ready"};
+    static const uint8_t end[6] = {0xF0, 0x7D, 0x4C, 0x44, 0x11, 0xF7};
+    char b[40], nm[24], *q;
+    int i, rssi, st;
+    if (n < 4u || p[0] != 0x7Du || p[1] != 0x4Cu || p[2] != 0x44u)
+        return 0;
+    switch (p[3]) {
+    case 1: plat_ble_scan(1); break;
+    case 2: plat_ble_scan(0); break;
+    case 3:
+        for (i = 0; plat_ble_found(i, nm, &rssi); i++) {
+            q = put_dec(b, (uint32_t)i);
+            *q++ = ' ';
+            for (const char *t = nm; *t && q < b + sizeof b - 1; )
+                *q++ = *t++;
+            *q = 0;
+            dev_line(b);
+        }
+        break;
+    case 4: (void)plat_ble_connect(n >= 5u ? p[4] : 0); break;
+    case 5: plat_ble_disconnect(); break;
+    case 6:
+        st = plat_ble_device();
+        q = b;
+        for (const char *t = st >= 0 && st <= BLE_DEV_READY ? ST[st] : "?"; *t; )
+            *q++ = *t++;
+        *q++ = ' ';
+        q = put_dec(q, ble_central_fail());
+        *q++ = ' ';
+        put_dec(q, ble_central_code());
+        dev_line(b);
+        break;
+    default: break;
+    }
+    ota_wire_send(end, sizeof end);
+    return 1;
+}

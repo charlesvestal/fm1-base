@@ -35,6 +35,9 @@ static uint32_t wdt_stage __attribute__((section(".noinit")));   /* the main loo
 static int own_bta_feed(const int32_t *o, uint32_t n);   /* bt_own_audio.c */
 static int bta_frame(const uint8_t *p, uint32_t n);
 #endif
+#if FM1B_BLE_OWN && FM1B_BLE_CENTRAL
+static int dev_frame(const uint8_t *p, uint32_t n);   /* bt_own_central.c */
+#endif
 static void render_block(int32_t *o)                /* ALNK0: one half, measured */
 {
     uint32_t t0 = fm1_ticks(), us, budget = HALF_FRAMES * 1000000u / FS;
@@ -1001,6 +1004,9 @@ static void fm1_main(void)
 #endif
 #if FM1B_BT_AUDIO
                                           || bta_frame(p, n)
+#endif
+#if FM1B_BLE_OWN && FM1B_BLE_CENTRAL
+                                          || dev_frame(p, n)
 #endif
 #ifdef APP_SYSEX
                                           || app_sysex(p, n)
