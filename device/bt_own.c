@@ -279,7 +279,10 @@ static void own_central_poll(void);
 
 static void ble_poll(void)
 {
-    static uint32_t seen_events, last_diag;
+    static uint32_t seen_events;
+#if BLE_DIAG
+    static uint32_t last_diag;
+#endif
     static uint8_t role_said = 0xFF, ready_said;
     uint8_t conn = 0;
     int l;
