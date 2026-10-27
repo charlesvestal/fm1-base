@@ -722,4 +722,8 @@ int app_stats_quiet(void);
  *                                     app_backup_restored then: the app's frame starts again from app_ui_init)
  * and these: int app_backup_playing(void) (1: no restore now, STOP FIRST), void app_backup_flush(void) (what is not
  * saved yet, saved: a backup starts), void app_backup_hold(int on) (no saving while a backup streams),
- * void app_backup_restored(void) (everything from the flash again) */
+ * void app_backup_restored(void) (everything from the flash again)
+ *
+ * Companion services over USB (fm1.toml companion = true: FM1B_COMPANION 1, device/companion.c; docs/COMPANION.md,
+ * tools/fm1_companion.py): a computer asks what the firmware is and has (the platform services built, APP_NAME,
+ * APP_VERSION, the backup's magic, version and file extension). The app may add its own tags for its own pages: APP_COMPANION_EXTRAS "key=value;..." */

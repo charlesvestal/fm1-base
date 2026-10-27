@@ -308,5 +308,7 @@ run stack-c1 sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 
     $OUT/stack_c1_test"
 run host-dbgstats sh -c "mkdir -p $OUT/dbgstats && $H/template_host tests/dbgstats.txt $OUT/dbgstats && \
     $PY tests/dbgstats_host_test.py $H/template_host $OUT/dbgstats"
+# the companion services (device/companion.c) in the host simulator, through tools/fm1_companion.py: tests/companion_app
+run companion "$PY" tests/companion_test.py $OUT/companion
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL

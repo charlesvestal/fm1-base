@@ -1,0 +1,12 @@
+# The companion test app's build settings (tools/build.py): an app with the companion services (companion = true;
+# device/companion.c, docs/COMPANION.md), for tests/companion_test.py in the host simulator
+name = "CPTEST"
+id_prefix = "FM-1_14"          # package identity: dev FM-1_1400
+usb_manufacturer = "fm1-base"
+usb_product = "CPTEST FM-1"
+o2 = []
+words = "words.tsv"
+licence = "MPL-2.0"
+companion = true
+backup = true
+backup_ext = "cpb"

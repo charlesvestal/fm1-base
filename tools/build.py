@@ -127,6 +127,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              installer page: a region there already answers at once); the host and web builds have it
                              compiled in. resources_what (and
                              resources_what_ja): what it holds, in the installer's words ("the 909 cymbals")
+  companion = true           the companion services over USB (FM1B_COMPANION: device/companion.c, docs/COMPANION.md;
+                             tools/fm1_companion.py): what the firmware is and has, for a generic page or tool
   cpu2 = true                the second core (FM1B_CPU2: device/cpu2.c, plat_cpu2_* in plat.h, on felucca-bsp's
                              chip/fm1_cpu1.*): a worker for a part of the render. A failure of it (a misread, a
                              fault, a late job) restarts the FM-1, the reason in the crash record (Melodee's releases)
@@ -1358,12 +1360,17 @@ def opt_flags():
     """the optional parts an fm1.toml turns on that need no SDK: the same on the device, the host and the web"""
     flags = [f"-D{flag}=1" for key, flag in (("mirror", "FM1B_MIRROR"), ("backup", "FM1B_BACKUP"), ("cpu2", "FM1B_CPU2"), ("usb_host", "FM1B_USB_HOST"), ("msc", "FM1B_MSC"), ("sd", "FM1B_SD"),
                                            ("resources", "FM1B_RES"), ("lcd_panel", "FM1B_LCD_PANEL"), ("xdata2", "FM1B_XDATA2"),
-                                           ("headphones", "FM1B_HEADPHONES"))
+                                           ("headphones", "FM1B_HEADPHONES"), ("companion", "FM1B_COMPANION"))
             if (CONF.get(key) and os.environ.get(flag) != "0") or os.environ.get(flag) == "1"]   # (FM1B_MIRROR=1: a build with it, fm1.toml as it is; FM1B_BACKUP=0: without)
     if cache_ram_ways():
         flags.append(f"-DFM1B_CACHE_RAM={cache_ram_ways()}")   # (the host and the web: plat_cache_ram's stand-in)
     if usb_audio_channels() > 2:
         flags.append(f"-DFM1B_UAC_CH={usb_audio_channels()}")  # (the host and the web: plat_usb_ch's stand-in)
+    if "-DFM1B_COMPANION=1" in flags and PRODUCT:
+        flags.append(f'-DFELUCCA_ID="{PRODUCT}"')   # (the capability query's identity in the simulator and the browser too:
+                                                 # the device's build passes it anyway: the same define twice)
+    if "-DFM1B_COMPANION=1" in flags and "-DFM1B_BACKUP=1" in flags:
+        flags.append(f'-DFM1B_BACKUP_EXT="{CONF.get("backup_ext", "bak")}"')   # (the capability query tells the backup's extension)
     return flags
 
 
