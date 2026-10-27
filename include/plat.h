@@ -163,6 +163,26 @@ int plat_ble_passkey(void);            /* a pairing with a device waits for its 
  * on starts it (or advertises again). Whether it starts at power-on: APP_BLE_AT_BOOT (app.h, e.g. a saved setting;
  * default 1) */
 void plat_ble_enable(int on);
+/* What Bluetooth keeps (the own stack, ble_stack = "own"), by default in the app's store object OBJ_BLE. An app that
+ * keeps it in its own saved data instead (a settings record it has, with these fields at its own places) defines
+ * APP_BLE_STORE in app.h and gives the two calls below; it then needs no OBJ_BLE. app_ble_load: at Bluetooth's start
+ * (main loop), 1 with r filled, 0 none kept (the platform makes the address then, and saves it); app_ble_save: main
+ * loop, once something changed (a new address, a pairing, a remembered audio device), 0 kept (the app may write it
+ * to the flash later, with its own data) */
+struct plat_ble_rec {
+    uint8_t addr[6];                   /* our BLE address (static random: the top two bits 1) */
+    uint8_t bonded, rsv;               /* the computer's bond (ble_pairing): bonded, ediv, rand, ltk */
+    uint16_t bond_ediv;
+    uint8_t bond_rand[8], bond_ltk[16];
+    uint8_t bta_addr[6], bta_addr_set;   /* Bluetooth audio (bt_audio): our BR/EDR address, once made */
+    uint8_t bta_n;                     /* the remembered audio devices, the last one first */
+    struct plat_bta_dev {
+        uint8_t addr[6], bonded, link_key[16];   /* link_key: from its pairing (air order), when bonded */
+        char name[17];
+    } bta[4];
+};
+int app_ble_load(struct plat_ble_rec *r);
+int app_ble_save(const struct plat_ble_rec *r);
 
 /* Bluetooth audio out (fm1.toml bt_audio = true, with ble_stack = "own": FM1B_BT_AUDIO 1): an A2DP source to headphones
  * and speakers (SBC), beside Bluetooth MIDI on the one radio. While it streams, the render goes to the device and the

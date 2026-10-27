@@ -101,7 +101,9 @@ headphones (AIAIAI TMA-2) and a speaker (Anker SoundCore 2), MIDI and audio at o
 1. In fm1.toml, `ble = true`. Add `ble_central = true` for the FM-1 to connect to MIDI devices too (a keyboard,
    a controller), beside a computer. For the own stack, add `ble_stack = "own"` and its options (above).
 2. In app.h, give it a store object: `OBJ_BLE` in the app's object enum, and its offset in `APP_STORE_MAP` (the
-   radio's address and pairing are kept there).
+   radio's address and pairing are kept there). On the own stack an app may keep them in its own saved data instead
+   (a settings record of its own): `#define APP_BLE_STORE` and `app_ble_load` / `app_ble_save` (plat.h `struct
+   plat_ble_rec`), and no `OBJ_BLE`.
 3. In the app: MIDI goes out with `TO_BLE` and comes in on `PORT_BLE`, as USB's does. For a page of devices, add
    `#define APP_BTDEV` to app.h and use lib/btdev.h (the template's REC does).
 4. With devices there are two links, the computer's and the device's. `TO_BLE` goes to both; `TO_BLE_HOST` or

@@ -8,7 +8,9 @@
 #define APP_NAME "BTA TEST"
 #define APP_SPLASH_RGB RGB(80, 160, 240)
 #define APP_BLOCK 256u
-enum { OBJ_PANEL, OBJ_BLE, OBJ_NOBJ };
+/* what Bluetooth keeps: in the app's own object (APP_BLE_STORE, plat.h struct plat_ble_rec), not OBJ_BLE */
+#define APP_BLE_STORE
+enum { OBJ_PANEL, OBJ_BTREC, OBJ_NOBJ };
 #define APP_STORE_MAP {0xDC000u, 0xDE000u}
 
 void app_init(void);

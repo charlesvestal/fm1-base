@@ -263,8 +263,14 @@ static void radio_boot_note(void)
 static void radio_clean_exit(void) { blog.running = 0; }
 
 /* the radio's address and pairing: the app's store object OBJ_BLE (app.h) */
+#ifdef APP_BLE_STORE
+#if !FM1B_BLE_OWN
+#error "APP_BLE_STORE: with the own stack only (fm1.toml ble_stack = \"own\"): JieLi's keeps its records in OBJ_BLE"
+#endif
+#else
 int shim_store_load(void *dst, uint32_t max) { return plat_store_load(OBJ_BLE, dst, max); }
 int shim_store_save(const void *src, uint32_t len) { return plat_store_save(OBJ_BLE, src, len); }
+#endif
 
 #if !FM1B_BLE_OWN
 extern int syscfg_read(uint16_t id, void *buf, uint16_t len);

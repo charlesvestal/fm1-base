@@ -10,6 +10,8 @@ static uint32_t held, phase;
 static int lost_seen;                             /* the last plat_bta_lost answer that was not NONE */
 
 void app_init(void) {}
+int app_ble_load(struct plat_ble_rec *r) { return plat_store_load(OBJ_BTREC, r, sizeof *r) == (int)sizeof *r; }
+int app_ble_save(const struct plat_ble_rec *r) { return plat_store_save(OBJ_BTREC, r, sizeof *r); }
 void app_render(int32_t *lr, uint32_t n, uint32_t master_q12)
 {
     uint32_t i;
