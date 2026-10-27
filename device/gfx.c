@@ -160,10 +160,20 @@ static int32_t cv_text(int32_t x, int32_t y, const felucca_font_t *f, const char
         w = f->bw[gi];
         bpr = (w + 1u) / 2u;
         gd = f->data + f->off[gi];
+#ifdef FONT_TRIM                     /* (tools/gen_font.py FM1_FONT_TRIM: the glyph's lit box, after its left, top, rows) */
+        int32_t bx = x - f->pad + gd[0], by = y + gd[1] + cv_oy;
+        uint32_t rows = gd[2];
+        gd += 3;
+        for (gy = 0; gy < rows; gy++)
+            for (gx = 0; gx < w; gx++) {
+                uint32_t a = gd[gy * bpr + gx / 2u];
+                int32_t px = bx + (int32_t)gx, py = by + (int32_t)gy;
+#else
         for (gy = 0; gy < f->h; gy++)
             for (gx = 0; gx < w; gx++) {
                 uint32_t a = gd[gy * bpr + gx / 2u];
                 int32_t px = x - f->pad + (int32_t)gx, py = y + (int32_t)gy + cv_oy;
+#endif
                 a = (gx & 1u) ? (a & 15u) : (a >> 4);
                 if (!a || (uint32_t)px >= cv_w || py < cv_y0 || py >= cv_y1)
                     continue;
