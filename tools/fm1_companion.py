@@ -2,16 +2,23 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Henri David
 """Talk to any fm1-base firmware built with companion = true (fm1.toml; device/companion.c, docs/COMPANION.md) over
-USB-MIDI: what it is and has.
+USB-MIDI: what it is and has, and the app's files.
 
     python3 tools/fm1_companion.py info [--port NAME]
+    python3 tools/fm1_companion.py ls
+    python3 tools/fm1_companion.py get NAME [FILE]       (FILE default: NAME)
+    python3 tools/fm1_companion.py put FILE [NAME]       (NAME default: FILE's name)
+    python3 tools/fm1_companion.py rm NAME
     python3 tools/fm1_companion.py info --serve-cmd "tests/companion_app/build/host/cptest_host --serve"
 
---serve-cmd runs a host simulator (NAME_host --serve) instead of an FM-1: the same requests, the same answers.
+--serve-cmd runs a host simulator (NAME_host --serve) instead of an FM-1: the same requests, the same answers. A file
+read is checked against the FM-1's CRC-32 of it; a file written counts only once the FM-1 has checked it whole, and a
+put cut short (a cable pulled) goes on where it stopped when run again while the FM-1 stayed on.
 
-As a library: Client(link) with hello(); ServeLink(cmd) for a simulator, find(backend, port) for an FM-1.
-Needs mido with python-rtmidi for an FM-1 (as tools/fm1_install.py). Exit codes: 0 done, 1 failed, 2 bad arguments,
-3 FM-1 not found, 4 no answer (no companion services, or the connection lost).
+As a library: Client(link) with hello(), files(), read(i), write(i, data), delete(i); ServeLink(cmd) for a simulator,
+find(backend, port) for an FM-1. Needs mido with python-rtmidi for an FM-1 (as tools/fm1_install.py). Exit codes:
+0 done, 1 failed, 2 bad arguments, 3 FM-1 not found, 4 no answer (no companion services, or the connection lost),
+5 busy (the app plays: stop it first), 6 no such file.
 """
 import argparse
 import importlib
@@ -21,6 +28,7 @@ import struct
 import subprocess
 import sys
 import time
+import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 INST = importlib.import_module("fm1_install")   # (tools/: the update's wire format, the port finder)
@@ -29,7 +37,14 @@ HELLO = 0x60
 SERVICES = ["capability query", "files", "parameters", "backup", "mirror", "screen reader", "Bluetooth MIDI", "WiFi",
             "USB audio in", "USB audio out", "the app's own SysEx", "the app's own commands", "the second core",
             "USB MIDI host", "Bluetooth audio"]
-EXIT = {"usage": 2, "notfound": 3, "silent": 4}
+FILES = 0x61
+EXIT = {"usage": 2, "notfound": 3, "silent": 4, "busy": 5, "nofile": 6}
+STATUS = ["ok", "busy (the app plays: stop it first)", "no such file", "not allowed", "out of range",
+          "CRC-32 mismatch", "the flash refused", "out of order", "a malformed request", "an unknown operation"]
+KINDS = ["other", "project", "preset", "sample", "bank", "pattern", "settings", "text", "log"]
+F_READ, F_WRITE, F_DELETE, F_PLAYING = 1, 2, 4, 8
+OP_LIST, OP_READ, OP_SUM, OP_BEGIN, OP_DATA, OP_COMMIT, OP_DELETE = range(7)
+ST_OK, ST_BUSY, ST_NONE, ST_ORDER = 0, 1, 2, 7
 
 
 class CompanionError(Exception):
@@ -105,6 +120,92 @@ class Client:
                 "app_version": version,
                 "extras": dict(kv.split("=", 1) if "=" in kv else (kv, "") for kv in extras.split(";") if kv)}
 
+    # ------------------------------------------------------------ files ---
+    def file_op(self, op, i, body=b""):
+        """-> (status, the answer after op, status, index)"""
+        b = self.request(FILES, struct.pack("<BH", op, i) + bytes(body),
+                         match=lambda a: len(a) >= 4 and a[0] == op and struct.unpack_from("<H", a, 2)[0] == i)
+        return b[1], b[4:]
+
+    def fail(self, st, what):
+        code = "busy" if st == ST_BUSY else "nofile" if st == ST_NONE else "failed"
+        raise CompanionError(code, f"{what}: {STATUS[st] if st < len(STATUS) else st}")
+
+    def files(self):
+        """every file: [{index, name, kind, flags, size, room}]"""
+        out, i, count = [], 0, 1
+        while i < count:
+            st, b = self.file_op(OP_LIST, i)
+            count = struct.unpack_from("<H", b)[0]
+            if st != ST_OK:
+                break
+            kind, flags, size, room = struct.unpack_from("<BBII", b, 2)
+            (name,), _ = cstrings(b[12:], 1)
+            out.append({"index": i, "name": name, "kind": KINDS[kind] if kind < len(KINDS) else str(kind),
+                        "flags": flags, "size": size, "room": room})
+            i += 1
+        return out
+
+    def index_of(self, name):
+        for f in self.files():
+            if f["name"] == name:
+                return f
+        raise CompanionError("nofile", f"no file {name!r} on the FM-1")
+
+    def sum(self, i):
+        st, b = self.file_op(OP_SUM, i)
+        if st != ST_OK:
+            self.fail(st, "sum")
+        return struct.unpack_from("<II", b)
+
+    def read(self, i, progress=None):
+        """the whole file, checked against the device's CRC-32 of it"""
+        size, crc = self.sum(i)
+        data = bytearray()
+        while len(data) < size:
+            st, b = self.file_op(OP_READ, i, struct.pack("<IH", len(data), 256))
+            if st != ST_OK:
+                self.fail(st, f"read at {len(data)}")
+            off = struct.unpack_from("<I", b)[0]
+            if off == len(data):
+                data += b[4:]
+            if len(b) <= 4:
+                raise CompanionError("failed", f"read at {len(data)}: nothing came")
+            if progress:
+                progress(len(data), size)
+        if zlib.crc32(bytes(data)) != crc:
+            raise CompanionError("failed", "read: the CRC-32 differs from the FM-1's (the file changed meanwhile?)")
+        return bytes(data)
+
+    def write(self, i, data, chunk=512, progress=None, stop_after=None):
+        """the whole file: begin (resumes a write cut short), the data in order, commit. stop_after: give up after
+        that many bytes (a test's cut cable)"""
+        data = bytes(data)
+        crc = zlib.crc32(data)
+        st, b = self.file_op(OP_BEGIN, i, struct.pack("<II", len(data), crc))
+        if st != ST_OK:
+            self.fail(st, "begin")
+        nxt = struct.unpack_from("<I", b)[0]
+        resumed = nxt
+        while nxt < len(data):
+            if stop_after is not None and nxt >= stop_after:
+                return resumed
+            st, b = self.file_op(OP_DATA, i, struct.pack("<I", nxt) + data[nxt:nxt + chunk])
+            if st not in (ST_OK, ST_ORDER) or len(b) < 4:
+                self.fail(st, f"data at {nxt}")
+            nxt = struct.unpack_from("<I", b)[0]
+            if progress:
+                progress(nxt, len(data))
+        st, b = self.file_op(OP_COMMIT, i)
+        if st != ST_OK:
+            self.fail(st, "commit")
+        return resumed
+
+    def delete(self, i):
+        st, _ = self.file_op(OP_DELETE, i)
+        if st != ST_OK:
+            self.fail(st, "delete")
+
 
 class ServeLink:
     """a host simulator (NAME_host --serve) as the FM-1: each request is sent, the device runs step_ms, its frames
@@ -176,9 +277,53 @@ def show_info(c, out):
     return 0
 
 
+def show_files(c, out):
+    fs = c.files()
+    for f in fs:
+        rw = "".join(ch if f["flags"] & bit else "-" for ch, bit in (("r", F_READ), ("w", F_WRITE), ("d", F_DELETE)))
+        print(f"{f['index']:3}  {rw}{'p' if f['flags'] & F_PLAYING else ' '}  {f['kind']:8} {f['size']:8} / "
+              f"{f['room']:<8} {f['name']}", file=out)
+    if not fs:
+        print("no files", file=out)
+    return 0
+
+
+def run(a, c, out):
+    if a.what == "info":
+        return show_info(c, out)
+    if a.what == "ls":
+        return show_files(c, out)
+    if not a.args:
+        raise CompanionError("usage", f"{a.what}: which file?")
+    if a.what == "get":
+        f = c.index_of(a.args[0])
+        data = c.read(f["index"])
+        path = a.args[1] if len(a.args) > 1 else os.path.basename(a.args[0])
+        with open(path, "wb") as fh:
+            fh.write(data)
+        print(f"{f['name']}: {len(data)} bytes -> {path} (CRC-32 checked)", file=out)
+        return 0
+    if a.what == "put":
+        try:
+            with open(a.args[0], "rb") as fh:
+                data = fh.read()
+        except OSError as e:
+            raise CompanionError("usage", f"{a.args[0]}: {e.strerror}")
+        f = c.index_of(a.args[1] if len(a.args) > 1 else os.path.basename(a.args[0]))
+        resumed = c.write(f["index"], data)
+        print(f"{f['name']}: {len(data)} bytes written and checked" + (f" (resumed at {resumed})" if resumed else ""),
+              file=out)
+        return 0
+    f = c.index_of(a.args[0])
+    c.delete(f["index"])
+    print(f"{f['name']}: deleted", file=out)
+    return 0
+
+
 def main(argv=None, backend=None, out=sys.stdout):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("what", choices=["info"])
+    ap.add_argument("what", choices=["info", "ls", "get", "put", "rm"])
+    ap.add_argument("args", nargs="*")
     ap.add_argument("--port", metavar="NAME", help="MIDI port to use (part of its name)")
     ap.add_argument("--serve-cmd", metavar="CMD", help="a host simulator instead (NAME_host --serve)")
     a = ap.parse_args(argv)
@@ -193,7 +338,7 @@ def main(argv=None, backend=None, out=sys.stdout):
                 except ImportError:
                     raise CompanionError("usage", "needs mido and python-rtmidi (pip install mido python-rtmidi)")
             link = find(backend, a.port)
-        return show_info(Client(link), out)
+        return run(a, Client(link), out)
     except CompanionError as e:
         print(f"error: {e}", file=sys.stderr)
         return EXIT.get(e.code, 1)
