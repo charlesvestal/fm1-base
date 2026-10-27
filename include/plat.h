@@ -37,6 +37,10 @@ int32_t plat_enc(int role);            /* detents since the last call, + = clock
 uint32_t plat_master(void);            /* MASTER pot's position, 0..4096 (the render gets it as a gain: APP_GAIN) */
 int plat_battery(void);                /* the battery: 0 (empty) .. 3 (full), 4 a USB host powers the FM-1, -1 not read
                                         * yet (the keys' readings own the converter: APP_KEY_SENSE) */
+int32_t plat_battery_raw(void);        /* the reading plat_battery's bars come from: ADC channel 3 (the battery's divider),
+                                        * the main loop's slow average, in the converter's counts (the bars' thresholds
+                                        * 531 / 561 / 591); 0 = not read yet. Whether USB powers the FM-1 or not. For an
+                                        * app that shows the volts itself; built for an app with APP_BATTERY_RAW (below) */
 
 /* lights: bright buttons and keys, and dim ones (a short pulse each scan frame; a bright bit wins); glow 0 the dim
  * ones off, 1 low, 2 high. Bit NB in buttons / dim_buttons is PLAY's second, green LED */
@@ -329,6 +333,7 @@ uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B) has gone, 
  *   APP_OVERLOAD    void app_overload(void)       the render took over 90 % of its time (shed voices)
  *   APP_SPLASH      void app_splash(void)         the first screen at boot, instead of the name
  *   APP_GAIN(m)     the render's gain from MASTER's position m (0..4096; default the square, m * m >> 12)
+ *   APP_BATTERY_RAW (no function) plat_battery_raw is built (the battery's reading, for an app's own volts)
  *   APP_QUIET       void app_quiet(int32_t *lr, uint32_t n)   the render while the flash must not be read (the
  *                   radio's first second, FM1B_BLE): keep time without sound (default: silence)
  *   APP_KEY_SENSE   void app_key_sample(uint32_t key, uint32_t v, uint32_t ticks, int driven) (rows PA7 / PA8),
