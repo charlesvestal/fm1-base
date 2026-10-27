@@ -1135,6 +1135,9 @@ static void fm1_main(void)
 #if FM1B_MIRROR
         mirror_step();                              /* the screen mirrored: input reports, redraws, timeouts */
 #endif
+#if FM1B_COMPANION
+        comp_step();                                /* the companion: what a watched parameter did */
+#endif
         if (usb.ota_req) {
             usb.ota_req = 0;
             app_panic();                            /* silence: the update rewrites the flash */

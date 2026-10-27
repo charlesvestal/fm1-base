@@ -2,13 +2,15 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Henri David
 """Talk to any fm1-base firmware built with companion = true (fm1.toml; device/companion.c, docs/COMPANION.md) over
-USB-MIDI: what it is and has, and the app's files.
+USB-MIDI: what it is and has, the app's files and parameters.
 
     python3 tools/fm1_companion.py info [--port NAME]
     python3 tools/fm1_companion.py ls
     python3 tools/fm1_companion.py get NAME [FILE]       (FILE default: NAME)
     python3 tools/fm1_companion.py put FILE [NAME]       (NAME default: FILE's name)
     python3 tools/fm1_companion.py rm NAME
+    python3 tools/fm1_companion.py params                  (every parameter: its group, name, value, range)
+    python3 tools/fm1_companion.py get-param ID | set-param ID VALUE
     python3 tools/fm1_companion.py info --serve-cmd "tests/companion_app/build/host/cptest_host --serve"
 
 --serve-cmd runs a host simulator (NAME_host --serve) instead of an FM-1: the same requests, the same answers. A file
@@ -38,6 +40,8 @@ SERVICES = ["capability query", "files", "parameters", "backup", "mirror", "scre
             "USB audio in", "USB audio out", "the app's own SysEx", "the app's own commands", "the second core",
             "USB MIDI host", "Bluetooth audio"]
 FILES = 0x61
+PARAMS = 0x62
+PQ_INFO, PQ_LABELS, PQ_GROUP, PQ_GET, PQ_SET, PQ_WATCH, PQ_CHANGED = range(7)
 EXIT = {"usage": 2, "notfound": 3, "silent": 4, "busy": 5, "nofile": 6}
 STATUS = ["ok", "busy (the app plays: stop it first)", "no such file", "not allowed", "out of range",
           "CRC-32 mismatch", "the flash refused", "out of order", "a malformed request", "an unknown operation"]
@@ -95,16 +99,33 @@ class Client:
                 if p is None:
                     break
                 a = decode(p)
-                if not a or a[0] != cmd:
+                if a and a[0] == PARAMS and a[1][:1] == bytes([PQ_CHANGED]):
+                    self.note(a[1])
                     continue
-                if self.keep(a[1]):
+                if not a or a[0] != cmd:
                     continue
                 if match is None or match(a[1]):
                     return a[1]
         raise CompanionError("silent", f"no answer to 0x{cmd:02X}: no companion services, or it stopped answering")
 
-    def keep(self, body):
-        return False
+    def note(self, body):
+        """a parameter change the device sent (0x62 op 6): kept in notes as (id, value)"""
+        n = body[2] if len(body) > 2 else 0
+        for k in range(n):
+            self.notes.append(struct.unpack_from("<Hi", body, 3 + 6 * k))
+
+    def poll(self, seconds=0.0):
+        """what came meanwhile (parameter changes) -> notes so far, cleared"""
+        end = time.monotonic() + seconds
+        while True:
+            p = self.link.read(max(end - time.monotonic(), 0))
+            if p is None:
+                break
+            a = decode(p)
+            if a and a[0] == PARAMS and a[1][:1] == bytes([PQ_CHANGED]):
+                self.note(a[1])
+        out, self.notes = self.notes, []
+        return out
 
     def hello(self):
         b = self.request(HELLO)
@@ -206,6 +227,72 @@ class Client:
         if st != ST_OK:
             self.fail(st, "delete")
 
+    # ------------------------------------------------------- parameters ---
+    def param_op(self, op, body=b""):
+        """-> (status, the answer after op, status)"""
+        b = self.request(PARAMS, bytes([op]) + bytes(body), match=lambda a: len(a) >= 2 and a[0] == op)
+        return b[1], b[2:]
+
+    def groups(self):
+        out, g, count = [], 0, 1
+        while g < count:
+            st, b = self.param_op(PQ_GROUP, bytes([g]))
+            count = b[1]
+            if st != ST_OK:
+                break
+            out.append(cstrings(b[2:], 1)[0][0])
+            g += 1
+        return out
+
+    def labels(self, i, total):
+        out = []
+        while len(out) < total:
+            st, b = self.param_op(PQ_LABELS, struct.pack("<HH", i, len(out)))
+            if st != ST_OK or not b[4]:
+                raise CompanionError("failed", f"labels of parameter {i}: {STATUS[st] if st < len(STATUS) else st}")
+            out += cstrings(b[5:], b[4])[0]
+        return out
+
+    def params(self):
+        """every parameter: [{index, id, name, type ("number" / "enum"), group (its name), flags, min, max, default,
+        unit, labels}]"""
+        groups, out, i, count = self.groups(), [], 0, 1
+        while i < count:
+            st, b = self.param_op(PQ_INFO, struct.pack("<H", i))
+            count = struct.unpack_from("<H", b, 2)[0]
+            if st != ST_OK:
+                break
+            pid, typ, grp, flags, mn, mx, df, nl = struct.unpack_from("<HBBBiiiH", b, 4)
+            (name, unit), _ = cstrings(b[23:], 2)
+            out.append({"index": i, "id": pid, "name": name, "type": "enum" if typ == 1 else "number",
+                        "group": groups[grp] if grp < len(groups) else str(grp), "flags": flags, "min": mn,
+                        "max": mx, "default": df, "unit": unit, "labels": self.labels(i, nl) if nl else []})
+            i += 1
+        return out
+
+    def get(self, ids):
+        """{id: value} for the ids the app has"""
+        out = {}
+        ids = list(ids)
+        for k in range(0, len(ids), 32):
+            st, b = self.param_op(PQ_GET, struct.pack(f"<{len(ids[k:k + 32])}H", *ids[k:k + 32]))
+            for j in range(b[0]):
+                pid, v = struct.unpack_from("<Hi", b, 1 + 6 * j)
+                out[pid] = v
+        return out
+
+    def set(self, pid, value):
+        """-> the value now (clamped, or as the app took it)"""
+        st, b = self.param_op(PQ_SET, struct.pack("<Hi", pid, value))
+        if st != ST_OK:
+            raise CompanionError("nofile" if st == ST_NONE else "failed",
+                                 f"set {pid}: {STATUS[st] if st < len(STATUS) else st}")
+        return struct.unpack_from("<i", b, 2)[0]
+
+    def watch(self, on=True):
+        st, b = self.param_op(PQ_WATCH, bytes([1 if on else 0]))
+        return bool(b[0])
+
 
 class ServeLink:
     """a host simulator (NAME_host --serve) as the FM-1: each request is sent, the device runs step_ms, its frames
@@ -288,11 +375,40 @@ def show_files(c, out):
     return 0
 
 
+def show_params(c, out):
+    ps = c.params()
+    vals = c.get([p["id"] for p in ps])
+    for p in ps:
+        v = vals.get(p["id"])
+        shown = p["labels"][v - p["min"]] if p["labels"] and v is not None and 0 <= v - p["min"] < len(p["labels"]) else v
+        rng = "/".join(p["labels"][:6]) + ("/..." if len(p["labels"]) > 6 else "") if p["labels"] else \
+            f"{p['min']}..{p['max']}"
+        print(f"{p['id']:5}  {p['group']:10} {p['name']:12} {shown!s:>8} {p['unit']:5} {rng}"
+              + ("  (read only)" if p["flags"] & 1 else ""), file=out)
+    if not ps:
+        print("no parameters", file=out)
+    return 0
+
+
 def run(a, c, out):
     if a.what == "info":
         return show_info(c, out)
     if a.what == "ls":
         return show_files(c, out)
+    if a.what == "params":
+        return show_params(c, out)
+    if a.what in ("get-param", "set-param"):
+        if len(a.args) < (1 if a.what == "get-param" else 2) or not all(x.lstrip("-").isdigit() for x in a.args[:2]):
+            raise CompanionError("usage", a.what + (" ID VALUE" if a.what == "set-param" else " ID") + ": numbers")
+        pid = int(a.args[0])
+        if a.what == "set-param":
+            print(f"{pid} = {c.set(pid, int(a.args[1]))}", file=out)
+            return 0
+        got = c.get([pid])
+        if pid not in got:
+            raise CompanionError("nofile", f"no parameter {pid}")
+        print(f"{pid} = {got[pid]}", file=out)
+        return 0
     if not a.args:
         raise CompanionError("usage", f"{a.what}: which file?")
     if a.what == "get":
@@ -322,7 +438,7 @@ def run(a, c, out):
 
 def main(argv=None, backend=None, out=sys.stdout):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("what", choices=["info", "ls", "get", "put", "rm"])
+    ap.add_argument("what", choices=["info", "ls", "get", "put", "rm", "params", "get-param", "set-param"])
     ap.add_argument("args", nargs="*")
     ap.add_argument("--port", metavar="NAME", help="MIDI port to use (part of its name)")
     ap.add_argument("--serve-cmd", metavar="CMD", help="a host simulator instead (NAME_host --serve)")

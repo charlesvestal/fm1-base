@@ -867,6 +867,8 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)
  * as the app's SysEx (plat_sysex_send: sysex_out, expect_sysex) */
 #include "companion.c"
 static int cp_send(const uint8_t *p, uint32_t n) { return plat_sysex_send(p, n); }
+static int cp_room(uint32_t n) { return plat_sysex_room() >= n; }
+static uint32_t cp_link(void) { return plat_usb_session(); }
 #endif
 
 #if FM1B_MIRROR
@@ -1237,6 +1239,9 @@ static void sim_ms_end(int frame)
 #if FM1B_MIRROR
     mirror_step();
     host_mirror_ms();
+#endif
+#if FM1B_COMPANION
+    comp_step();
 #endif
     hsx_ms();
 #ifdef APP_HOST_MS

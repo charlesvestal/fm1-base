@@ -5,11 +5,16 @@
  *   0x60  the capability query: the platform services built, the app's name, version and own tags
  *   0x61  files (app.h APP_FILES): the app's named objects listed, read, written (CRC-32, resumable), deleted;
  *         plat_file_*: a file kept in the data area as two copies, for an app that has nowhere else to keep it
+ *   0x62  parameters (app.h APP_PARAMS): the app's described (id, name, range, labels, unit, group) for a generic page;
+ *         get, set, and while watched what changed on the FM-1
  * In the update's SysEx framing (felucca-bsp ota.c: F0 pack7(00 59 cmd len24 body ~sum8(body)) F7), as backup.c and
  * mirror.c; one request at a time, each answered with its cmd.
  *
  * Hooks (the platform's: unity.c on the device, host/plat_host.c in the simulator):
  *   cp_send(p, n)   one whole F0..F7 frame to the computer (may wait for room): 0 = queued
+ *   cp_room(n)      a frame of n bytes goes into the SysEx ring now without a wait (and nothing else holds it): 1
+ *   cp_link()       the USB connection: 0 none; else a number new at each one
+ * and plat_ms (plat.h). comp_step() in the main loop: what a watched parameter did.
  * comp_cmd(d, n) takes a decoded frame (d: 00 59 cmd len24 body sum, n its length, checked): 1 = the companion's. */
 #ifndef FELUCCA_ID
 #define FELUCCA_ID "FM-1_000"
@@ -27,6 +32,8 @@
 #define CP_BODY_MAX (12u + CP_READ_MAX)               /* the longest answer's body */
 
 static int cp_send(const uint8_t *p, uint32_t n);
+static int cp_room(uint32_t n);
+static uint32_t cp_link(void);
 
 static uint8_t cp_msg[7u + CP_BODY_MAX] PLAT_POOL;   /* (the pool: RAM the app's .bss does not count) */
 static uint8_t cp_wire[2u + ((7u + CP_BODY_MAX) * 8u + 6u) / 7u] PLAT_POOL;
@@ -95,6 +102,9 @@ static uint32_t cp_services(void)
     uint32_t s = CP_S_HELLO | CP_S_READER;
 #ifdef APP_FILES
     s |= CP_S_FILES;
+#endif
+#ifdef APP_PARAMS
+    s |= CP_S_PARAMS;
 #endif
 #if defined FM1B_BACKUP && FM1B_BACKUP
     s |= CP_S_BACKUP;
@@ -173,10 +183,11 @@ static uint32_t cp_crc(uint32_t c, const uint8_t *p, uint32_t n)   /* zlib's crc
 }
 static uint32_t cp_rd32(const uint8_t *p) { return cp_rd16(p) | cp_rd16(p + 2) << 16; }
 
+/* an answer's status (files, parameters) */
+enum { CP_OK, CP_BUSY, CP_NONE, CP_DENIED, CP_RANGE, CP_CRC, CP_FLASH, CP_ORDER, CP_BAD, CP_UNKNOWN };
 #ifdef APP_FILES
 /* ---------------------------------------------------------------- files --- */
 #define CP_FILES 0x61u
-enum { CP_OK, CP_BUSY, CP_NONE, CP_DENIED, CP_RANGE, CP_CRC, CP_FLASH, CP_ORDER, CP_BAD, CP_UNKNOWN };
 enum { CF_LIST, CF_READ, CF_SUM, CF_BEGIN, CF_DATA, CF_COMMIT, CF_DELETE };
 static struct {
     uint8_t on;
@@ -451,13 +462,243 @@ int plat_file_delete(const plat_file_t *f)
 static uint32_t cp_nfiles(void) { return 0; }
 #endif
 
+#ifdef APP_PARAMS
+/* ----------------------------------------------------------- parameters --- */
+#define CP_PARAMS 0x62u
+#ifndef APP_PARAM_MAX
+#define APP_PARAM_MAX 64                              /* the most an app has (watching keeps a value each) */
+#endif
+#define CQ_EVERY_MS 50u                               /* watched: the values looked at 20 times a second */
+#define CQ_LAPSE_MS 10000u                            /* watching ends without a request this long */
+#define CQ_PER_FRAME 16u                              /* changes a frame */
+#define CQ_LABEL_BYTES 200u                           /* a labels answer's names at most */
+enum { CQ_INFO, CQ_LABELS, CQ_GROUP, CQ_GET, CQ_SET, CQ_WATCH, CQ_CHANGED };
+static struct {
+    uint8_t on;
+    uint32_t link, heard, t;                          /* the USB connection watched on; the last request; the last look */
+} cq;
+static int32_t cq_val[APP_PARAM_MAX] PLAT_POOL;      /* watched: each value as the computer has it */
+static uint32_t cp_nparams(void)
+{
+    plat_param_t p;
+    uint32_t i = 0;
+    while (i < 0xFFFFu && app_param(i, &p) == 0)
+        i++;
+    return i;
+}
+static int cq_find(uint32_t id, plat_param_t *p)      /* the index of id; -1 none */
+{
+    uint32_t i;
+    for (i = 0; i < 0xFFFFu && app_param(i, p) == 0; i++)
+        if (p->id == id)
+            return (int)i;
+    return -1;
+}
+static void cq_head(uint32_t op, uint32_t st)
+{
+    cp_begin();
+    cp_u8(op);
+    cp_u8(st);
+}
+static void cq_info(const uint8_t *b, uint32_t n)    /* u16 index -> the parameter's description */
+{
+    plat_param_t p;
+    uint32_t i = n >= 2u ? cp_rd16(b) : 0;
+    int there = n >= 2u && app_param(i, &p) == 0;
+    cq_head(CQ_INFO, n < 2u ? CP_BAD : there ? CP_OK : CP_NONE);
+    cp_u16(i);
+    cp_u16(cp_nparams());
+    if (!there)
+        return;
+    cp_u16(p.id);
+    cp_u8(p.type);
+    cp_u8(p.group);
+    cp_u8(p.flags);
+    cp_u32((uint32_t)p.min);
+    cp_u32((uint32_t)p.max);
+    cp_u32((uint32_t)p.def);
+    cp_u16(p.type == PLAT_PT_ENUM && p.labels && p.max >= p.min ? (uint32_t)(p.max - p.min + 1) : 0u);
+    cp_str(p.name, 31);
+    cp_str(p.unit, 15);
+}
+static void cq_labels(const uint8_t *b, uint32_t n)  /* u16 index, u16 from -> as many labels as fit */
+{
+    plat_param_t p;
+    uint32_t i, from, k = 0, at, total;
+    if (n < 4u) {
+        cq_head(CQ_LABELS, CP_BAD);
+        return;
+    }
+    i = cp_rd16(b), from = cp_rd16(b + 2);
+    if (app_param(i, &p) || p.type != PLAT_PT_ENUM || !p.labels || p.max < p.min) {
+        cq_head(CQ_LABELS, CP_NONE);
+        cp_u16(i), cp_u16(from), cp_u8(0);
+        return;
+    }
+    total = (uint32_t)(p.max - p.min + 1);
+    cq_head(CQ_LABELS, from < total ? CP_OK : CP_RANGE);
+    cp_u16(i), cp_u16(from), cp_u8(0);
+    at = cp_n - 1u;                                   /* (the count, filled in at the end) */
+    while (from + k < total && k < 255u) {
+        const char *s = p.labels[from + k];
+        uint32_t len = 0;
+        while (s && s[len] && len < 31u)
+            len++;
+        if (cp_n + len + 1u > at + 1u + CQ_LABEL_BYTES)
+            break;
+        cp_str(s, 31);
+        k++;
+    }
+    cp_msg[6u + at] = (uint8_t)k;
+}
+static void cq_group(const uint8_t *b, uint32_t n)   /* u8 group -> u8 group, u8 count, its name */
+{
+    uint32_t g = n ? b[0] : 0, k = 0;
+    const char *s;
+    while (k < 255u && app_param_group(k))
+        k++;
+    s = n && g < k ? app_param_group(g) : 0;
+    cq_head(CQ_GROUP, !n ? CP_BAD : s ? CP_OK : CP_NONE);
+    cp_u8(g);
+    cp_u8(k);
+    if (s)
+        cp_str(s, 31);
+}
+static void cq_get(const uint8_t *b, uint32_t n)     /* n x u16 id -> n x (u16 id, i32 value) */
+{
+    plat_param_t p;
+    uint32_t k, got = 0, st = CP_OK;
+    cq_head(CQ_GET, CP_OK);
+    cp_u8(0);
+    for (k = 0; k + 2u <= n && k < 64u; k += 2u) {
+        int i = cq_find(cp_rd16(b + k), &p);
+        if (i < 0) {
+            st = CP_NONE;
+            continue;
+        }
+        cp_u16(p.id);
+        cp_u32((uint32_t)app_param_get((uint32_t)i));
+        got++;
+    }
+    cp_msg[7] = (uint8_t)st;
+    cp_msg[8] = (uint8_t)got;
+}
+static void cq_set(const uint8_t *b, uint32_t n)     /* u16 id, i32 value -> u16 id, i32 the value now */
+{
+    plat_param_t p;
+    int i;
+    int32_t v;
+    if (n < 6u) {
+        cq_head(CQ_SET, CP_BAD);
+        return;
+    }
+    i = cq_find(cp_rd16(b), &p);
+    if (i < 0 || p.flags & PLAT_PA_READONLY) {
+        cq_head(CQ_SET, i < 0 ? CP_NONE : CP_DENIED);
+        cp_u16(cp_rd16(b));
+        cp_u32(i < 0 ? 0u : (uint32_t)app_param_get((uint32_t)i));
+        return;
+    }
+    v = (int32_t)cp_rd32(b + 2);
+    v = app_param_set((uint32_t)i, v < p.min ? p.min : v > p.max ? p.max : v);
+    if (i < APP_PARAM_MAX)
+        cq_val[i] = v;                                /* (the computer's own: not sent back) */
+    cq_head(CQ_SET, CP_OK);
+    cp_u16(p.id);
+    cp_u32((uint32_t)v);
+}
+static void cq_watch(const uint8_t *b, uint32_t n)   /* u8 1 on / 0 off -> u8 on */
+{
+    uint32_t i, k;
+    if (n && b[0]) {
+        if (!cq.on) {                                 /* (on again: the values the computer has are kept) */
+            for (i = 0, k = cp_nparams(); i < k && i < APP_PARAM_MAX; i++)
+                cq_val[i] = app_param_get(i);
+            cq.t = plat_ms();
+        }
+        cq.on = 1;
+        cq.link = cp_link();
+    } else {
+        cq.on = 0;
+    }
+    cq_head(CQ_WATCH, n ? CP_OK : CP_BAD);
+    cp_u8(cq.on);
+}
+static void cp_params(const uint8_t *b, uint32_t n)
+{
+    switch (n ? b[0] : 0xFFu) {
+    case CQ_INFO:
+        cq_info(b + 1, n - 1u);
+        break;
+    case CQ_LABELS:
+        cq_labels(b + 1, n - 1u);
+        break;
+    case CQ_GROUP:
+        cq_group(b + 1, n - 1u);
+        break;
+    case CQ_GET:
+        cq_get(b + 1, n - 1u);
+        break;
+    case CQ_SET:
+        cq_set(b + 1, n - 1u);
+        break;
+    case CQ_WATCH:
+        cq_watch(b + 1, n - 1u);
+        break;
+    default:
+        cq_head(n ? b[0] : 0u, n ? CP_UNKNOWN : CP_BAD);
+        break;
+    }
+    cp_end(CP_PARAMS);
+}
+/* the main loop: watched, the values that changed to the computer (never waiting: the ring has room, or later) */
+static void comp_step(void)
+{
+    static uint16_t ch[CQ_PER_FRAME];
+    plat_param_t p;
+    uint32_t i, k = 0, now = plat_ms();
+    if (!cq.on)
+        return;
+    if (cp_link() != cq.link || now - cq.heard > CQ_LAPSE_MS) {
+        cq.on = 0;                                    /* (a new connection, or nobody asked for a while) */
+        return;
+    }
+    if (now - cq.t < CQ_EVERY_MS)
+        return;
+    cq.t = now;
+    cq_head(CQ_CHANGED, CP_OK);
+    cp_u8(0);
+    for (i = 0; i < APP_PARAM_MAX && k < CQ_PER_FRAME && app_param(i, &p) == 0; i++) {
+        int32_t v = app_param_get(i);
+        if (v == cq_val[i])
+            continue;
+        ch[k++] = (uint16_t)i;
+        cp_u16(p.id);
+        cp_u32((uint32_t)v);
+    }
+    if (!k)
+        return;
+    cp_msg[8] = (uint8_t)k;
+    if (!cp_room(2u + ((7u + cp_n) * 8u + 6u) / 7u))
+        return;                                       /* (no room now: the same changes next time) */
+    for (i = 0; i < k; i++)                           /* (as sent: the values read just now) */
+        cq_val[ch[i]] = (int32_t)cp_rd32(cp_msg + 6u + 3u + i * 6u + 2u);
+    cp_end(CP_PARAMS);
+}
+#else
 static uint32_t cp_nparams(void) { return 0; }
+static void comp_step(void) {}
+#endif
 
 /* a frame in the update's framing (d: decoded, n its length; ota.c checked the header and the sum): 1 = ours */
 static int comp_cmd(const uint8_t *d, uint32_t n)
 {
     if (n < 7u)
         return 0;
+#ifdef APP_PARAMS
+    if (d[2] >= CP_HELLO && d[2] <= CP_PARAMS)
+        cq.heard = plat_ms();                         /* (any request keeps a watch on) */
+#endif
     switch (d[2]) {
     case CP_HELLO:
         cp_hello();
@@ -465,6 +706,11 @@ static int comp_cmd(const uint8_t *d, uint32_t n)
 #ifdef APP_FILES
     case CP_FILES:
         cp_files(d + 6, n - 7u);
+        return 1;
+#endif
+#ifdef APP_PARAMS
+    case CP_PARAMS:
+        cp_params(d + 6, n - 7u);
         return 1;
 #endif
     default:

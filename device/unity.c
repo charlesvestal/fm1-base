@@ -386,6 +386,11 @@ static void bu_hold(int on) { app_backup_hold(on); }
 #if FM1B_COMPANION
 #include "companion.c"            /* the companion services over USB (docs/COMPANION.md: web/companion, tools/fm1_companion.py) */
 static int cp_send(const uint8_t *p, uint32_t n) { return usb.config ? ota_wire_send(p, n) : -1; }
+static int cp_room(uint32_t n)                      /* the SysEx ring takes it now: nobody else holds it, no backup */
+{
+    return usb.config && !usb.suspended && !sx_busy && !backup_streaming() && SXQ - (so_w - so_r) >= (n + 2u) / 3u;
+}
+static uint32_t cp_link(void) { return usb.config ? usb.resets + 1u : 0u; }
 #endif
 #ifdef APP_TOUCH
 #include "touch.c"
