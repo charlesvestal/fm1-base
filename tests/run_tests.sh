@@ -52,6 +52,8 @@ run installer "$PY" tests/install_test.py
 run ports "$PY" tests/ports_test.py
 # the screen reader's words file (tools/gen_words.py): made, and refused over the reader's limits
 run gen-words "$PY" tests/gen_words_test.py
+# the build's check that a function is in the RAM code run, _rt_start.._rt_end wherever app.ld puts it (tools/ram_run.py)
+run ram-run "$PY" tests/ram_run_test.py
 # the web installer's m-bootloader step (web/fm1ota.js installBoot) against a simulated FM-1, and finding the FM-1 by
 # its port (unusual names, the loader under a new name, M-VAVE's Open firmware, resume's check, package checksums),
 # and writing the resource region after it

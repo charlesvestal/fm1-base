@@ -845,8 +845,8 @@ def check(img, syms, dis, rt):
         bt = [n for n in bt if n != "ble_midi_send_many"]   # (radio.c's name, which bt_own.c gives too)
         if bt:
             errors.append(f"ble_stack = own links JieLi's Bluetooth code: {bt}")
-        rf = re.search(r"^([0-9a-f]+) .*\sfm1_rf_burst_run$", syms, re.M)
-        if not rf or not 0x01C00000 <= int(rf.group(1), 16) < 0x01C08000:
+        import ram_run              # (tools/: the RAM code run is _rt_start.._rt_end, wherever app.ld puts it)
+        if not ram_run.in_ram_text(syms, "fm1_rf_burst_run"):
             errors.append("fm1_rf_burst_run is not in .ram_text (the radio's crystal ramp must run from RAM)")
         else:
             notes.append("own Bluetooth stack: nothing of JieLi's linked, the radio's ramp in RAM")
