@@ -10,6 +10,8 @@
 #define FELUCCA_BT_AFH 1                          /* the channels a headset fails on leave the hopping (bt_afh.c) */
 #endif
 #define FELUCCA_BLE 1                             /* (the BLE stack is in this build: bt_own.c) */
+#pragma push_macro("FELUCCA_CDC")              /* (unity.c's, FM1B_CDC: back after the stack, below) */
+#undef FELUCCA_CDC
 #define FELUCCA_CDC 0                             /* no console: the probe's printing compiles away */
 #define FELUCCA_BT_DIAG 0
 #define FELUCCA_DUAL 0                            /* (the second core is fm1-base's: it keeps to RAM, cpu2.c) */
@@ -79,6 +81,7 @@ static void con_dec(uint32_t v) { (void)v; }
 static int own_bt_trims(struct ble_rf_trims *t);
 #define BTI_RADIO_TRIMS own_bt_trims              /* (bt_inq.c bti_radio_up: our constants, the 187 measured) */
 #include "bt_inq.c"
+#pragma pop_macro("FELUCCA_CDC")
 
 static int own_bt_trims(struct ble_rf_trims *t)
 {
