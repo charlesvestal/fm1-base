@@ -47,3 +47,9 @@ tap OCT-
 wait 30
 expect bta_known 1
 expect last_is_b 1
+# the remembered device kept in the app's record (APP_BLE_STORE): after a restart, B again
+reboot
+wait 1200
+expect bta 3
+expect bta_known 1
+expect last_is_b 1

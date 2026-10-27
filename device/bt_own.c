@@ -47,6 +47,44 @@ static struct own_store {
     uint8_t bta_mem[4 * 40];                      /* (struct bta_mem x BTA_MEMS, bt_audio.h) */
 } own;
 static volatile uint8_t own_dirty;               /* the main loop saves it (a flash write: never from an interrupt) */
+#ifdef APP_BLE_STORE
+/* kept in the app's own data (app.h APP_BLE_STORE): own as plat.h's record, field by field */
+_Static_assert(sizeof own.bta_mem == sizeof ((struct plat_ble_rec *)0)->bta, "plat.h plat_ble_rec bta: bt_audio.h's bta_mem x 4");
+static int own_load(void)
+{
+    struct plat_ble_rec r;
+    ble_zero((uint8_t *)&r, sizeof r);
+    if (!app_ble_load(&r) || (r.addr[5] >> 6) != 3u)
+        return 0;                                 /* (none, or not a static random address) */
+    ble_zero((uint8_t *)&own, sizeof own);
+    own.magic = OWN_MAGIC;
+    ble_cpy(own.addr, r.addr, 6);
+    own.have_bond = (uint8_t)(r.bonded != 0u);
+    own.bond_ediv = r.bond_ediv;
+    ble_cpy(own.bond_rand, r.bond_rand, 8);
+    ble_cpy(own.bond_ltk, r.bond_ltk, 16);
+    ble_cpy(own.bta_own, r.bta_addr, 6);
+    own.bta_own_set = (uint8_t)(r.bta_addr_set != 0u);
+    own.bta_nmem = r.bta_n <= 4u ? r.bta_n : 0u;
+    ble_cpy(own.bta_mem, (const uint8_t *)r.bta, sizeof own.bta_mem);
+    return 1;
+}
+static int own_save(void)
+{
+    struct plat_ble_rec r;
+    ble_zero((uint8_t *)&r, sizeof r);
+    ble_cpy(r.addr, own.addr, 6);
+    r.bonded = own.have_bond;
+    r.bond_ediv = own.bond_ediv;
+    ble_cpy(r.bond_rand, own.bond_rand, 8);
+    ble_cpy(r.bond_ltk, own.bond_ltk, 16);
+    ble_cpy(r.bta_addr, own.bta_own, 6);
+    r.bta_addr_set = own.bta_own_set;
+    r.bta_n = own.bta_nmem;
+    ble_cpy((uint8_t *)r.bta, own.bta_mem, sizeof own.bta_mem);
+    return app_ble_save(&r);
+}
+#endif
 
 /* the address: a static random one (Core Vol 6 Part B 1.3.2.1: the top two bits 11) from the flash's unique ID, its two
  * low octets the hash the JieLi build named itself by (radio.c ble_midi_name), so the name stays "FM-1 XXXX" */
@@ -216,7 +254,11 @@ static void ble_start(void)
         return;
     ble_state = BLE_STARTING;
     radio_begin("BT: starting (own stack)");
+#ifdef APP_BLE_STORE
+    if (!own_load()) {
+#else
     if (plat_store_load(OBJ_BLE, &own, sizeof own) != (int)sizeof own || own.magic != OWN_MAGIC) {
+#endif
         ble_zero((uint8_t *)&own, sizeof own);
         own.magic = OWN_MAGIC;
         own_addr(own.addr);
@@ -356,7 +398,11 @@ static void ble_poll(void)
 #endif
     if (own_dirty && !(plat_ble_connected() && plat_midi_count(PORT_BLE, 0) && plat_midi_ago(PORT_BLE, 0) < 2000u)) {
         own_dirty = 0;                            /* (kept once MIDI from Bluetooth pauses: a write holds the CPU) */
+#ifdef APP_BLE_STORE
+        if (own_save())
+#else
         if (plat_store_save(OBJ_BLE, &own, sizeof own))
+#endif
             shim_log("store: not saved");
 #if BLE_SMP_LEGACY
         else if (own_bond_new) {

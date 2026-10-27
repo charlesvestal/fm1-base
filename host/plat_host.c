@@ -440,6 +440,53 @@ static void bth_front(uint32_t i)                 /* remembered device i becomes
     memmove(bth_mem[1], bth_mem[0], 17u * i);
     memcpy(bth_mem[0], t, 17);
 }
+#ifdef APP_BLE_STORE
+/* APP_BLE_STORE: the remembered devices from the app's record at the first plat_bta_on after a boot, and back to it
+ * whenever the list changes (as the device's stack keeps them: their names here; an address of its own, k + 1) */
+static uint8_t bth_loaded;
+static void bth_load(void)
+{
+    struct plat_ble_rec r;
+    uint32_t k;
+    memset(&r, 0, sizeof r);
+    bth_loaded = 1;
+    if (!app_ble_load(&r))
+        return;
+    for (k = 0; k < r.bta_n && k < 4u; k++)
+        memcpy(bth_mem[k], r.bta[k].name, 17);
+    bth_nmem = k;
+}
+static void bth_keep(void)
+{
+    static const uint8_t ADDR[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0xC6};   /* (a static random one: the top bits 11) */
+    struct plat_ble_rec r;
+    uint32_t k;
+    memset(&r, 0, sizeof r);
+    if (!app_ble_load(&r))
+        memcpy(r.addr, ADDR, 6);                  /* (none kept yet: the stack makes its address, as on the device) */
+    memset(r.bta, 0, sizeof r.bta);
+    r.bta_n = (uint8_t)bth_nmem;
+    for (k = 0; k < bth_nmem; k++) {
+        r.bta[k].addr[0] = (uint8_t)(k + 1u);
+        r.bta[k].bonded = 1;
+        memcpy(r.bta[k].name, bth_mem[k], 17);
+    }
+    (void)app_ble_save(&r);
+}
+#else
+static uint8_t bth_loaded = 1;
+static void bth_load(void) {}
+static void bth_keep(void) {}
+#endif
+static void bta_boot(void)                        /* a boot (the simulator's reboot too): nothing up, the list to load */
+{
+    bth_st = PLAT_BTA_OFF;
+    bth_nfound = 0;
+#ifdef APP_BLE_STORE
+    bth_nmem = 0;
+    bth_loaded = 0;
+#endif
+}
 static void bta_tick(void)
 {
     if (bth_st == PLAT_BTA_SCANNING && now_ms - bth_t >= 1000u) {
@@ -459,6 +506,8 @@ void plat_bta_on(int on)
     if (on && bth_st == PLAT_BTA_OFF) {
         if (ble_state == BLE_OFF)
             plat_ble_start();
+        if (!bth_loaded)
+            bth_load();
         bth_tried = 0;
         bth_st = bth_rest();
     } else if (!on)
@@ -513,6 +562,7 @@ void plat_bta_pick(int i)
         memcpy(bth_mem[k], bth_found[i], 17);
     }
     bth_front(k);
+    bth_keep();
     bth_page();
 }
 int plat_bta_reconnect(int i)
@@ -522,6 +572,7 @@ int plat_bta_reconnect(int i)
     if (i == 0 && (bth_st == PLAT_BTA_STREAMING || bth_st == PLAT_BTA_PAGING))
         return 0;                                 /* (that device already) */
     bth_front((uint32_t)i);
+    bth_keep();
     bth_page();
     return 0;
 }
@@ -531,6 +582,7 @@ void plat_bta_forget(int i)
         return;
     memmove(bth_mem[i], bth_mem[i + 1], 17u * (bth_nmem - 1u - (uint32_t)i));
     bth_nmem--;
+    bth_keep();
 }
 void plat_bta_hangup(void)
 {
@@ -1278,6 +1330,9 @@ static void boot(void)
     ble_state = BLE_OFF;                            /* Bluetooth starts at every boot, as on the device */
     ble_conn = ble_link = 0;
     bdev_state = BLE_DEV_OFF;
+#if FM1B_BT_AUDIO
+    bta_boot();
+#endif
     if (APP_BLE_AT_BOOT)
         plat_ble_start();
 #ifdef APP_BOOT
