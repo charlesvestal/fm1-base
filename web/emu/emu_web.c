@@ -147,6 +147,39 @@ __attribute__((used, visibility("default"))) uint32_t web_store_writes(void) { r
 __attribute__((used, visibility("default"))) uint32_t web_nobj(void) { return OBJ_NOBJ; }
 __attribute__((used, visibility("default"))) uint32_t web_store_max(void) { return PLAT_STORE_MAX; }
 
+#ifdef APP_SYSEX
+/* SysEx with the app (APP_SYSEX), as over USB: the page writes a frame from the computer (F0 .. F7, whole) to
+ * web_sx_in_buf (web_sx_in_max bytes at most) and gives it with web_sx_in(n). As felucca-bsp's usb.c hands a frame to
+ * the main loop: 7-bit, 640 bytes at most between F0 and F7, to app_sysex; else dropped (with APP_SYSEX_BYTE every
+ * byte to app_sysex_byte first, any length, up to a status byte inside). What the app sent (plat_sysex_send, a
+ * stream), F0 .. F7 frames one after another (a stream cut short ends at the next F0), from web_sx_out_buf
+ * (web_sx_out_len bytes; web_sx_out_clear when read) */
+#define WEB_SX_IN 8192u
+#define WEB_SX_MAX 640u
+static uint8_t wsx_in[WEB_SX_IN];
+__attribute__((used, visibility("default"))) uint8_t *web_sx_in_buf(void) { return wsx_in; }
+__attribute__((used, visibility("default"))) uint32_t web_sx_in_max(void) { return WEB_SX_IN; }
+__attribute__((used, visibility("default"))) int web_sx_in(uint32_t n)
+{
+    uint32_t i, ok = 1;
+    if (n < 2u || n > WEB_SX_IN || wsx_in[0] != 0xF0u || wsx_in[n - 1u] != 0xF7u)
+        return -1;                                /* (not a frame) */
+    for (i = 1; i + 1u < n; i++)
+        ok &= wsx_in[i] < 0x80u;
+#ifdef APP_SYSEX_BYTE
+    for (i = 0; i < n && (i == 0 || i + 1u == n || wsx_in[i] < 0x80u); i++)
+        app_sysex_byte(wsx_in[i]);
+#endif
+    if (!ok || n - 2u > WEB_SX_MAX)
+        return 0;                                 /* (a status byte inside, or too long: the device drops it) */
+    (void)app_sysex(wsx_in + 1, n - 2u);
+    return 1;
+}
+__attribute__((used, visibility("default"))) uint8_t *web_sx_out_buf(void) { return hsx_out; }
+__attribute__((used, visibility("default"))) uint32_t web_sx_out_len(void) { return hsx_n; }
+__attribute__((used, visibility("default"))) void web_sx_out_clear(void) { hsx_n = hsx_lost = 0; }
+#endif
+
 #ifdef APP_WEB
 #include "web.c"                        /* the app's own exports for its page (app.h APP_WEB) */
 #endif
