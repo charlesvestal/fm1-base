@@ -112,5 +112,8 @@ if command -v emcc >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
 else
     echo "  skip rfm1 (no emcc or node)"
 fi
+# the simulated data area: a file put at its offset in each window, read back there by plat_data (tests/data.txt)
+run host-data sh -c "printf '\\022\\064\\126\\170' > $OUT/data4.bin && \
+    template/build/host/template_host tests/data.txt template/build/host"
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL
