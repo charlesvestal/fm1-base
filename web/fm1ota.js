@@ -18,6 +18,10 @@ const MAXDATA = 512;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const IS_OTA = (id) => /^ota-/i.test(id.model);
 
+// an FM-1 paired over Bluetooth MIDI shows a port named "... Bluetooth" beside its USB one: it never answers an update
+// (and a Mac lists the paired one first), so no port with that word is asked, picked, listed or tried
+export const IS_BLUETOOTH = (name) => /bluetooth/i.test(name || "");
+
 // M-VAVE's FM1 Open firmware (V10, 2026-10): its updater takes only a package it has been told about
 // first (cmd 49 reads its state, cmd 50 arms it with the image length and the package's SHA-256); then
 // the update runs as usual. Only M-VAVE's own FM-1 firmware is installed over it: its loader rewrites the
@@ -204,16 +208,16 @@ export class Updater {
   unwatch() { this.baseline = null; }
 
   // the port names that have an input and an output, whatever they are called (for a list to pick from)
-  ports() { return [...new Set(pairs(this.access).map((p) => p.name))]; }
+  ports() { return [...new Set(pairs(this.access).map((p) => p.name))].filter((n) => !IS_BLUETOOTH(n)); }
 
   // never probe other gear: a usual name, a port the user allowed or that answered a HELLO, or one that appeared during
-  // an update
-  askable(name) { return this.usual(name) || this.allowed.has(name) || (!!this.baseline && !this.baseline.has(name || "")); }
+  // an update; never a Bluetooth MIDI port
+  askable(name) { return !IS_BLUETOOTH(name) && (this.usual(name) || this.allowed.has(name) || (!!this.baseline && !this.baseline.has(name || ""))); }
 
   // FM-1s on ports of any name: the ones that answer the screen reader's HELLO (fm1ports.js askAll; every fm1-base
   // firmware does), allowed from then on -> their port names (also kept in this.answered)
   async answering() {
-    const got = await askAll(this.access, { skip: (n) => this.askable(n) });
+    const got = await askAll(this.access, { skip: (n) => this.askable(n) || IS_BLUETOOTH(n) });
     for (const g of got) { this.allow(g.name); this.answered.add(g.name); }
     return got.map((g) => g.name);
   }
@@ -235,7 +239,7 @@ export class Updater {
   // every in/out pair with the same port name that answers the handshake (only: the port called only)
   async find(filter, only) {
     for (const input of livePorts(this.access.inputs)) {
-      if (only != null ? input.name !== only : !this.askable(input.name)) continue;
+      if (IS_BLUETOOTH(input.name) || (only != null ? input.name !== only : !this.askable(input.name))) continue;
       const output = outputFor(this.access, input);
       if (!output) continue;
       try { await input.open(); await output.open(); } catch (_) { continue; }

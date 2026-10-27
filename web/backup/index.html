@@ -305,10 +305,13 @@ const PB = (() => {
   // port answers); with only, that one port
   const NAME_RE = new RegExp(NAME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
   const USUAL = PORT_NAMES.filter((n) => n !== "ota");
-  const askable = (name, allowed) => NAME_RE.test(name || "") || usualName(name, USUAL) || allowed.includes(name);
+  // never a Bluetooth MIDI port: an FM-1 paired over Bluetooth shows one beside its USB port and it never answers
+  const BLUETOOTH_RE = /bluetooth/i;
+  const askable = (name, allowed) => !BLUETOOTH_RE.test(name || "") &&
+    (NAME_RE.test(name || "") || usualName(name, USUAL) || allowed.includes(name));
   // the input port names the page does not ask by itself, that have an output (for Try)
   function others(access, allowed = []) {
-    return [...new Set(pairs(access).map((p) => p.name).filter((n) => !askable(n, allowed)))];
+    return [...new Set(pairs(access).map((p) => p.name).filter((n) => !askable(n, allowed) && !BLUETOOTH_RE.test(n)))];
   }
   async function find(access, makeLink, allowed = [], only = null) {
     let other = null;
@@ -325,11 +328,12 @@ const PB = (() => {
       }
       return null;
     };
-    const ins = livePorts(access.inputs).filter((p) => (only != null ? p.name === only : askable(p.name, allowed)));
+    const ins = livePorts(access.inputs).filter((p) => !BLUETOOTH_RE.test(p.name || "") &&
+      (only != null ? p.name === only : askable(p.name, allowed)));
     ins.sort((a, b) => NAME_RE.test(b.name) - NAME_RE.test(a.name));
     let dev = await ask(ins);
     if (!dev && only == null) {
-      const heard = await askAll(access, { skip: (n) => askable(n, allowed) });
+      const heard = await askAll(access, { skip: (n) => askable(n, allowed) || BLUETOOTH_RE.test(n) });
       dev = await ask(heard.map((h) => h.input));
     }
     if (dev) return dev;
