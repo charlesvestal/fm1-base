@@ -41,6 +41,11 @@
  *   data_erase OFFSET            plat_data_erase(OFFSET), as an app calls it (expect data_rc: what it returned)
  *   data_write OFFSET HEX        plat_data_write of HEX's bytes (up to 31, e.g. F00F) at OFFSET: as the flash, each
  *                                byte becomes the old AND the new (expect data_rc; -2: no bytes)
+ *   flash_dump FILE              the whole flash into FILE, a 1 MiB image at the FM-1's offsets: the data windows and
+ *                                the store's objects as device/storage.c keeps them (the rest erased)
+ *   flash_load FILE              such an image in (a reference FM-1's flash read whole, say): the data windows and the
+ *                                store's objects from it (then "reboot": a power-on with it). FM1B_FLASH=FILE in the
+ *                                environment: the simulator starts with that flash
  *   fbdump FILE                  the screen's pixels raw (240 x 240 RGB565, high byte first) into FILE
  *   flash_fail 0|1               every store save fails (1) or works (0); expect store_tries counts the attempts
  *   clock N [MS]                 N MIDI clocks in (F8) over USB, MS apart (default 21: 119 bpm)
@@ -1046,6 +1051,109 @@ int plat_store_save(uint32_t obj, const void *src, uint32_t len)
     return 0;
 }
 
+#ifndef PLAT_WEB
+/* the whole flash as a file (flash_dump / flash_load, FM1B_FLASH): a 1 MiB image at the FM-1's offsets, a reference
+ * FM-1's flash read whole, say. What the simulator has of it: plat.h's data windows, byte for byte, and the store's
+ * objects as device/storage.c keeps them (each at its APP_STORE_MAP offset, A then B: a 32-byte header at 0, the
+ * payload at 256; the current copy is the valid one with the highest seq). The rest (the head, the app area, the
+ * update's staging, the SDK's sectors) is not the simulator's: erased in a dump, left out of a load */
+#define HIMG_SIZE 0x100000u
+#define HIMG_MAGIC 0x30583058u                  /* storage.c's ST_MAGIC, "X0X0" */
+#define HIMG_PAYLOAD 256u                       /* storage.c's ST_PAYLOAD_OFF */
+static uint8_t himg[HIMG_SIZE];
+static uint32_t himg_crc32(const uint8_t *p, uint32_t n)   /* zlib's CRC-32, as storage.c's st_crc32 */
+{
+    uint32_t c = 0xFFFFFFFFu, k;
+    while (n--)
+        for (c ^= *p++, k = 0; k < 8u; k++)
+            c = c >> 1 ^ (0xEDB88320u & (0u - (c & 1u)));
+    return ~c;
+}
+static uint32_t himg_rd32(const uint8_t *p) { return p[0] | p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
+static void himg_wr32(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)v, p[1] = (uint8_t)(v >> 8), p[2] = (uint8_t)(v >> 16), p[3] = (uint8_t)(v >> 24);
+}
+static uint32_t himg_sector(uint32_t obj, uint32_t copy)   /* an object's copy in the image, 0 = outside it */
+{
+    static const uint32_t map[OBJ_NOBJ] = APP_STORE_MAP;
+    return map[obj] + 0x2000u <= HIMG_SIZE && !(map[obj] & 0xFFFu) ? map[obj] + copy * 0x1000u : 0u;
+}
+static int himg_copy(uint32_t obj, uint32_t copy, uint32_t *seq)   /* a whole valid copy: its length, else -1 */
+{
+    uint32_t s = himg_sector(obj, copy), len;
+    const uint8_t *h = &himg[s];
+    if (!s || himg_rd32(h) != HIMG_MAGIC || (uint32_t)(h[4] | h[5] << 8) != obj ||
+        himg_rd32(h + 28) != himg_crc32(h, 28) || (len = himg_rd32(h + 12)) > PLAT_STORE_MAX ||
+        himg_rd32(h + 16) != himg_crc32(h + HIMG_PAYLOAD, len))
+        return -1;
+    *seq = himg_rd32(h + 8);
+    return (int)len;
+}
+static int himg_dump(const char *path)
+{
+    uint32_t off, obj;
+    FILE *f;
+    size_t n = 0;
+    data_init();
+    store_ready();
+    memset(himg, 0xFF, sizeof himg);
+    for (off = 0; off < HIMG_SIZE; off += 0x1000u)
+        if (PLAT_DATA_OK(off, 0x1000u))
+            memcpy(&himg[off], plat_data(off), 0x1000u);
+    for (obj = 0; obj < OBJ_NOBJ; obj++) {      /* copy A, seq 1 (B erased): what a first save leaves */
+        uint32_t s = himg_sector(obj, 0);
+        uint8_t *h = &himg[s];
+        if (!s || store_len[obj] <= 0)
+            continue;
+        memset(h, 0xFF, 0x2000u);
+        himg_wr32(h, HIMG_MAGIC);
+        h[4] = (uint8_t)obj, h[5] = (uint8_t)(obj >> 8), h[6] = h[7] = 0;   /* type, slot 0 */
+        himg_wr32(h + 8, 1u);
+        himg_wr32(h + 12, (uint32_t)store_len[obj]);
+        memcpy(h + HIMG_PAYLOAD, store[obj], (size_t)store_len[obj]);
+        himg_wr32(h + 16, himg_crc32(h + HIMG_PAYLOAD, (uint32_t)store_len[obj]));
+        himg_wr32(h + 28, himg_crc32(h, 28));    /* (rsv[2] stays 0xFF: storage.c writes 0xFFFFFFFF there) */
+    }
+    if ((f = fopen(path, "wb")) != 0) {
+        n = fwrite(himg, 1, sizeof himg, f);
+        fclose(f);
+    }
+    return n == sizeof himg ? 0 : -1;
+}
+static int himg_load(const char *path, uint32_t *objs)   /* 0 = loaded (*objs: the store's objects found in it) */
+{
+    uint32_t off, obj;
+    FILE *f = fopen(path, "rb");
+    size_t n = f ? fread(himg, 1, sizeof himg, f) : 0;
+    if (f && n == sizeof himg && fgetc(f) != EOF)
+        n = 0;                                    /* (bigger than the 1 MiB part: not an FM-1's) */
+    if (f)
+        fclose(f);
+    if (n != sizeof himg)
+        return -1;
+    data_init();
+    store_ready();
+    for (off = 0; off < HIMG_SIZE; off += 0x1000u)
+        if (PLAT_DATA_OK(off, 0x1000u))
+            memcpy(&data_area[off - DATA_BASE], &himg[off], 0x1000u);
+    *objs = 0;
+    for (obj = 0; obj < OBJ_NOBJ; obj++) {
+        uint32_t sa = 0, sb = 0;
+        int a = himg_copy(obj, 0, &sa), b = himg_copy(obj, 1, &sb);
+        uint32_t use_b = b >= 0 && (a < 0 || sb > sa);   /* (storage.c st_current: A on a tie) */
+        int len = use_b ? b : a;
+        uint32_t s = himg_sector(obj, use_b);
+        store_len[obj] = len > 0 ? len : -1;      /* (an empty object: none, as storage.c's st_load) */
+        if (len > 0) {
+            memcpy(store[obj], &himg[s + HIMG_PAYLOAD], (size_t)len);
+            ++*objs;
+        }
+    }
+    return 0;
+}
+#endif
+
 static uint32_t cpu_pct;
 uint32_t plat_cpu_pct(void) { return cpu_pct; }
 #ifdef APP_CPU_KHZ
@@ -1997,6 +2105,15 @@ int main(int argc, char **argv)
         fprintf(stderr, "usage: %s SCRIPT [OUTDIR]%s\n", argv[0], FM1B_MIRROR || FM1B_COMPANION ? " | --serve [OUTDIR]" : "");
         return 2;
     }
+    if (getenv("FM1B_FLASH") && getenv("FM1B_FLASH")[0]) {   /* a power-on with that flash (a 1 MiB image) */
+        uint32_t k;
+        if (himg_load(getenv("FM1B_FLASH"), &k)) {
+            fprintf(stderr, "FM1B_FLASH %s: no 1 MiB image there\n", getenv("FM1B_FLASH"));
+            return 2;
+        }
+        if (strcmp(argv[1], "--serve"))            /* (--serve: stdout is the tool's) */
+            printf("  ok   power-on with the flash of %s (%u store objects)\n", getenv("FM1B_FLASH"), (unsigned)k);
+    }
 #if FM1B_MIRROR || FM1B_COMPANION
     if (!strcmp(argv[1], "--serve")) {
         snprintf(out, sizeof out, "%s/midi_out.txt", dir);
@@ -2194,6 +2311,18 @@ int main(int argc, char **argv)
             }
             if (df)
                 fclose(df);
+        } else if (!strcmp(cmd, "flash_dump") || !strcmp(cmd, "flash_load")) {   /* FILE: the whole flash out / in */
+            char path[400];
+            uint32_t k = 0;
+            int load = cmd[6] == 'l';
+            out_path(path, sizeof path, dir, a);
+            if (!a[0] || (load ? himg_load(path, &k) : himg_dump(path))) {
+                printf("FAIL %s %s: %s\n", cmd, a, load ? "no 1 MiB image there" : "not written");
+                fails++;
+            } else if (load)
+                printf("  ok   flash_load %s: the data windows and %u store objects\n", a, (unsigned)k);
+            else
+                printf("  ok   flash_dump %s\n", a);
         } else if (!strcmp(cmd, "reboot")) {
 #ifdef APP_HOST_REBOOT
             app_host_reboot();                  /* the app forgets what RAM would (app.h) */
