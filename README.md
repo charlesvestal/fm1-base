@@ -51,7 +51,8 @@ Every firmware also counts each port's MIDI messages, in and out: `plat_midi_cou
 And: `plat_midi_out_room(to)` (room in the out queues, each Bluetooth link's its own, for a sequencer's note-offs),
 `plat_midi_in_from()` (where the last message in came from, as an out: for MIDI thru) and `plat_midi_out_link()` (a new
 USB connection); `plat_store_size` and `plat_store_head` (an object whole or not at all; its header only); big data in
-flash beyond the store with `plat_data*`, in the data area and two more windows (`PLAT_XDATA0`, `PLAT_XDATA1`).
+flash beyond the store with `plat_data*`, in the data area and two more windows (`PLAT_XDATA0`, `PLAT_XDATA1`), and a
+third on request (`xdata2 = true`: `PLAT_XDATA2`, 0xFC000..0xFEFFF).
 
 ## Bluetooth and WiFi
 

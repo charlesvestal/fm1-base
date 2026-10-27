@@ -336,16 +336,31 @@ void plat_log(const char *line);
  * a sector there (bsp/loader/ldr_core.c: "AT" at bytes 0xF06..0xF07, a nonzero CRC-16 at 0xF00 over the 78 bytes
  * from 0xF02), so in these two an app keeps bytes 0xF00..0xF07 of every sector erased (0xFF), or else makes sure
  * those bytes never read as a record: never "AT" at 0xF06 (LOOM-8's sample bank moves its data so, and refuses a
- * bank that has it) */
+ * bank that has it).
+ * A fourth, on request (fm1.toml xdata2 = true: FM1B_XDATA2): PLAT_XDATA2, the three sectors 0xFC000..0xFEFFF
+ * (12 KiB) between the SDK's last area (USR, up to 0xFBFFF) and its key_mac sector (0xFF000, never written), where
+ * Felucca keeps its globals: an app that was a Felucca firmware reads and writes its own bytes there. The update loader
+ * looks for records below 0xFC000 only, so no 0xF00 rule here. Store objects may sit there too (the template's
+ * settings pair is 0xFC000 / 0xFD000): with the window on, plat_data_erase and plat_data_write refuse a store
+ * object's sectors in it, so an app with this window puts its objects elsewhere (or keeps to the rest) */
 #define PLAT_DATA_LO 0x97000u
 #define PLAT_DATA_HI 0xE0000u
 #define PLAT_XDATA0_LO 0x93000u
 #define PLAT_XDATA0_HI 0x97000u
 #define PLAT_XDATA1_LO 0xE5000u
 #define PLAT_XDATA1_HI 0xFC000u
+#define PLAT_XDATA2_LO 0xFC000u
+#define PLAT_XDATA2_HI 0xFF000u
+#if FM1B_XDATA2
+#define PLAT_DATA_OK(off, n) (plat_in((off), (n), PLAT_DATA_LO, PLAT_DATA_HI) || \
+                              plat_in((off), (n), PLAT_XDATA0_LO, PLAT_XDATA0_HI) || \
+                              plat_in((off), (n), PLAT_XDATA1_LO, PLAT_XDATA1_HI) || \
+                              plat_in((off), (n), PLAT_XDATA2_LO, PLAT_XDATA2_HI))
+#else
 #define PLAT_DATA_OK(off, n) (plat_in((off), (n), PLAT_DATA_LO, PLAT_DATA_HI) || \
                               plat_in((off), (n), PLAT_XDATA0_LO, PLAT_XDATA0_HI) || \
                               plat_in((off), (n), PLAT_XDATA1_LO, PLAT_XDATA1_HI))
+#endif
 static inline int plat_in(uint32_t off, uint32_t n, uint32_t lo, uint32_t hi)   /* [off, off + n) in [lo, hi) */
 {
     return off >= lo && off <= hi && n <= hi - off;

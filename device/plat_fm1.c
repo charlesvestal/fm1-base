@@ -249,6 +249,14 @@ int plat_sysex_send(const uint8_t *frame, uint32_t n) { return ota_wire_send(fra
  * FL_XDATA windows) */
 _Static_assert(FL_XDATA0_LO == PLAT_XDATA0_LO && FL_XDATA0_HI == PLAT_XDATA0_HI && FL_XDATA1_HI == PLAT_XDATA1_HI &&
                FL_AUTO_LO == PLAT_XDATA1_LO && FL_AUTO_HI == FL_XDATA1_LO, "plat.h's windows are felucca-bsp's");
+#if FM1B_XDATA2                                   /* the fourth window: felucca-bsp's FL_GLOB (in its FL_STORE_OK), the
+                                                   * store's objects there refused (plat_xdata2.h) */
+#include "plat_xdata2.h"
+_Static_assert(FL_GLOB_LO == PLAT_XDATA2_LO && FL_GLOB_HI == PLAT_XDATA2_HI, "PLAT_XDATA2 is felucca-bsp's FL_GLOB");
+#define DATA_STORE_HIT(off, n) plat_xdata2_store_hit((off), (n))
+#else
+#define DATA_STORE_HIT(off, n) 0
+#endif
 const uint8_t *plat_data(uint32_t off)
 {
     return flash_ok && PLAT_DATA_OK(off, 1u) ? (const uint8_t *)FL_XIP(off) : 0;
@@ -256,7 +264,7 @@ const uint8_t *plat_data(uint32_t off)
 int plat_data_erase(uint32_t off)
 {
     uint32_t took;
-    if (!flash_ok || (off & 0xFFFu) || !PLAT_DATA_OK(off, 0x1000u))
+    if (!flash_ok || (off & 0xFFFu) || !PLAT_DATA_OK(off, 0x1000u) || DATA_STORE_HIT(off, 0x1000u))
         return -1;
     fm1_wdt_feed();                               /* (a run of erases: tens of ms each) */
     audio_silence();
@@ -266,7 +274,7 @@ int plat_data_write(uint32_t off, const void *src, uint32_t n)   /* page program
                                                                  * clear in place, nothing erased, nothing read back
                                                                  * (plat.h's promise: keep it so) */
 {
-    return flash_ok && PLAT_DATA_OK(off, n) ? fl_write(off, src, n) : -1;
+    return flash_ok && PLAT_DATA_OK(off, n) && !DATA_STORE_HIT(off, n) ? fl_write(off, src, n) : -1;
 }
 /* a pull from the host in the update's framing (ota.c ota_read), and how long it may take */
 int plat_host_read(uint32_t addr, uint8_t *dst, uint32_t n) { return n > 512u ? -1 : ota_read(addr, dst, n); }

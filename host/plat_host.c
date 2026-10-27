@@ -816,12 +816,21 @@ const char *plat_ble_log_line(int back)
 void plat_midi_out(uint32_t pkt) { plat_midi_send(pkt, TO_USB); }
 void plat_log(const char *line) { ble_say(line); }
 /* the data area and its two more windows (plat.h): a simulated flash from the first window to the last (the gap
- * between, the update's staging, refused as on the device), erased at the start, kept across a simulated reboot */
+ * between, the update's staging, refused as on the device), erased at the start, kept across a simulated reboot.
+ * FM1B_XDATA2: the fourth window too, just above the third, the store's objects there refused as on the device */
 #define DATA_BASE PLAT_XDATA0_LO
+#if FM1B_XDATA2
+#include "plat_xdata2.h"
+#define DATA_TOP PLAT_XDATA2_HI
+#define DATA_STORE_HIT(off, n) plat_xdata2_store_hit((off), (n))
+#else
+#define DATA_TOP PLAT_XDATA1_HI
+#define DATA_STORE_HIT(off, n) 0
+#endif
 #ifdef PLAT_DATA_AREA
 static uint8_t *const data_area = PLAT_DATA_AREA;   /* the embedder's own (host/rfm1.c: in its flash image) */
 #else
-static uint8_t data_area[PLAT_XDATA1_HI - DATA_BASE];
+static uint8_t data_area[DATA_TOP - DATA_BASE];
 #endif
 static uint8_t data_ready;
 static uint32_t data_writes;            /* every erase and write */
@@ -829,14 +838,18 @@ static int data_cmd_rc;                   /* the last script data_erase / data_w
 static void data_init(void)
 {
     if (!data_ready) {
-        memset(data_area, 0xFF, PLAT_XDATA1_HI - DATA_BASE);
+        memset(data_area, 0xFF, DATA_TOP - DATA_BASE);
         data_ready = 1;
     }
 }
 static uint32_t data_window_hi(uint32_t off)   /* the end of the window that holds off, 0 = none */
 {
     static const uint32_t W[][2] = {{PLAT_DATA_LO, PLAT_DATA_HI}, {PLAT_XDATA0_LO, PLAT_XDATA0_HI},
-                                    {PLAT_XDATA1_LO, PLAT_XDATA1_HI}};
+                                    {PLAT_XDATA1_LO, PLAT_XDATA1_HI},
+#if FM1B_XDATA2
+                                    {PLAT_XDATA2_LO, PLAT_XDATA2_HI},
+#endif
+    };
     uint32_t i;
     for (i = 0; i < sizeof W / sizeof W[0]; i++)
         if (off >= W[i][0] && off < W[i][1])
@@ -851,7 +864,7 @@ const uint8_t *plat_data(uint32_t off)
 int plat_data_erase(uint32_t off)
 {
     data_init();
-    if ((off & 0xFFFu) || !PLAT_DATA_OK(off, 0x1000u))
+    if ((off & 0xFFFu) || !PLAT_DATA_OK(off, 0x1000u) || DATA_STORE_HIT(off, 0x1000u))
         return -1;
     memset(&data_area[off - DATA_BASE], 0xFF, 0x1000u);
     data_writes++;
@@ -861,7 +874,7 @@ int plat_data_write(uint32_t off, const void *src, uint32_t n)
 {
     uint32_t i;
     data_init();
-    if (!PLAT_DATA_OK(off, n))
+    if (!PLAT_DATA_OK(off, n) || DATA_STORE_HIT(off, n))
         return -1;
     for (i = 0; i < n; i++)                       /* as flash: bits only go from 1 to 0 */
         data_area[off - DATA_BASE + i] &= ((const uint8_t *)src)[i];
