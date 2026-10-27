@@ -174,7 +174,8 @@ void plat_ble_enable(int on);
 enum { PLAT_BTA_OFF, PLAT_BTA_SCANNING, PLAT_BTA_FOUND, PLAT_BTA_NONE, PLAT_BTA_PAGING, PLAT_BTA_LINKED, PLAT_BTA_SETUP,
        PLAT_BTA_STREAMING, PLAT_BTA_REFUSED, PLAT_BTA_NO_LAST, PLAT_BTA_FAILED, PLAT_BTA_READY };
 void plat_bta_on(int on);              /* on: the radio up (Bluetooth MIDI's start, if not yet), ready to scan / connect */
-void plat_bta_scan(int on);            /* look for devices (about 10 s) */
+void plat_bta_scan(int on);            /* look for devices (about 10 s): 1 a fresh list, 2 again with the list kept
+                                        * (only when nothing else is under way: a page goes on), 0 stop */
 int plat_bta_found(int i, char *name); /* found device i: its name (17 bytes) -> 0: none */
 int plat_bta_known(int i, char *name); /* remembered device i (0 the last one) -> 0: none */
 void plat_bta_pick(int i);             /* connect found device i (pairing if new; it becomes the last one) */
@@ -182,6 +183,18 @@ int plat_bta_reconnect(int i);         /* connect remembered device i -> 0 pagin
 void plat_bta_forget(int i);
 void plat_bta_hangup(void);
 int plat_bta_state(void);              /* PLAT_BTA_* */
+/* while it streams, where the sound goes: 1 the device, 0 the FM-1's own output (the stream suspended, the link
+ * kept: back to the device at once, without a new connection) */
+void plat_bta_output(int to_device);
+int plat_bta_out_device(void);         /* 1: the sound goes to the device (the default) */
+/* a link that ended by itself (the device left, or refused): where it had got to, once (then PLAT_BTA_LOST_NONE) */
+enum { PLAT_BTA_LOST_NONE, PLAT_BTA_LOST_LINK, PLAT_BTA_LOST_PAIRING, PLAT_BTA_LOST_ENCRYPTION, PLAT_BTA_LOST_SETUP,
+       PLAT_BTA_LOST_STREAMING, PLAT_BTA_LOST_REFUSED };
+int plat_bta_lost(void);
+int plat_bta_timed_out(void);          /* PLAT_BTA_REFUSED because the set-up timed out (the device never said no) */
+int32_t plat_bta_latency_us(void);     /* what the stream adds on the FM-1's side (its queue), us; -1: not streaming.
+                                        * An app that follows a clock may play that much earlier (the device's own
+                                        * buffer comes on top and is not known) */
 
 /* WiFi (fm1.toml wifi = true: FM1B_WIFI 1): a station on JieLi's WiFi libraries and the SDK's lwIP, on the same shim.
  * Off until the app turns it on; then it joins the networks it joined before (kept in the app's store object OBJ_WIFI,
