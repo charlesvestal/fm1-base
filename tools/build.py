@@ -44,6 +44,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   authors = ["Name"]         the .rfm1 manifest's authors (default: the app repository's first commit's author)
   words = "words.tsv"        the screen reader's words (fm1-reader), relative to APP_DIR
   font_full = ["L"]          font roles with lower case too (by default M and L have capitals and digits only)
+  font_trim = true           each glyph stored as its lit box only (tools/gen_font.py FM1_FONT_TRIM): the same
+                             pixels drawn, the fonts about 55 % smaller in flash
   ble_stack_kb = 6           the Bluetooth tasks' stacks, KB each (default 8: three of them, in the pool; radio.c
                              logs each one's deepest, "stacks", 10 s after Bluetooth is ready and as they grow)
   ble_heap_kb = 16           its heap, KB (default 24, in RAM; the same log line's "heap": its most ever)
@@ -282,7 +284,8 @@ def generate():
     tools = SRC / "tools"
     for c in [[tools / "gen_font.py", GEN / "felucca_font.h"],
               [tools / "gen_words.py", APP / CONF.get("words", "words.tsv"), APP / "web" / "words", GEN / "ann_words.h"]]:
-        env = {**os.environ, "FM1_FONT_FULL": " ".join(CONF.get("font_full", []))}
+        env = {**os.environ, "FM1_FONT_FULL": " ".join(CONF.get("font_full", [])),
+               "FM1_FONT_TRIM": "1" if CONF.get("font_trim") else ""}
         r = subprocess.run([sys.executable, *map(str, c)], capture_output=True, text=True, env=env)
         sys.stdout.write(r.stdout)
         if r.returncode:
