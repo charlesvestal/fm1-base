@@ -33,6 +33,7 @@ t() {   # t NAME SOURCE [FLAGS...]: build SOURCE with FLAGS as NAME and run it
     fi
 }
 t ble_prim ble_prim_test.c
+t ble_time ble_time_test.c
 t ble_stack ble_stack_test.c
 t ble_stack_enc ble_stack_test.c -DBLE_LL_ENC=1
 t ble_stack_smp ble_stack_test.c -DBLE_LL_ENC=1 -DBLE_SMP_LEGACY=1

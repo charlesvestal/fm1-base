@@ -98,6 +98,10 @@ enum { PORT_USB, PORT_BLE, PORT_TRS, NPORTS };
 #define TO_BLE_DEV (1u << 3)           /* the Bluetooth MIDI device the FM-1 connected to (FM1B_BLE_CENTRAL) */
 #define TO_BLE (TO_BLE_HOST | TO_BLE_DEV)
 int plat_midi_in(uint32_t *pkt, int *port);   /* 1 = got one, from port PORT_* (port may be 0) */
+/* when the last message plat_midi_in gave was sent, on plat_ticks24's clock: a Bluetooth one's from its own BLE-MIDI
+ * timestamp, the connection's bunching taken out (fm1.toml ble_midi_time, with ble_stack = "own": the transport
+ * then comes at once, not held to the sender's time); any other: now. For an app that follows a clock by time */
+uint32_t plat_midi_in_t24(void);
 uint32_t plat_midi_in_from(void);      /* where the last one came from, as an out: TO_USB, TO_BLE_HOST or TO_BLE_DEV
                                         * (0: the TRS jack, which has no out); called where plat_midi_in is */
 void plat_midi_send(uint32_t pkt, uint32_t to);   /* to: TO_USB | TO_BLE, or one link; main loop, the render or the

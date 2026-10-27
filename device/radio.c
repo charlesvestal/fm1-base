@@ -443,6 +443,21 @@ static uint8_t ble_conn;                          /* bit l: ble_midi_connected(l
 #define BQ 64u
 static uint32_t ble_in_q[BQ];
 static uint32_t bi_w, bi_r;
+#if FM1B_BLE_MIDI_TIME
+/* fm1.toml ble_midi_time: every message goes in at once with the time it was sent, on plat_ticks24's clock (the own
+ * stack's ble_in_time, bt/ble/ble_time.c: the sender's own timestamps, the connection's bunching taken out), for
+ * plat_midi_in_t24; the transport is not held to the sender's time (ble_midi_receive, ble_transport: unused) */
+static uint32_t ble_in_t[BQ], ble_in_t_last;
+void ble_midi_receive_at(uint32_t pkt, uint32_t t24)   /* from the stack (in ble_poll): for plat_midi_in */
+{
+    if (bi_w - bi_r < BQ) {
+        ble_in_q[bi_w % BQ] = pkt & ~0xE0u;
+        ble_in_t[bi_w % BQ] = t24;
+        bi_w++;
+        ble_rx_count++;
+    }
+}
+#endif
 /* The transport (clock, start, continue, stop) by the sender's time: the radio bunches messages into its
  * connection events (7.5..30 ms apart), so ticks would come in clumps and a sequencer stepping on them would clump
  * too (LOOM-8 on a Mac's clock: its sixteenths 60..180 ms apart at 140 BPM, against 104..112 over USB). Each BLE
@@ -533,6 +548,9 @@ static int ble_midi_in(uint32_t *pkt, uint32_t *from)   /* from: its link's out,
         return 0;
     else {
         p = ble_in_q[bi_r % BQ];
+#if FM1B_BLE_MIDI_TIME
+        ble_in_t_last = ble_in_t[bi_r % BQ];
+#endif
         bi_r++;
     }
     *from = (p >> 4 & 0xFu) == 1u ? TO_BLE_DEV : TO_BLE_HOST;

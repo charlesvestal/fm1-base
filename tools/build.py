@@ -131,6 +131,9 @@ app.h); the build prints what it has.
                              the bond kept in OBJ_BLE; without it a pairing is refused (macOS and iOS connect anyway)
   ble_diag = false           with ble_stack = "own": the link layer's diagnostics left out (bt/ble/ble_diag.h BLE_DIAG 0:
                              its counters and event rings, ~2.4 KB of RAM, and the radio log's "BT ll" line); kept by default
+  ble_midi_time = true       with ble_stack = "own": Bluetooth MIDI in by the sender's time (FM1B_BLE_MIDI_TIME): each
+                             message's time sent, from its BLE-MIDI timestamp (bt/ble/ble_time.c), for plat_midi_in_t24;
+                             the transport then comes at once instead of held to the sender's time
   ble = true                 Bluetooth MIDI (FM1B_BLE): ble/ on JieLi's BT libraries, from the AC79 SDK ($AC79_SDK);
                              --no-ble builds without it (NAME-usb.fwsc), and the build checks nothing of JieLi's is in
   wifi = true                WiFi (FM1B_WIFI): a station on JieLi's WiFi libraries and the SDK's lwIP (built from its
@@ -693,6 +696,8 @@ def build_app():
             flags.append("-DFM1B_BT_AUDIO=1")
             if CONF.get("bt_log"):                 # its step-by-step lines on the radio's log (fm1_remote.py log)
                 flags.append("-DFM1B_BT_LOG=1")
+        if CONF.get("ble_midi_time"):              # BLE MIDI in by the sender's time (plat_midi_in_t24), transport not held
+            flags.append("-DFM1B_BLE_MIDI_TIME=1")
         if CONF.get("ble_pairing"):                # pairing and an encrypted link (LE legacy, Just Works; the bond kept)
             flags += ["-DBLE_LL_ENC=1", "-DBLE_SMP_LEGACY=1"]
         if CONF.get("ble_diag") is False:          # the link layer's diagnostics left out (bt/ble/ble_diag.h)
