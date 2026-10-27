@@ -71,6 +71,7 @@ if command -v node >/dev/null 2>&1; then
     run installer-bluetooth node tests/installer_bluetooth_test.mjs
     # the handshake: a firmware that answers M-UPGRADE 3.11's query short and its whole identity to the one with 01
     run installer-hs node tests/installer_hs_test.mjs
+    run installer-family-ports node tests/installer_family_ports_test.mjs
 else
     echo "  skip installer-boot (no node)"
 fi
