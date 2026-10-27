@@ -179,12 +179,13 @@ __attribute__((used, visibility("default"))) uint32_t web_store_writes(void) { r
 __attribute__((used, visibility("default"))) uint32_t web_nobj(void) { return OBJ_NOBJ; }
 __attribute__((used, visibility("default"))) uint32_t web_store_max(void) { return PLAT_STORE_MAX; }
 
-#ifdef APP_SYSEX
-/* SysEx with the app (APP_SYSEX), as over USB: the page writes a frame from the computer (F0 .. F7, whole) to
- * web_sx_in_buf (web_sx_in_max bytes at most) and gives it with web_sx_in(n). As felucca-bsp's usb.c hands a frame to
- * the main loop: 7-bit, 640 bytes at most between F0 and F7, to app_sysex; else dropped (with APP_SYSEX_BYTE every
- * byte to app_sysex_byte first, any length, up to a status byte inside). What the app sent (plat_sysex_send, a
- * stream), F0 .. F7 frames one after another (a stream cut short ends at the next F0), from web_sx_out_buf
+#if defined APP_SYSEX || FM1B_COMPANION
+/* SysEx with the app (APP_SYSEX) and the companion services (FM1B_COMPANION, device/companion.c), as over USB: the
+ * page writes a frame from the computer (F0 .. F7, whole) to web_sx_in_buf (web_sx_in_max bytes at most) and gives it
+ * with web_sx_in(n). As felucca-bsp's usb.c hands a frame to the main loop: 7-bit, 640 bytes at most between F0 and
+ * F7, to app_sysex, then (not the app's) to the companion; else dropped (with APP_SYSEX_BYTE every byte to
+ * app_sysex_byte first, any length, up to a status byte inside). What the app and the companion sent (plat_sysex_send,
+ * a stream), F0 .. F7 frames one after another (a stream cut short ends at the next F0), from web_sx_out_buf
  * (web_sx_out_len bytes; web_sx_out_clear when read) */
 #define WEB_SX_IN 8192u
 #define WEB_SX_MAX 640u
@@ -204,7 +205,13 @@ __attribute__((used, visibility("default"))) int web_sx_in(uint32_t n)
 #endif
     if (!ok || n - 2u > WEB_SX_MAX)
         return 0;                                 /* (a status byte inside, or too long: the device drops it) */
-    (void)app_sysex(wsx_in + 1, n - 2u);
+#ifdef APP_SYSEX
+    if (app_sysex(wsx_in + 1, n - 2u))
+        return 1;                                 /* (the app's first, as the device's main loop offers it) */
+#endif
+#if FM1B_COMPANION
+    (void)comp_sysex(wsx_in, n);                  /* (then the update's framing: the companion's commands) */
+#endif
     return 1;
 }
 __attribute__((used, visibility("default"))) uint8_t *web_sx_out_buf(void) { return hsx_out; }

@@ -205,6 +205,7 @@ fi
 # and in the browser emulator (web/emu/emu_web.c web_sx_in, web_sx_out_*), its app.wasm under node
 if command -v emcc >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
     run emu-sysex sh -c "$PY tools/build.py tests/sysex_app --web && node tests/sysex_web_test.mjs tests/sysex_app/build/emu"
+    run companion-web sh -c "$PY tools/build.py tests/companion_app --web && node tests/companion_web_test.mjs tests/companion_app/build/emu"
 else
     echo "  skip emu-sysex (no emcc or node)"
 fi
