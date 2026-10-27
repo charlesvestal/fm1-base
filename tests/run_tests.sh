@@ -186,5 +186,21 @@ run sysex-app sh -c "$PY tools/build.py tests/sysex_app --host && \
 # the dim lights at any brightness (APP_DIM_LEVELS, plat_dim_ns) in the host simulator: tests/dim_app
 run dim-app sh -c "$PY tools/build.py tests/dim_app --host && \
     tests/dim_app/build/host/dimtest_host tests/dim_app/tests/dim.txt tests/dim_app/build/host"
+# the browser emulator (tools/build.py --web, emcc): the template's worklet and app.wasm under node (boot, screen, a
+# key, MIDI in and out); its optional parts' build (fm1.toml emu); then each part's own test, tests/emu_NAME_test.mjs,
+# which builds what it needs (the template is left built without parts)
+if command -v emcc >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+    export PYTHON="$PY"
+    run emu-build "$PY" tools/build.py template --web
+    run emu node tests/emu_test.mjs template/build/emu
+    run emu-parts "$PY" tests/emu_parts_test.py
+    for t in tests/emu_*_test.mjs; do
+        [ -e "$t" ] || continue
+        run "$(basename "$t" _test.mjs)" node "$t"
+    done
+    run emu-plain "$PY" tools/build.py template --web
+else
+    echo "  skip emu (no emcc or node)"
+fi
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL

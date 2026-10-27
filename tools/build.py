@@ -114,6 +114,10 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              1 KiB, the larger) is said. Each unit's optimised IR is written beside its code
                              (OUT/*.opt.ll: the indirect calls' targets, stack_ir.py). stack_bounds: an app's
                              function that calls itself at most N levels deep (its source's own bound): ["f=N", ..]
+  emu = ["midi", "data"]     the browser emulator's optional parts (--web): web/emu/parts/NAME.js on the page and
+                             NAME_worklet.js in the worklet, each file saying what it does; a part's own needs come
+                             with it; FM1B_EMU_NAME=1 for the C. FM1B_EMU="midi data" in the environment instead (""
+                             for none). Without any, the page, the worklet and app.wasm are what they were
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
 app.h); the build prints what it has.
   boot_pack = true           .ram_text and .data stored LZMA-packed (tools/boot_pack.py, Melodee's; device/boot_lzma.h): the
@@ -1183,6 +1187,84 @@ def build_host():
     return 0
 
 
+EMU_PARTS = SRC / "web" / "emu" / "parts"
+
+
+def emu_parts():
+    """the browser emulator's optional parts: fm1.toml emu = [...] (or FM1B_EMU="a b" in the environment), each one
+    web/emu/parts/NAME.js (the page's) and / or NAME_worklet.js (the worklet's); a part's file may start with a line
+    "// emu-needs: a b", parts it needs, which come before it. Names are lower-case letters and digits ("parts" is the
+    mechanism, web/emu/parts/parts.js and parts_worklet.js); NAME_*.js are a part's other files"""
+    env = os.environ.get("FM1B_EMU")
+    asked = re.split(r"[,\s]+", env.strip()) if env is not None else list(CONF.get("emu", []))
+    asked = [p for p in asked if p]
+    known = sorted({m[1] for f in EMU_PARTS.glob("*.js") if (m := re.fullmatch(r"([a-z0-9]+)(_worklet)?\.js", f.name))}
+                   - {"parts"}) if EMU_PARTS.is_dir() else []
+    out = []
+
+    def needs(p):
+        got = []
+        for f in (EMU_PARTS / f"{p}.js", EMU_PARTS / f"{p}_worklet.js"):
+            if f.exists():
+                m = re.match(r"(?://[^\n]*\n){0,4}//\s*emu-needs:([^\n]*)", f.read_text())
+                got += m[1].split() if m else []
+        return got
+
+    def add(p, chain):
+        if p not in known:
+            raise SystemExit(f"fm1.toml emu: no part {p!r} (web/emu/parts has: {', '.join(known) or 'none'})")
+        if p in chain:
+            raise SystemExit(f"web/emu/parts: {' -> '.join(chain + [p])} need each other")
+        if p not in out:
+            for n in needs(p):
+                add(n, chain + [p])
+            out.append(p)
+    for p in asked:
+        add(p, [])
+    return out
+
+
+def emu_parts_out(emu, parts):
+    """the app's own part of the page and of the worklet (APP_DIR/web/emu/app.js, app_worklet.js) as they are; with
+    parts, app.js and app_worklet.js are made to load the parts (web/emu/parts/parts.js, parts_worklet.js) and the app's
+    own files under new names (app_own.js, app_own_worklet.js). What an earlier build with other parts left goes"""
+    import json
+    import shutil
+    own = {f: APP / "web" / "emu" / f for f in ("app.js", "app_worklet.js") if (APP / "web" / "emu" / f).exists()}
+    for f in ("app.js", "app_worklet.js", "app_own.js", "app_own_worklet.js"):
+        if (emu / f).exists():
+            (emu / f).unlink()
+    if (emu / "parts").exists():
+        shutil.rmtree(emu / "parts")
+    if not parts:
+        for f, src in own.items():
+            shutil.copy(src, emu / f)
+        return
+    (emu / "parts").mkdir()
+    for p in ["parts", *parts]:
+        for f in sorted(EMU_PARTS.glob(f"{p}*.js")):
+            if re.fullmatch(rf"{p}(_[a-z0-9_]+)?\.js", f.name):
+                shutil.copy(f, emu / "parts" / f.name)
+    if "app.js" in own:
+        shutil.copy(own["app.js"], emu / "app_own.js")
+    if "app_worklet.js" in own:
+        shutil.copy(own["app_worklet.js"], emu / "app_own_worklet.js")
+    page = [p for p in parts if (EMU_PARTS / f"{p}.js").exists()]
+    (emu / "app.js").write_text(
+        "// made by tools/build.py: the emulator's parts (fm1.toml emu) and the app's own part of the page\n"
+        'import { compose } from "./parts/parts.js";\n'
+        + "".join(f'import * as {p} from "./parts/{p}.js";\n' for p in page)
+        + ('import * as own from "./app_own.js";\n' if "app.js" in own else "const own = {};\n")
+        + f"export const {{ attach, message }} = compose({{ {', '.join(page)} }}, own, "
+        + f"{{ id: {json.dumps(NAME)}, name: {json.dumps(CONF.get('name', NAME))} }});\n")
+    (emu / "app_worklet.js").write_text(
+        "// made by tools/build.py: the app's own part of the worklet, then the emulator's parts (fm1.toml emu)\n"
+        + ('import "./app_own_worklet.js";\n' if "app_worklet.js" in own else "")
+        + 'import "./parts/parts_worklet.js";\n'
+        + "".join(f'import "./parts/{p}_worklet.js";\n' for p in parts if (EMU_PARTS / f"{p}_worklet.js").exists()))
+    print(f"emu      parts: {' '.join(parts)}")
+
+
 def build_web():
     """the host simulator in WebAssembly (web/emu/emu_web.c) and its page, in OUT/emu; the screen reader's voice
     (eSpeak NG, GPL: a separate program the page loads) from an fm1-reader checkout next to fm1-base, if there"""
@@ -1195,8 +1277,9 @@ def build_web():
                          emu / "o2")
     o2_objs += web_objects(["-O2", "-ffp-contract=off", "-std=gnu99", "-w", "-DPLAT_HOST", "-DPLAT_WEB", *wf, *web_inc],
                            emu / "web")
+    parts = emu_parts()
     cmd = ["emcc", "-O2", "-ffp-contract=off", "-std=gnu99", "-Wall", "-Wno-unused-function", "-Wno-unused-parameter",
-           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *opt_flags(), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
+           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *opt_flags(), *(f"-DFM1B_EMU_{p.upper()}=1" for p in parts), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
            *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            *wf, "--no-entry", "-sSTANDALONE_WASM", "-sSTACK_SIZE=1048576", "-sINITIAL_MEMORY=33554432", "-sFILESYSTEM=0",
            "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *o2_objs,
@@ -1213,9 +1296,7 @@ def build_web():
     page = page.replace("{{NAME}}", CONF.get("name", NAME)).replace("{{ID}}", NAME)
     (emu / "index.html").write_text(page)
     shutil.copy(web["worklet.js"], emu / "worklet.js")
-    for f in ("app.js", "app_worklet.js"):        # the app's own part of the page and of the worklet, if any
-        if (APP / "web" / "emu" / f).exists():
-            shutil.copy(APP / "web" / "emu" / f, emu / f)
+    emu_parts_out(emu, parts)
     # next to fm1-base, or next to the app's repository (fm1-base a submodule in it)
     found = [p / "fm1-reader" / "web" for base in (SRC.parent, APP.parent.parent) for p in (base, base / "fm1-parent")
              if (p / "fm1-reader" / "web").is_dir()]
