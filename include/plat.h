@@ -203,7 +203,13 @@ static inline int plat_in(uint32_t off, uint32_t n, uint32_t lo, uint32_t hi)   
 }
 const uint8_t *plat_data(uint32_t off);   /* read in place; 0 = outside the windows */
 int plat_data_erase(uint32_t off);        /* the 4 KiB sector at off (aligned); 0 = done */
-int plat_data_write(uint32_t off, const void *src, uint32_t n);   /* into erased flash, src in RAM; 0 = done */
+int plat_data_write(uint32_t off, const void *src, uint32_t n);   /* src in RAM; 0 = done */
+/* plat_data_write programs, as NOR flash does: each byte becomes what it was AND what is written (bits go from 1 to
+ * 0 only, and only an erase sets them again). So it writes into erased flash, and it may also clear bits in place, in
+ * bytes written before, without an erase: a record's state byte marked used, then dead (0xFF, 0x7F, 0x3F), a bitmap's
+ * bits taken one by one. Guaranteed on the device (felucca-bsp's fl_write: page program, no erase, no read-back) and
+ * in the host simulator (the same AND). A 1 written over a 0 stays 0, and is not an error: plat_data_write does not
+ * read back; an app that must know reads plat_data after. */
 void plat_sysex_send(const uint8_t *frame, uint32_t n);   /* a whole SysEx frame (F0 .. F7) out over USB */
 /* the resource region (fm1.toml resources = FILE, FM1B_RES; app.h APP_RES_BASE, APP_RES_SECTORS: device/res.c):
  * the file's bytes read in place, *len their count; 0 (and *len 0) while the FM-1 does not hold this build's (not

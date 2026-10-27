@@ -164,7 +164,9 @@ int plat_data_erase(uint32_t off)
     audio_silence();
     return fl_erase4k(off, &took);
 }
-int plat_data_write(uint32_t off, const void *src, uint32_t n)
+int plat_data_write(uint32_t off, const void *src, uint32_t n)   /* page programs only (fl_prog_ram, 0x02): bits
+                                                                 * clear in place, nothing erased, nothing read back
+                                                                 * (plat.h's promise: keep it so) */
 {
     return flash_ok && PLAT_DATA_OK(off, n) ? fl_write(off, src, n) : -1;
 }
