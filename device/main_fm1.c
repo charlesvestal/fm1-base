@@ -805,6 +805,10 @@ static void usb_cmd(uint32_t d)
         return;
     }
 #endif
+#if FM1B_COMPANION
+    if (comp_cmd(ota_dec, d))
+        return;                                     /* the companion services (companion.c) */
+#endif
 #ifdef APP_USB_CMD
     app_usb_cmd(ota_dec, d);
     ota_try_ms = 5000u;                             /* (the app's patience, plat_host_patience, back to the default) */

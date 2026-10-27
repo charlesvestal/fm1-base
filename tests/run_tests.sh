@@ -212,5 +212,7 @@ fi
 # emulator's part "backup" has its own test, emu_backup_test.mjs, on the same app)
 run backup-app sh -c "$PY tools/build.py tests/backup_app --host && mkdir -p tests/backup_app/build/out && \
     tests/backup_app/build/host/bktest_host tests/backup_app/tests/backup.txt tests/backup_app/build/out"
+# the companion services (device/companion.c) in the host simulator, through tools/fm1_companion.py: tests/companion_app
+run companion "$PY" tests/companion_test.py $OUT/companion
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL

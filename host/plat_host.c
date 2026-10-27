@@ -64,8 +64,8 @@
  *   usb unplug|plug|stall|read   the computer: the cable out, in again (a new plat_usb_session), the computer stops
  *                                reading the device's SysEx, reads again
  * FILE "out:NAME" for backup, restore, backup_damage and mirror: NAME in OUTDIR (fbdump: always there).
- * NAME_host --serve [OUTDIR] (FM1B_MIRROR): driven over stdin by a tool, as an FM-1 over USB:
- *   sx HEX      one SysEx message from the host (F0 .. F7, hex): the mirror's requests (cmd 0x50, 0x54)
+ * NAME_host --serve [OUTDIR] (FM1B_MIRROR, FM1B_COMPANION): driven over stdin by a tool, as an FM-1 over USB:
+ *   sx HEX      one SysEx message from the host (F0 .. F7, hex): the mirror's requests (cmd 0x50, 0x54), the companion's (0x60..)
  *   run MS      MS milliseconds of the device; then what it sent meanwhile, a line "sx HEX" a message, and "ok NOW"
  *   shot FILE, fbdump FILE   the screen as a PNG, as raw pixels
  *   expect WHAT VALUE   as in a script: its line, "  ok ..." or "FAIL ..."
@@ -96,6 +96,9 @@
 #endif
 #ifndef FM1B_CPU2
 #define FM1B_CPU2 0                             /* fm1.toml cpu2 = true */
+#endif
+#ifndef FM1B_COMPANION
+#define FM1B_COMPANION 0                        /* fm1.toml companion = true */
 #endif
 #ifdef __linux__
 #define _GNU_SOURCE                             /* (open_memstream: --serve) */
@@ -859,6 +862,13 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)
 #endif
 #include "app.c"
 
+#if FM1B_COMPANION
+/* the companion services (device/companion.c): the computer's requests from "sysex" (and --serve's "sx"), the answers
+ * as the app's SysEx (plat_sysex_send: sysex_out, expect_sysex) */
+#include "companion.c"
+static int cp_send(const uint8_t *p, uint32_t n) { return plat_sysex_send(p, n); }
+#endif
+
 #if FM1B_MIRROR
 /* ------------------------------------------------- mirroring over USB --- */
 /* the device's mirror ring, drained at USB's pace (mr_rate bytes a millisecond; 48: one 64-byte packet of USB-MIDI
@@ -1434,7 +1444,7 @@ static void out_path(char *out, size_t n, const char *dir, const char *a)
     else
         snprintf(out, n, "%s", a);
 }
-#if FM1B_MIRROR
+#if FM1B_MIRROR || FM1B_COMPANION
 /* --serve: the simulator driven over stdin (see the top) */
 static uint32_t sv_unpack7(const uint8_t *in, uint32_t n, uint8_t *out)
 {
@@ -1454,11 +1464,13 @@ static int serve(const char *dir)
 {
     static char line[8192];
     static uint8_t raw[4096], dec[4096];
+#if FM1B_MIRROR
     char *buf = 0;
     size_t blen = 0;
     FILE *ms = open_memstream(&buf, &blen);
     mr_out = ms;
     mr_keep = 0;
+#endif
     setvbuf(stdout, 0, _IOLBF, 0);
     while (fgets(line, sizeof line, stdin)) {
         char cmd[16] = {0}, a[4096] = {0}, b[64] = {0};
@@ -1479,6 +1491,14 @@ static int serve(const char *dir)
             }
             if (n < 3 || raw[0] != 0xF0 || raw[n - 1] != 0xF7)
                 continue;
+#if FM1B_COMPANION
+#ifdef APP_SYSEX
+            if (n - 2u <= 640u && app_sysex(raw + 1, n - 2u))
+                continue;                            /* (as "sysex": the app's first, then the companion's) */
+#endif
+            if (comp_sysex(raw, n))
+                continue;
+#endif
             d = sv_unpack7(raw + 1, n - 2, dec);
             if (d >= 7 && dec[0] == 0 && dec[1] == 0x59 && (uint32_t)(dec[3] | dec[4] << 8 | dec[5] << 16) + 7u == d) {
                 uint32_t sum = 0;
@@ -1486,15 +1506,18 @@ static int serve(const char *dir)
                     sum += dec[i];
                 if ((uint8_t)~sum != dec[d - 1])
                     continue;
+#if FM1B_MIRROR
                 if (d == 8 && dec[2] == MR_REQ)
                     mirror_cmd(dec[6]);
                 else if (d == 12 && dec[2] == MR_REMOTE)
                     mirror_remote(dec + 6);
+#endif
             }
         } else if (!strcmp(cmd, "run")) {
             static uint8_t part[1 << 16];             /* a message cut at the end of a run: its start */
             static size_t pn;
             run_ms((uint32_t)atoi(a));
+#if FM1B_MIRROR
             fflush(ms);
             for (size_t i = 0; i < blen; i++) {
                 uint8_t v = (uint8_t)buf[i];
@@ -1512,6 +1535,23 @@ static int serve(const char *dir)
             }
             rewind(ms);
             blen = 0;
+#endif
+#if FM1B_COMPANION
+            for (uint32_t i = 0; i < hsx_n; i++) {    /* the SysEx ring's frames (the companion's answers) */
+                if (hsx_out[i] == 0xF0u)
+                    pn = 0;
+                if (pn < sizeof part)
+                    part[pn++] = hsx_out[i];
+                if (hsx_out[i] == 0xF7u && part[0] == 0xF0u) {
+                    fputs("sx ", stdout);
+                    for (size_t k = 0; k < pn; k++)
+                        printf("%02X", part[k]);
+                    putchar('\n');
+                    pn = 0;
+                }
+            }
+            hsx_n = hsx_lost = 0;
+#endif
             printf("ok %u\n", now_ms);
         } else if (!strcmp(cmd, "shot") || !strcmp(cmd, "fbdump")) {
             char out[4200];
@@ -1572,7 +1612,11 @@ static int hsx_in(const char *hex)
     if (!ok || n - 2u > HOST_SX_MAX || !hsx_session)
         return 0;                                 /* (a status byte inside, or too long: the device drops it) */
 #ifdef APP_SYSEX
-    (void)app_sysex(raw + 1, n - 2u);
+    if (app_sysex(raw + 1, n - 2u))
+        return 0;                                 /* (the app's first, as the device's main loop offers it) */
+#endif
+#if FM1B_COMPANION
+    (void)comp_sysex(raw, n);                     /* (then the update's framing: the companion's commands) */
 #endif
     return 0;
 }
@@ -1622,10 +1666,10 @@ int main(int argc, char **argv)
     int lineno = 0, fails = 0;
     plat_host_dir = dir;
     if (argc < 2) {
-        fprintf(stderr, "usage: %s SCRIPT [OUTDIR]%s\n", argv[0], FM1B_MIRROR ? " | --serve [OUTDIR]" : "");
+        fprintf(stderr, "usage: %s SCRIPT [OUTDIR]%s\n", argv[0], FM1B_MIRROR || FM1B_COMPANION ? " | --serve [OUTDIR]" : "");
         return 2;
     }
-#if FM1B_MIRROR
+#if FM1B_MIRROR || FM1B_COMPANION
     if (!strcmp(argv[1], "--serve")) {
         snprintf(out, sizeof out, "%s/midi_out.txt", dir);
         midi_log = fopen(out, "w");
