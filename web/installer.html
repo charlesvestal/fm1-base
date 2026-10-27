@@ -164,6 +164,7 @@ const TEXT = {
     noreturn: "FM-1 が戻ってきません。電源を入れ直してください。",
     mismatch: "書き込みは終わりましたが、FM-1 が別のバージョンを報告しています: ",
     badpkg: "インストールするファイルが壊れています。ページを再読み込みしてください。",
+    foreign: "FM-1 は M-VAVE 純正ファームウェアのアップデートモードで待機しています。そのアップデータはイメージの配置が異なる可能性があるため、何も書き込んでいません。M-VAVE のアップデータでその更新を終えるか、先に「純正ファームウェアに戻す」を実行してください。FM-1 の応答: ",
     leave: "書き込み中です。ページを閉じないでください。",
     license: "{{LICENSE}}、無保証。ソース:",
     reporth: "不具合を報告する",
@@ -228,6 +229,7 @@ const TEXT = {
     noreturn: "The FM-1 did not come back. Power-cycle it.",
     mismatch: "Written, but the FM-1 reports another version: ",
     badpkg: "The file to install is damaged. Reload the page.",
+    foreign: "The FM-1 is waiting in the update mode of M-VAVE's own firmware, which may lay the image out differently, so nothing was written. Finish that update with M-VAVE's updater, or put the stock firmware back first (\"Back to the stock firmware\"). The FM-1 reports: ",
     leave: "Writing. Do not close the page.",
     license: "{{LICENSE}}, no warranty. Source:",
     reporth: "Report a problem",
@@ -266,7 +268,7 @@ let lang = "en";                                 /* English first; 日本語 is 
 const t = (k) => TEXT[lang][k];
 /* what happens goes to two regions: #status (polite) the steps and the progress, #alert a failure */
 const FAILS = new Set(["nomidi", "loadfail", "stopped", "error", "denied", "notfound", "model", "lost", "noloader",
-                       "noreturn", "mismatch", "badpkg", "stockbad", "bootrefused", "resfail"]);
+                       "noreturn", "mismatch", "badpkg", "stockbad", "bootrefused", "resfail", "foreign"]);
 let lastKey = null, lastArg = "", lastPct = null;
 const textOf = (k, arg, pct) => t(k) + arg + (pct == null ? "" : t("pct").replace("{n}", pct));
 function show() {
@@ -504,8 +506,8 @@ async function run(img, product, isStock, sha256) {
   } catch (e) {
     if (isStock && e && e.code === "mismatch") { $("bar").value = 100; sayK("stockdone"); }   /* stock names itself its own way */
     else if (e && e.code && TEXT[lang][e.code]) sayK(e.code, e.detail || "");
-    if (e && e.code === "notfound") showPorts(midi);
     else sayK("error", e && e.message);
+    if (e && e.code === "notfound") showPorts(midi);
     log(String(e && e.stack || e));
   }
   remember(up ? up.answered : []);   /* (before the resources: their updater finds it by these picks) */
