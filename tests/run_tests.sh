@@ -188,5 +188,14 @@ run peers-app sh -c "$PY tools/build.py tests/peers_app --host && \
 run host-xdata2 sh -c "FM1B_XDATA2=1 $PY tools/build.py template --host >/dev/null && \
     cp template/build/host/template_host $OUT/template_host_xdata2 && $PY tools/build.py template --host >/dev/null && \
     $OUT/template_host_xdata2 tests/data_xdata2.txt template/build/host"
+# the whole flash as a 1 MiB image (flash_dump / flash_load, FM1B_FLASH): out of the simulator, read and saved again by
+# device/storage.c (tests/flash_image_test.c), back into a new run, and a power-on with it; the round trip byte for byte
+H=template/build/host
+run host-flash-dump sh -c "printf '\\022\\064\\126\\170' > $OUT/data4.bin && $H/template_host tests/flash_dump.txt $H"
+run flash-image sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -o $OUT/flash_image_test \
+    tests/flash_image_test.c && $OUT/flash_image_test $H/flash.bin $H/flash2.bin"
+run host-flash-load sh -c "$H/template_host tests/flash_load.txt $H && \
+    FM1B_FLASH=$H/flash2.bin $H/template_host tests/flash_boot.txt $H && \
+    cmp $H/flash.bin $H/flash3.bin"
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL
