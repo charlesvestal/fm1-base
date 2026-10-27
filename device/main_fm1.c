@@ -453,6 +453,7 @@ static int log_frame(const uint8_t *p, uint32_t n)
         shim_off_max = 0;
     }
 #if FM1B_BLE_OWN
+#if BLE_DIAG                                         /* (fm1.toml ble_diag = false: the counters not kept, no line) */
     {   /* the own stack's link layer: advertising events, connections taken / refused, packets good / CRC bad,
          * links closed : the last reason, the longest BLE interrupt (us) */
         q = b;
@@ -476,6 +477,7 @@ static int log_frame(const uint8_t *p, uint32_t n)
         *q = 0;
         log_line_send(b);
     }
+#endif
 #else
     {   /* the radio's tasks' deepest stacks and its heap's most, now (the "stacks" lines may have scrolled away) */
         extern int shim_stack_depth(int task);

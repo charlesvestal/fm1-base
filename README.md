@@ -70,6 +70,8 @@ overwritten works the same. The own stack is smaller and does more:
 - Bluetooth MIDI with a computer or a phone, as on JieLi's.
 - With `ble_pairing = true` it pairs and encrypts the link (LE legacy pairing), and keeps the bond in `OBJ_BLE`.
   Without it a pairing is refused; macOS and iOS connect anyway.
+- `ble_diag = false` leaves out the link layer's diagnostics (its counters and event rings: about 2.4 KB of RAM
+  and some code; the radio log's `BT ll` line). They are kept by default.
 - With `ble_central = true` the FM-1 connects to Bluetooth MIDI devices, as on JieLi's. A device that asks for a
   code gets one on the FM-1's screen (`plat_ble_passkey`).
 - With `bt_audio = true` it sends its sound to headphones and speakers (A2DP, SBC), beside Bluetooth MIDI on the
