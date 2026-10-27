@@ -61,6 +61,8 @@ if command -v node >/dev/null 2>&1; then
     run installer-boot node tests/installer_boot_test.mjs web/m-bootloader/fm1-uboot-1.2.fwsc
     run installer-ports node tests/installer_ports_test.mjs web/m-bootloader/fm1-uboot-1.2.fwsc
     run installer-res node tests/installer_res_test.mjs   # the resource region after an install (Updater.installRes)
+    # FM1_STOCK_FWSC=<path to M-VAVE's FM-1_015.fwsc> adds the stock file's cases (that file is not in this repository)
+    run checkufw node tests/checkufw_test.mjs web/m-bootloader/fm1-uboot-1.2.fwsc ${FM1_STOCK_FWSC:-}
 else
     echo "  skip installer-boot (no node)"
 fi
