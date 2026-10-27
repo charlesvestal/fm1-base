@@ -61,6 +61,9 @@ int plat_battery(void)                           /* (a level moves once the read
         batt_bars--;
     return batt_bars;
 }
+#ifdef APP_BATTERY_RAW
+int32_t plat_battery_raw(void) { return batt_raw; }
+#endif
 
 /* LEDs: the picture is built off-line and copied one byte per column (Felucca: clearing
  * and relighting would let the 10 kHz scan catch the dark gap and flicker) */

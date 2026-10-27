@@ -192,8 +192,14 @@ int32_t plat_enc(int role)
 uint32_t plat_master(void) { return mirror_in_master(master); }
 #ifdef __EMSCRIPTEN__
 int plat_battery(void) { return -1; }  /* the browser emulator has no battery: not read, so none is shown */
+#ifdef APP_BATTERY_RAW
+int32_t plat_battery_raw(void) { return 0; }     /* (not read, as a device's before its first reading) */
+#endif
 #else
 int plat_battery(void) { return 3; }   /* (the host simulator: full) */
+#ifdef APP_BATTERY_RAW
+int32_t plat_battery_raw(void) { return 620; }   /* (full: over the third bar's 591, as plat_battery's 3) */
+#endif
 #endif
 /* the lights ("leds"): bright, and dim (glow 0: none); PLAY's green counts as PLAY */
 void plat_lights(uint32_t b, uint32_t k, uint32_t db, uint32_t dk, int glow)
@@ -1175,6 +1181,10 @@ static int expect(const char *what, const char *val)
         got = p ? (int)*p : -1;
     } else if (!strcmp(what, "data_rc"))           /* the last data_erase / data_write: 0 done, -1 refused, -2 no bytes */
         got = data_cmd_rc;
+#ifdef APP_BATTERY_RAW
+    else if (!strcmp(what, "battery_raw"))          /* plat_battery_raw: the battery's reading (the host's: full) */
+        got = (int)plat_battery_raw();
+#endif
     else if (!strcmp(what, "clocks_out"))
         got = (int)clock_out_count;
     else if (!strcmp(what, "usb_play_gain"))        /* plat_usb_play_gain's level, 0..4096 */
