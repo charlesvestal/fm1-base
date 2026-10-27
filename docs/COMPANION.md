@@ -162,7 +162,7 @@ Measured on the FM-1's build (JieLi toolchain, AC79 reference SDK; tools/build.p
 | an app without `companion = true` | 0: its package byte for byte as before (the template's, sha256 checked) | 0 |
 | the capability query (the template with `companion = true`) | +456 B | +592 B of the pool (the answer's buffers), 0 of .data / .bss |
 | files, with `plat_file_*` (tests/companion_app: with its own hooks for three files) | +3,496 B | +32 B of .data / .bss, 0 of the pool |
-| parameters (tests/companion_app: with its own table of six and its hooks) | +2,652 B | +4 B a parameter in the pool (APP_PARAM_MAX), the app's labels its own |
+| parameters (tests/companion_app: with its own table of six and its hooks) | +2,136 B | +64 B of .data / .bss; +4 B a parameter in the pool (APP_PARAM_MAX; 8 is +32 B), the app's labels its own |
 
 
 ## Tools

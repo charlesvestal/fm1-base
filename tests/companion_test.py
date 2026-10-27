@@ -46,7 +46,7 @@ def test_hello(out):
     check("name and version", (h["name"], h["app_version"]) == ("CPTEST", "1.2"), (h["name"], h["app_version"]))
     check("the app's tags", h["extras"] == {"editor": "cptest/1", "site": "https://example.invalid/cptest"},
           h["extras"])
-    want = {"capability query", "files", "screen reader", "backup", "the app's own SysEx", "USB audio in", "USB audio out"}
+    want = {"capability query", "files", "parameters", "screen reader", "backup", "the app's own SysEx", "USB audio in", "USB audio out"}
     check("services", set(h["services"]) == want, h["services"])
     old = c.request(0x60)                         # a version 1 reader: the same fields up to the extras, the end unread
     (ident, name, ver, extras), tail = C.cstrings(old[13:], 4)
@@ -169,6 +169,100 @@ def test_tool(out):
     check("get of no such file", t("get", "nothing") == 6)
 
 
+def app_tempo(link, v):
+    """the app's own change (its panel would make it): TEMPO = v (cmd 4, v - 40)"""
+    link.send(bytes([0xF0, 0x7D, 0x43, 0x50, 0x04, v - 40, 0xF7]))
+
+
+def test_params(out):
+    link, c = serve(out)
+    h = c.hello()
+    check("parameters in the services, 6 of them", "parameters" in h["services"] and h["params"] == 6,
+          (h["services"], h["params"]))
+    check("the groups", c.groups() == ["GLOBAL", "SOUND", "INFO"], c.groups())
+    ps = c.params()
+    check("the descriptions", [(p["id"], p["name"], p["type"], p["group"], p["min"], p["max"], p["default"], p["unit"])
+                               for p in ps] ==
+          [(10, "TEMPO", "number", "GLOBAL", 40, 240, 120, "BPM"), (11, "SWING", "number", "GLOBAL", 0, 100, 0, "%"),
+           (20, "WAVE", "enum", "SOUND", 0, 3, 0, ""), (21, "CUTOFF", "number", "SOUND", 0, 127, 100, ""),
+           (30, "LOAD", "number", "INFO", 0, 100, 0, "%"), (40, "MODE", "enum", "SOUND", -20, 19, 0, "")], ps)
+    check("an enum's labels", ps[2]["labels"] == ["SAW", "SQR", "TRI", "SIN"], ps[2]["labels"])
+    check("40 labels, asked for in parts", ps[5]["labels"] == [f"MODE {k:02}" for k in range(40)], ps[5]["labels"])
+    check("read only flagged", ps[4]["flags"] == 1 and all(p["flags"] == 0 for p in ps if p["id"] != 30))
+    st, b = c.param_op(C.PQ_LABELS, struct.pack("<HH", 5, 0))
+    check("a labels answer holds 200 bytes of names at most", st == 0 and 0 < b[4] < 40 and len(b) - 5 <= 200,
+          (st, b[4], len(b)))
+    check("get", c.get([10, 11, 20, 21, 30, 40]) == {10: 120, 11: 0, 20: 0, 21: 100, 30: 37, 40: 0})
+    st, b = c.param_op(C.PQ_GET, struct.pack("<HH", 10, 99))
+    check("get with an id the app has not: the others, status 2", st == 2 and b[0] == 1, (st, b))
+    check("set", c.set(11, 33) == 33 and c.get([11]) == {11: 33})
+    check("set above max: clamped", c.set(10, 999) == 240)
+    check("set below min: clamped", c.set(40, -100) == -20)
+    check("set as the app takes it (CUTOFF even)", c.set(21, 77) == 76)
+    for pid, code in ((30, "failed"), (99, "nofile")):
+        try:
+            c.set(pid, 1)
+            got = None
+        except C.CompanionError as e:
+            got = e.code
+        check(f"set {pid}: refused", got == code, got)
+    # watching: the app's own changes come, the computer's own sets do not come back
+    check("watch on", c.watch(True))
+    app_tempo(link, 100)
+    link.run(120)
+    notes = c.poll()
+    check("the app changed TEMPO: told", (10, 100) in notes, notes)
+    c.set(11, 5)
+    link.run(120)
+    check("the computer's own set: not sent back", c.poll() == [], c.notes)
+    app_tempo(link, 101)
+    st, _ = c.file_op(C.OP_LIST, 0)                   # (a change arriving while another answer is awaited: kept)
+    link.run(120)
+    check("a change while waiting for another answer: kept", (10, 101) in c.poll())
+    for v in range(60, 80):                           # (more changes than a frame: all of them, in order)
+        app_tempo(link, v)
+        link.run(2)
+    link.run(200)
+    notes = c.poll()
+    check("many changes: the last value reaches the computer", notes and notes[-1] == (10, 79), notes[-3:])
+    check("watch off", not c.watch(False))
+    app_tempo(link, 90)
+    link.run(120)
+    check("off: nothing comes", c.poll() == [])
+    c.watch(True)
+    link.run(10500)                                    # (no request for 10.5 s: the watch lapses)
+    app_tempo(link, 91)
+    link.run(120)
+    check("10 s without a request: the watch lapsed", c.poll() == [])
+    link.close()
+
+
+def test_watch_script(out):
+    """a watch as the device's ring sees it (a script: "usb stall", "usb unplug" / "plug"): changes held once the ring
+    is full while the computer does not read, the last value sent once it does (never waiting), a new connection ends
+    the watch"""
+    w = INST.frame(C.PARAMS, bytes([C.PQ_WATCH, 1]))
+    def t(v):
+        return "sysex F0 7D 43 50 04 %02X F7" % (v - 40)
+
+    def changed(v):
+        return INST.frame(C.PARAMS, bytes([C.PQ_CHANGED, 0, 1]) + struct.pack("<Hi", 10, v)).hex(" ").upper()
+
+    lines = ["wait 300", f"sysex {w.hex(' ').upper()}", "sysex_out",
+             t(100), "wait 120", f"expect_sysex {changed(100)}", "sysex_out",
+             "usb stall", *[s for v in range(110, 140) for s in (t(v), "wait 60")], "echo --stalled--\n", "sysex_out",
+             "echo --held--\n", "usb read", "wait 200", f"expect_sysex {changed(139)}", "sysex_out",
+             "usb unplug", "usb plug", t(102), "wait 120", "echo --replugged--\n", "sysex_out"]
+    script = out / "watch.txt"
+    script.write_text("\n".join(lines) + "\n")
+    r = subprocess.run([str(HOST), str(script), str(out)], capture_output=True, text=True)
+    stalled = r.stdout.split("--stalled--")[-1].split("--held--")[0].count("sysex<") if "--held--" in r.stdout else -1
+    check("changes sent, the last one once the computer read again", r.returncode == 0, r.stdout[-600:])
+    check("the computer not reading: the ring full, changes held (never waiting)", 0 < stalled < 30, stalled)
+    check("a new USB connection: the watch ended", "sysex<" not in r.stdout.split("--replugged--")[-1],
+          r.stdout[-300:])
+
+
 def test_script(out):
     """the script's "sysex" (hsx_in): the same answer, as expect_sysex sees it"""
     link, c = serve(out)
@@ -196,6 +290,8 @@ def main():
     test_hello(out)
     test_files(out)
     test_tool(out)
+    test_params(out)
+    test_watch_script(out)
     test_script(out)
     print("companion: " + ("all ok" if not fails else f"{fails} FAILED"))
     return 1 if fails else 0

@@ -3,7 +3,9 @@
 /* The companion test app (tests/companion_test.py): an app with the companion services (fm1.toml companion = true,
  * device/companion.c), its own SysEx beside them (APP_SYSEX: frames F0 7D 43 50 cmd .. F7, "CP": 1 counted, 2 plays,
  * 3 stops; never answered), its own tags, a backup (only its format is the test's), and three files (APP_FILES): notes.txt (written while playing too) and
- * sample.raw kept by plat_file_* in the data area, info read only (made by the app). No sound, a black screen. */
+ * sample.raw kept by plat_file_* in the data area, info read only (made by the app); six parameters (APP_PARAMS) in
+ * three groups: TEMPO, SWING, WAVE (4 labels), CUTOFF, LOAD (read only), MODE (40 labels); SysEx cmd 4 v sets TEMPO
+ * as the panel would (v + 40). No sound, a black screen. */
 #pragma once
 #include <stdint.h>
 #include "plat.h"
@@ -45,6 +47,13 @@ int app_file_write(uint32_t i, uint32_t off, const uint8_t *src, uint32_t n);
 int app_file_commit(uint32_t i, uint32_t size, uint32_t crc);
 int app_file_delete(uint32_t i);
 int app_file_busy(void);
+
+#define APP_PARAMS
+#define APP_PARAM_MAX 8
+int app_param(uint32_t i, plat_param_t *p);
+const char *app_param_group(uint32_t g);
+int32_t app_param_get(uint32_t i);
+int32_t app_param_set(uint32_t i, int32_t v);
 
 /* the host simulator's checks: own (the app's SysEx frames it took), commits (files made current) */
 #define APP_HOST_EXPECT
