@@ -654,17 +654,20 @@ uint32_t plat_ticks24(void)                     /* the host's monotonic clock, a
 }
 
 #if FM1B_CPU2 && !defined(APP_HOST_CPU2)
-/* the second core, simulated: a job runs at once, in order (the same sums as the device's split) */
-static int cpu2_on;
+/* the second core, simulated: a job runs at once, in order (the same sums as the device's split); plat_core is 1 in it */
+static int cpu2_on, cpu2_in_job;
 int plat_cpu2_set(int on) { cpu2_on = on; return 0; }
 int plat_cpu2_on(void) { return cpu2_on; }
 int plat_cpu2_run(void (*fn)(uint32_t), uint32_t arg)
 {
     if (!cpu2_on)
         return 0;
+    cpu2_in_job = 1;
     fn(arg);
+    cpu2_in_job = 0;
     return 1;
 }
+uint32_t plat_core(void) { return (uint32_t)cpu2_in_job; }
 int plat_cpu2_wait(void) { return 0; }
 void plat_cpu2_sync(void) {}
 int plat_cpu2_busy(void) { return 0; }
@@ -672,6 +675,8 @@ int plat_cpu2_gave_up(void) { return 0; }
 uint32_t plat_cpu2_bad(void) { return 0; }
 int plat_cpu2_barred(void) { return 0; }
 uint32_t plat_cpu2_stack(void) { return 0; }
+#elif !defined(APP_HOST_CPU2)
+uint32_t plat_core(void) { return 0; }   /* (one core) */
 #endif
 
 /* -------------------------------------------------------------- app --- */
