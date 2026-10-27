@@ -271,6 +271,11 @@ int plat_store_room(void);
 
 /* audio load in % of the render budget, and xruns since boot (device: from the ISR) */
 uint32_t plat_cpu_pct(void);
+uint32_t plat_cpu_khz(void);           /* the CPU's clock, kHz: 360000 when its registers hold the stock set-up (M-VAVE's
+                                        * 360 MHz, which the start sets whichever boot loader ran: fm1_clock.h), 0 when
+                                        * not (unknown: the start could not set it) and on the host. For an app that
+                                        * turns the render's microseconds into instructions (a CPU guard's cost model);
+                                        * built for an app with APP_CPU_KHZ (below) */
 uint32_t plat_xruns(void);
 
 /* a free-running count of PLAT_TICKS_PER_US ticks a microsecond, for timing spans shorter than plat_ms can: a part of
@@ -334,6 +339,7 @@ uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B) has gone, 
  *   APP_SPLASH      void app_splash(void)         the first screen at boot, instead of the name
  *   APP_GAIN(m)     the render's gain from MASTER's position m (0..4096; default the square, m * m >> 12)
  *   APP_BATTERY_RAW (no function) plat_battery_raw is built (the battery's reading, for an app's own volts)
+ *   APP_CPU_KHZ     (no function) plat_cpu_khz is built (the CPU's clock)
  *   APP_QUIET       void app_quiet(int32_t *lr, uint32_t n)   the render while the flash must not be read (the
  *                   radio's first second, FM1B_BLE): keep time without sound (default: silence)
  *   APP_KEY_SENSE   void app_key_sample(uint32_t key, uint32_t v, uint32_t ticks, int driven) (rows PA7 / PA8),
