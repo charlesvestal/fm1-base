@@ -21,6 +21,9 @@
 #define BLE_CENTRAL 1
 #endif
 #include "ble_stack.c"
+#if FM1B_BLE_MIDI_TIME
+#include "ble_time.c"
+#endif
 #if BLE_DIAG
 #include "ble_diag.c"
 #endif
@@ -76,7 +79,12 @@ static void own_addr(uint8_t a[6])
 static struct { uint32_t pkt; uint16_t ms; } own_out[OQ];
 static volatile uint32_t oo_w, oo_r;
 #define IQ 64u                                    /* in: the BLE interrupts write, the main loop reads */
+#if FM1B_BLE_MIDI_TIME
+static struct { uint32_t pkt, t24; } own_in[IQ];   /* t24: the time it was sent (ble_in_time), plat_ticks24's */
+static struct ble_in_clock own_clk;
+#else
 static struct { uint32_t pkt; uint16_t ts; } own_in[IQ];
+#endif
 static volatile uint32_t oi_w, oi_r, oi_lost;
 static volatile uint8_t own_role;                 /* 0 none, 1 a computer connected to us, 2 we to a device */
 static volatile uint32_t own_events;              /* ble_app_state calls (the main loop logs what changed) */
@@ -96,13 +104,19 @@ BLE_API void ble_app_midi_pop(void)
 }
 BLE_API void ble_app_midi_in(uint32_t pkt, uint16_t ts, uint16_t last_ts)
 {
+#if !FM1B_BLE_MIDI_TIME
     (void)last_ts;
+#endif
     if (oi_w - oi_r >= IQ) {
         oi_lost++;
         return;
     }
     own_in[oi_w % IQ].pkt = own_role == 2u ? (pkt & ~0xF0u) | 0x10u : pkt & ~0xF0u;   /* a device's: cable 1 */
+#if FM1B_BLE_MIDI_TIME
+    own_in[oi_w % IQ].t24 = ble_in_time(&own_clk, fm1_ticks(), 1000u * FM1_TICKS_PER_US, ts, last_ts);
+#else
     own_in[oi_w % IQ].ts = ts;
+#endif
     RING_PUBLISH();
     oi_w++;
 }
@@ -307,7 +321,11 @@ static void ble_poll(void)
     }
 #endif
     while (oi_r != oi_w) {                        /* MIDI in, to radio.c's rings (and its clock smoothing) */
+#if FM1B_BLE_MIDI_TIME
+        ble_midi_receive_at(own_in[oi_r % IQ].pkt, own_in[oi_r % IQ].t24);
+#else
         ble_midi_receive(own_in[oi_r % IQ].pkt, own_in[oi_r % IQ].ts);
+#endif
         RING_PUBLISH();
         oi_r++;
     }

@@ -740,6 +740,7 @@ void plat_disk_mode(const plat_disk_t *d)
 }
 int plat_disk_poll(void) { return host_disk ? PLAT_DISK_WAITING : PLAT_DISK_OFF; }
 uint32_t plat_disk_idle_ms(void) { return 0; }
+uint32_t plat_midi_in_t24(void) { return plat_ticks24(); }   /* (no Bluetooth timestamps here: now) */
 uint32_t plat_ticks24(void)                     /* the host's monotonic clock, at the device's rate */
 {
     struct timespec t;

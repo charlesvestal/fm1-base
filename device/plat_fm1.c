@@ -295,6 +295,17 @@ uint32_t plat_midi_out_room(uint32_t to)
 uint32_t plat_midi_out_link(void) { return midi_out_link(); }
 static uint32_t midi_in_from;                     /* plat_midi_in_from: the last one's link, as an out */
 uint32_t plat_midi_in_from(void) { return midi_in_from; }
+#if FM1B_BLE_MIDI_TIME
+static uint8_t midi_in_timed;                     /* the last one is Bluetooth's: ble_in_t_last is its time sent */
+#endif
+uint32_t plat_midi_in_t24(void)
+{
+#if FM1B_BLE_MIDI_TIME
+    if (midi_in_timed)
+        return ble_in_t_last;
+#endif
+    return fm1_ticks();
+}
 int plat_midi_in(uint32_t *pkt, int *port)
 {
     int from;
@@ -310,6 +321,9 @@ int plat_midi_in(uint32_t *pkt, int *port)
         from = PORT_BLE;
     else
         return 0;
+#if FM1B_BLE_MIDI_TIME
+    midi_in_timed = (uint8_t)(from == PORT_BLE);
+#endif
     if (port)
         *port = from;
     midi_counted(from, 0, *pkt);
