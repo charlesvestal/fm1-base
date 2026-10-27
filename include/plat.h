@@ -327,6 +327,37 @@ int plat_store_room(void);
  * data area (0x97000..0xDFFFF) or Felucca's settings sector pair at 0xFC000. An object's number is written in its
  * record, so an app keeps its numbering from one release to the next. */
 
+/* The companion's files (fm1.toml companion = true, app.h APP_FILES: docs/COMPANION.md): what app_file says of file i.
+ * kind PLAT_FK_*, flags PLAT_FF_* (PLAYING: written and deleted while the app is busy too); size its bytes now (0:
+ * empty), room the most it takes; name unique among the app's files (31 characters at most) */
+enum { PLAT_FK_OTHER, PLAT_FK_PROJECT, PLAT_FK_PRESET, PLAT_FK_SAMPLE, PLAT_FK_BANK, PLAT_FK_PATTERN, PLAT_FK_SETTINGS,
+       PLAT_FK_TEXT, PLAT_FK_LOG };
+#define PLAT_FF_READ 1u
+#define PLAT_FF_WRITE 2u
+#define PLAT_FF_DELETE 4u
+#define PLAT_FF_PLAYING 8u
+typedef struct {
+    const char *name;
+    uint8_t kind, flags;
+    uint32_t size, room;
+} plat_file_info_t;
+/* A file kept in the data area (plat_data's windows) as two copies, A at a and B at b, n bytes each (whole 4 KiB
+ * sectors): the current one is the newer whose head (its first PLAT_FILE_HEAD bytes: the size, the data's CRC-32, a
+ * sequence number) is whole; a write goes to the other, its sectors erased as the data reaches them, its head written
+ * last after the data was read back and checked: a power cut leaves the old one current. room n - PLAT_FILE_HEAD. One
+ * write at a time (begin .. commit); main loop only (plat_data_*'s rules: the sound stops for each erase) */
+#define PLAT_FILE_HEAD 32u
+typedef struct {
+    uint32_t a, b, n;
+} plat_file_t;
+int plat_file_size(const plat_file_t *f);                      /* the current one's bytes; -1 none */
+const uint8_t *plat_file_data(const plat_file_t *f);           /* read in place; 0 none */
+int plat_file_read(const plat_file_t *f, uint32_t off, void *dst, uint32_t n);   /* 0 = read */
+int plat_file_begin(const plat_file_t *f, uint32_t size);     /* a new one of size bytes: 0 = ready */
+int plat_file_write(const plat_file_t *f, uint32_t off, const void *src, uint32_t n);   /* in order, src in RAM */
+int plat_file_commit(const plat_file_t *f, uint32_t size, uint32_t crc);   /* checked, current: 0 */
+int plat_file_delete(const plat_file_t *f);                    /* 0 = none now */
+
 /* audio load in % of the render budget, and xruns since boot (device: from the ISR) */
 uint32_t plat_cpu_pct(void);
 uint32_t plat_cpu_khz(void);           /* the CPU's clock, kHz: 360000 when its registers hold the stock set-up (M-VAVE's
@@ -460,4 +491,10 @@ const struct plat_cache_ram *plat_cache_ram(void);
  *
  * Companion services over USB (fm1.toml companion = true: FM1B_COMPANION 1, device/companion.c; docs/COMPANION.md,
  * tools/fm1_companion.py): a computer asks what the firmware is and has (the platform services built, APP_NAME,
- * APP_VERSION, the backup's magic, version and file extension). The app may add its own tags for its own pages: APP_COMPANION_EXTRAS "key=value;..." */
+ * APP_VERSION, the backup's magic, version and file extension). The app may add its own tags for its own pages: APP_COMPANION_EXTRAS "key=value;...".
+ * Its files (APP_FILES): int app_file(i, plat_file_info_t *f) (file i: 0 = there, -1 past the last), app_file_read(i,
+ * off, dst, n), app_file_begin(i, size), app_file_write(i, off, src, n) (in order), app_file_commit(i, size, crc) (all
+ * of it came, its CRC-32 checked: make it current), app_file_delete(i) (0 = done each), app_file_busy() (1: no write or
+ * delete now, playing). The name app_file gives stays valid until its next call. APP_FILE_COUNT (optional): uint32_t
+ * app_file_count(void), how many files there are, for an app whose app_file is costly (each request asks it once
+ * then, not once a file). plat_file_* (above) keeps a file in the data area for an app that has nowhere else */

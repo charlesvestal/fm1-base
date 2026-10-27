@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Henri David */
 /* The companion test app: see app.h */
-static uint32_t cp_own;
+static uint32_t cp_own, cp_commits;
+static uint8_t playing;
 
 void app_init(void) {}
 void app_render(int32_t *lr, uint32_t n, uint32_t master_q12)
@@ -23,17 +24,69 @@ void app_backup_restored(void) {}
 
 int app_sysex(const uint8_t *p, uint32_t n)
 {
-    if (n < 3u || p[0] != 0x7Du || p[1] != 0x43u || p[2] != 0x50u)
+    if (n < 4u || p[0] != 0x7Du || p[1] != 0x43u || p[2] != 0x50u)
         return 0;                                    /* (not the app's: the platform's, the companion's) */
     cp_own++;
+    if (p[3] == 2u || p[3] == 3u)
+        playing = p[3] == 2u;
     return 1;
 }
+
+/* the files: two in the data area (A / B copies), one the app makes */
+static const plat_file_t NOTES = {0x97000u, 0x98000u, 0x1000u}, SAMPLE = {0x99000u, 0xA9000u, 16u * 0x1000u};
+#define INFO_LEN 300u
+static const plat_file_t *app_pf(uint32_t i) { return i == 0 ? &NOTES : i == 1 ? &SAMPLE : 0; }
+int app_file(uint32_t i, plat_file_info_t *f)
+{
+    const plat_file_t *pf = app_pf(i);
+    int n;
+    if (i > 2u)
+        return -1;
+    if (i == 2u) {
+        f->name = "info", f->kind = PLAT_FK_SETTINGS, f->flags = PLAT_FF_READ, f->size = f->room = INFO_LEN;
+        return 0;
+    }
+    n = plat_file_size(pf);
+    f->name = i ? "sample.raw" : "notes.txt";
+    f->kind = i ? PLAT_FK_SAMPLE : PLAT_FK_TEXT;
+    f->flags = PLAT_FF_READ | PLAT_FF_WRITE | PLAT_FF_DELETE | (i ? 0u : PLAT_FF_PLAYING);
+    f->size = n < 0 ? 0u : (uint32_t)n;
+    f->room = pf->n - PLAT_FILE_HEAD;
+    return 0;
+}
+int app_file_read(uint32_t i, uint32_t off, uint8_t *dst, uint32_t n)
+{
+    uint32_t k;
+    if (i == 2u) {                                   /* (the app's own: byte k is k * 7 + 3) */
+        if (off > INFO_LEN || n > INFO_LEN - off)
+            return -1;
+        for (k = 0; k < n; k++)
+            dst[k] = (uint8_t)((off + k) * 7u + 3u);
+        return 0;
+    }
+    return app_pf(i) ? plat_file_read(app_pf(i), off, dst, n) : -1;
+}
+int app_file_begin(uint32_t i, uint32_t size) { return app_pf(i) ? plat_file_begin(app_pf(i), size) : -1; }
+int app_file_write(uint32_t i, uint32_t off, const uint8_t *src, uint32_t n)
+{
+    return app_pf(i) ? plat_file_write(app_pf(i), off, src, n) : -1;
+}
+int app_file_commit(uint32_t i, uint32_t size, uint32_t crc)
+{
+    int rc = app_pf(i) ? plat_file_commit(app_pf(i), size, crc) : -1;
+    cp_commits += rc == 0;
+    return rc;
+}
+int app_file_delete(uint32_t i) { return app_pf(i) ? plat_file_delete(app_pf(i)) : -1; }
+int app_file_busy(void) { return playing; }
 
 #ifdef PLAT_HOST
 int app_expect(const char *what, int *got)
 {
     if (!strcmp(what, "own"))
         *got = (int)cp_own;
+    else if (!strcmp(what, "commits"))
+        *got = (int)cp_commits;
     else
         return 0;
     return 1;

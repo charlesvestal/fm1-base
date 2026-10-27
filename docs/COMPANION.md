@@ -129,6 +129,8 @@ int app_file_write(uint32_t i, uint32_t off, const uint8_t *src, uint32_t n);   
 int app_file_commit(uint32_t i, uint32_t size, uint32_t crc);   /* all of it came, CRC-32 checked: make it current */
 int app_file_delete(uint32_t i);                   /* 0 = gone */
 int app_file_busy(void);                           /* 1: no write or delete now (playing) */
+#define APP_FILE_COUNT                             /* optional: uint32_t app_file_count(void), the files' number, for an
+                                                      app whose app_file is costly (the list asks it once, not a file each) */
 
 #define APP_PARAMS                                 /* parameters: */
 #define APP_PARAM_MAX 64                           /* the most there are (watching keeps a value each) */
@@ -159,7 +161,7 @@ Measured on the FM-1's build (JieLi toolchain, AC79 reference SDK; tools/build.p
 | --- | --- | --- |
 | an app without `companion = true` | 0: its package byte for byte as before (the template's, sha256 checked) | 0 |
 | the capability query (the template with `companion = true`) | +456 B | +592 B of the pool (the answer's buffers), 0 of .data / .bss |
-| files, with `plat_file_*` (tests/companion_app: with its own hooks for three files) | +3,584 B | +32 B |
+| files, with `plat_file_*` (tests/companion_app: with its own hooks for three files) | +3,496 B | +32 B of .data / .bss, 0 of the pool |
 | parameters (tests/companion_app: with its own table of six and its hooks) | +2,652 B | +4 B a parameter in the pool (APP_PARAM_MAX), the app's labels its own |
 
 
