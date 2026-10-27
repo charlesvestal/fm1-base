@@ -183,5 +183,10 @@ run sysex-app sh -c "$PY tools/build.py tests/sysex_app --host && \
 # an app with APP_BLE_PEERS (its own list: the scan's reports, plat_ble_connect_peer) in the host simulator
 run peers-app sh -c "$PY tools/build.py tests/peers_app --host && \
     tests/peers_app/build/host/peertest_host tests/peers_app/tests/peers.txt tests/peers_app/build/host"
+# the fourth window on request (xdata2 = true, FM1B_XDATA2): the template's host build with it (kept apart, the plain
+# build put back after), the window the app's, the store's sectors in it refused (tests/data_xdata2.txt)
+run host-xdata2 sh -c "FM1B_XDATA2=1 $PY tools/build.py template --host >/dev/null && \
+    cp template/build/host/template_host $OUT/template_host_xdata2 && $PY tools/build.py template --host >/dev/null && \
+    $OUT/template_host_xdata2 tests/data_xdata2.txt template/build/host"
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL
