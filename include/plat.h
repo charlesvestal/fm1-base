@@ -328,7 +328,7 @@ int plat_cpu2_gave_up(void);           /* why it is off: 0 no, 1 it misread a jo
                                         * faulted, 5 it did not answer at its start */
 uint32_t plat_cpu2_bad(void);          /* the jobs it misread */
 int plat_cpu2_barred(void);            /* 1: one core until power-off (given up, or the first core crashed beside it) */
-uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B) has gone, in bytes */
+uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B; fm1.toml cpu2_stack) has gone, in bytes */
 
 /* the app's optional hooks (app.h defines the macro when it has the function):
  *   APP_TICK        void app_tick(void)           1 kHz, in the timer interrupt (a clock, a sequencer)
