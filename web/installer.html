@@ -149,7 +149,7 @@ const TEXT = {
     stock2: "ダウンロードしたファイルを選ぶ:",
     stock3: "FM-1 を USB で接続し、下のボタンを押す。",
     stockinstall: "純正ファームウェアを書き込む",
-    stockok: "M-VAVE の FM-1 ファームウェアです。ボタンを押してください。",
+    stockok: "M-VAVE の FM-1 ファームウェアです。チェックサムが一致しました。ボタンを押してください。",
     stockbad: "これは M-VAVE の FM-1 ファームウェアのファイルではありません。上のリンクのファイルを選んでください。",
     stockdone: "完了。FM-1 は純正ファームウェアで起動しました。",
     nomidi: "このブラウザでは使えません。Chrome か Edge で開いてください。", loadfail: "読み込めませんでした: ",
@@ -184,6 +184,8 @@ const TEXT = {
     bootdone: "完了しました（m-bootloader 付き）",
     bootrefused: "{{NAME}} はインストールされましたが、m-bootloader は書き込めませんでした。ほかは何も変わっていません。",
     stockdamaged: "このファイルは壊れています。もう一度ダウンロードしてください。",
+    stockunknown: "M-VAVE の FM-1 ファームウェアです（このページにチェックサムのないバージョン）。書き込む前に FM-1 がもう一度確認します。ボタンを押してください。",
+    stockmodified: "このファイルは M-VAVE のものではありません。チェックサムを知っているバージョンだと名乗っていますが、チェックサムが一致しません。上のリンクからもう一度ダウンロードしてください。",
     pickh: "FM-1 が別の名前になっていませんか？",
     pickwhy: "パソコンが FM-1 のポートを別の機器の名前で表示することがあります（Mac は USB の差し込み口ごとに名前を覚えます）。このページが自動で問い合わせるのは、FM-1 によくある名前のポートだけです。下の一覧にお使いの FM-1 があれば、「試す」を押してください。",
     tryport: "試す", pickwait: "問い合わせ中…", pickempty: "ほかの MIDI ポートはありません。",
@@ -214,7 +216,7 @@ const TEXT = {
     stock2: "Choose the file you downloaded:",
     stock3: "Connect the FM-1 by USB and press the button below.",
     stockinstall: "Install the stock firmware",
-    stockok: "That is M-VAVE's FM-1 firmware. Press the button to install it.",
+    stockok: "That is M-VAVE's FM-1 firmware, its checksum matches. Press the button to install it.",
     stockbad: "That is not M-VAVE's FM-1 firmware. Choose the file from the link above.",
     stockdone: "Done. The FM-1 has restarted with its original firmware.",
     nomidi: "This browser cannot do it. Open the page in Chrome or Edge.", loadfail: "Could not load: ",
@@ -249,6 +251,8 @@ const TEXT = {
     bootdone: "Done, with m-bootloader",
     bootrefused: "{{NAME}} is installed, but m-bootloader could not be: nothing else was changed.",
     stockdamaged: "That file is damaged. Download it again.",
+    stockunknown: "That is M-VAVE's FM-1 firmware, a version this page has no checksum for. The FM-1 checks it again before writing. Press the button to install it.",
+    stockmodified: "That file is not M-VAVE's: it says it is a version whose checksum this page knows, and its checksum differs. Download it again from the link above.",
     pickh: "Is the FM-1 under another name?",
     pickwhy: "A computer can show an FM-1's port under another device's name (a Mac remembers names by USB socket). This page asks only the ports with an FM-1's usual names by itself. If your FM-1 is in this list, press Try on it.",
     tryport: "Try", pickwait: "Asking…", pickempty: "No other MIDI ports.",
@@ -268,7 +272,7 @@ let lang = "en";                                 /* English first; 日本語 is 
 const t = (k) => TEXT[lang][k];
 /* what happens goes to two regions: #status (polite) the steps and the progress, #alert a failure */
 const FAILS = new Set(["nomidi", "loadfail", "stopped", "error", "denied", "notfound", "model", "lost", "noloader",
-                       "noreturn", "mismatch", "badpkg", "stockbad", "bootrefused", "resfail", "foreign"]);
+                       "noreturn", "mismatch", "badpkg", "stockbad", "stockmodified", "bootrefused", "resfail", "foreign"]);
 let lastKey = null, lastArg = "", lastPct = null;
 const textOf = (k, arg, pct) => t(k) + arg + (pct == null ? "" : t("pct").replace("{n}", pct));
 function show() {
@@ -384,14 +388,17 @@ $("stockfile").addEventListener("change", async (e) => {
   if (!f) return;
   try {
     const raw = new Uint8Array(await f.arrayBuffer());
-    const hex = [...new Uint8Array(await crypto.subtle.digest("SHA-256", raw))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const hex = await sha256hex(raw);
     const product = productOf(raw);
     if (!IS_STOCK(product)) { sayK("stockbad"); return; }
     const img = logicalImage(raw);
     try { checkUfw(img); } catch (_) { sayK("stockdamaged"); return; }
+    /* a version whose checksum is known must match it; the others only pass checkUfw and the FM-1's own checks */
+    let known = false;
+    try { known = stockChecksum(product, raw.length, hex); } catch (_) { sayK("stockmodified"); return; }
     stock = { image: img, product, sha256: hex };
     $("stockgo").disabled = writing;
-    sayK("stockok");
+    sayK(known ? "stockok" : "stockunknown");
   } catch (err) { sayK("error", err && err.message); }
 });
 

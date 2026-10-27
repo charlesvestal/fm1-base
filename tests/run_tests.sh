@@ -73,6 +73,7 @@ if command -v node >/dev/null 2>&1; then
     run installer-hs node tests/installer_hs_test.mjs
     run installer-family-ports node tests/installer_family_ports_test.mjs
     run installer-foreign-loader node tests/installer_foreign_loader_test.mjs
+    run installer-stock node tests/installer_stock_test.mjs
 else
     echo "  skip installer-boot (no node)"
 fi
