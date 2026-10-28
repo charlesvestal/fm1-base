@@ -78,7 +78,39 @@ __attribute__((used, visibility("default"))) void web_reader(int on)
         ann_frame(BYE, sizeof BYE, now_ms);
 }
 
-__attribute__((used, visibility("default"))) void web_boot(void) { boot(); }
+#if FM1B_EMU_REBOOT
+/* the update mode (the part "reboot"): as device/main_fm1.c's enter_uboot shows it, the sound stopped and the screen
+ * black with the reason, until the page starts the app again. 1: the computer asked (UBOOT (USB)), 2: REC held at
+ * power-on (UPDATE MODE (REC)) */
+#include "sys_text.c"
+static uint8_t update_why;
+static void update_enter(uint32_t why)
+{
+    update_why = (uint8_t)why;
+    lcd_fill(0, 0, 240, 240, C_BLACK);
+    sys_box(0, 110, 240, SYS_S, why == 2u ? "UPDATE MODE (REC)" : "UBOOT (USB)", C_WHITE, 1);
+    web_down = 1;
+}
+/* the page asks for the update mode (1), as a computer's request does; web_update is 0 in a running app */
+__attribute__((used, visibility("default"))) void web_update_enter(uint32_t why) { update_enter(why == 2u ? 2u : 1u); }
+__attribute__((used, visibility("default"))) uint32_t web_update(void) { return update_why; }
+/* what a restart carries into the next start of the app: how many plat_restart calls there were (the part starts the
+ * wasm again when it counts one), the held buttons and MASTER, and whether a screen reader was listening */
+__attribute__((used, visibility("default"))) uint32_t web_restarts(void) { return restarts; }
+__attribute__((used, visibility("default"))) uint32_t web_buttons_get(void) { return held_btn; }
+__attribute__((used, visibility("default"))) uint32_t web_master_get(void) { return master; }
+__attribute__((used, visibility("default"))) uint32_t web_listening(void) { return sim_listen != 0; }
+#endif
+__attribute__((used, visibility("default"))) void web_boot(void)
+{
+#if FM1B_EMU_REBOOT
+    if (held_btn & (1u << B_REC)) {                 /* REC held at power-on: the chip's update mode (main_fm1.c) */
+        update_enter(2u);
+        return;
+    }
+#endif
+    boot();
+}
 __attribute__((used, visibility("default"))) void web_buttons(uint32_t m) { held_btn = m; }
 __attribute__((used, visibility("default"))) void web_keys(uint32_t m)
 {
