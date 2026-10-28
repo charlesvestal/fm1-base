@@ -76,6 +76,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              2: MIDI left out of the collection too (a test build: no USB MIDI on Linux)
   usb_iad = true             without the USB console, an interface association descriptor over the audio function, the
                              device then misc / IAD (felucca-bsp FELUCCA_UAC_IAD; the default: false); bcdDevice +2.00
+  usb_console = true         a USB serial console beside USB MIDI (FM1B_CDC: felucca-bsp's CDC-ACM function, device/
+                             console.c): the app's text over plat_console_* (plat.h); FM1B_CDC=0 / 1 in the
+                             environment over it
   usb_host = true            the USB port as a MIDI host when the app asks (FM1B_USB_HOST: felucca-bsp's
                              FELUCCA_USB_HOST, docs/USB_HOST.md; plat_usb_host in plat.h): a USB-MIDI controller or
                              synth, directly or behind one powered hub (the FM-1 gives no power). Boot is a device
@@ -738,6 +741,8 @@ def build_app():
     flags.append(f"-DFELUCCA_UAC_MIDI_LAST={int(midi_last)}")
     if CONF.get("usb_iad"):
         flags.append("-DFELUCCA_UAC_IAD=1")
+    if CONF.get("usb_console") and "FM1B_CDC" not in os.environ:
+        flags.append("-DFM1B_CDC=1")              # the USB serial console (device/console.c)
     for flag in ("FM1B_CDC", "FM1B_UAC", "FM1B_UAC_OUT", "FM1B_TRS"):
         v = os.environ.get(flag)    # unset: fm1.toml's, the app's (app.h) or the platform's default (device/unity.c)
         if v in ("0", "1"):

@@ -13,7 +13,8 @@
  *   APP_NAME "TEMPLATE"     on the splash, crash and safe-mode screens and for the screen reader
  *   APP_VERSION "DEV"       a release build passes its own (tools/build.py --release)
  *   APP_BLOCK 256           frames per audio half (5.8 ms at 44.1 kHz), the render's block
- *   FM1B_CDC 0              USB serial console (a second USB function)
+ *   FM1B_CDC 0              USB serial console (a second USB function; fm1.toml usb_console = true): the app's text over
+ *                           plat_console_* (console.c)
  *   FM1B_UAC 1              USB audio input: the master output, recordable over the cable at 44.1 kHz (checked on an
  *                           FM-1 2026-10-16: no lost frame); FM1B_UAC_48K 0 (48 kHz too: needs the resampler's filter)
  *   FM1B_UAC_DEEP 0         1: the USB audio input keeps a half more in hand, for renders that take most of
@@ -142,6 +143,7 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define FELUCCA_SYSEX_BYTE(b) app_sysex_byte(b)   /* the app's, every SysEx byte from USB (plat.h APP_SYSEX_BYTE) */
 #endif
 #include "usb.c"
+#include "console.c"              /* the USB serial console's bytes for the app (plat_console_*, FM1B_CDC) */
 #ifndef FM1B_TRS
 #define FM1B_TRS 1
 #endif

@@ -1149,9 +1149,6 @@ static void fm1_main(void)
         }
         if (usb.uboot_req)
             enter_uboot("UBOOT (USB)");
-#if FM1B_CDC
-        cdc_task();
-#endif
         if (fm1_ms - last_frame >= 16u) {           /* ~60 frames/s at most; input in between */
             last_frame = fm1_ms;
             fm1b_dbg.ui_frames++;
