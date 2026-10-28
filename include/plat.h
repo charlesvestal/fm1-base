@@ -159,6 +159,46 @@ void plat_ble_disconnect(void);
 int plat_ble_device(void);             /* BLE_DEV_*: READY is connected, MIDI both ways */
 int plat_ble_passkey(void);            /* a pairing with a device waits for its user to type this code (0..999999):
                                         * show it; -1: none (ble_stack = "own" only: an iPhone app asks for one) */
+/* The devices one by one, for an app that keeps a list of its own (remembered devices, their bonds: APP_BLE_PEERS in
+ * app.h; ble_stack = "own" only, else none of this does anything): every advertising report the scan hears goes to the
+ * app too (app_ble_scan_report, main loop; pdu: the advertising PDU, its 2-byte header, AdvA and data, n bytes; rssi:
+ * the radio's reading), plat_ble_connect_peer connects to one by its address with the bond the app kept, and the keys
+ * a pairing with it gave come to the app (app_ble_device_keys, main loop). The state is
+ * plat_ble_device's; the bytes are least significant first, as on the air. ble_central = 3: the central without pairing
+ * (no keys, no passkey; a device that asks for security fails with PLAT_BLE_CF_NEED_PAIR) */
+struct plat_ble_peer {
+    uint8_t addr[6], addr_rand;        /* its address as heard (addr_rand: TxAdd, a random one) */
+    uint8_t bonded;                    /* ltk / rand / ediv are its bond: the link is encrypted with them */
+    uint8_t sec;                       /* PLAT_BLE_PEER_* */
+    uint8_t ltk[16], rand[8];
+    uint16_t ediv;
+};
+#define PLAT_BLE_PEER_AUTH 1u          /* its bond is authenticated (a passkey pairing) */
+#define PLAT_BLE_PEER_MITM 2u          /* it needs an authenticated link: a pairing goes straight to the passkey */
+struct plat_ble_keys {
+    uint8_t has;                       /* PLAT_BLE_KEYS_* */
+    uint8_t ltk[16], rand[8];
+    uint16_t ediv;
+    uint8_t irk[16], id[6], id_rand;   /* its identity: behind a private address, plat_ble_rpa_resolve finds it */
+};
+#define PLAT_BLE_KEYS_LTK 1u           /* ltk / rand / ediv: the bond */
+#define PLAT_BLE_KEYS_ID 2u            /* irk / id / id_rand */
+#define PLAT_BLE_KEYS_AUTH 4u          /* the pairing was authenticated (a passkey) */
+enum { PLAT_BLE_CF_NONE, PLAT_BLE_CF_LOST, PLAT_BLE_CF_NO_MIDI, PLAT_BLE_CF_PAIRING, PLAT_BLE_CF_AUTH, PLAT_BLE_CF_GATT,
+       PLAT_BLE_CF_NEED_MITM, PLAT_BLE_CF_KEY, PLAT_BLE_CF_NEED_PAIR };   /* why a connection to a device ended: lost,
+                                        * no MIDI found, the pairing failed, the encryption refused, the GATT failed, it
+                                        * needs a passkey (connect again with PLAT_BLE_PEER_MITM, no unauthenticated
+                                        * bond), it refused our bond, it asked for security (ble_central = 3) */
+#define PLAT_BLE_DF_PAIRING 1u         /* plat_ble_device_flags: a pairing of ours runs on the link */
+#define PLAT_BLE_DF_PROMPTED 2u        /* one started on the last attempt's link (its user was asked) */
+#define PLAT_BLE_DF_MITM 4u            /* the last attempt's device needs an authenticated link (a passkey) */
+int plat_ble_connect_peer(const struct plat_ble_peer *p);   /* 0 = connecting (plat_ble_device), -1 not now */
+int plat_ble_device_fail(uint32_t *code);   /* why the last connection to a device ended (PLAT_BLE_CF_*); code: its
+                                        * code (the link layer's reason, the ATT error or the SMP reason) */
+uint32_t plat_ble_device_flags(void);  /* PLAT_BLE_DF_* */
+int plat_ble_rpa_resolve(const uint8_t irk[16], const uint8_t addr[6]);   /* 1: addr is a private address made from irk */
+void app_ble_scan_report(const uint8_t *pdu, uint32_t n, uint32_t rssi);
+void app_ble_device_keys(const struct plat_ble_keys *k);
 /* Bluetooth on or off, as the player asks: off ends every link, stops advertising and scanning (the radio quiet);
  * on starts it (or advertises again). Whether it starts at power-on: APP_BLE_AT_BOOT (app.h, e.g. a saved setting;
  * default 1) */
@@ -498,6 +538,8 @@ const struct plat_cache_ram *plat_cache_ram(void);
  *   APP_BOOT        void app_boot(void)           once, after the platform is up, before app_ui_init (a radio)
  *   APP_LOOP        void app_loop(void)           every pass of the main loop (a radio's tasks)
  *   APP_YIELD       void app_yield(void)          from plat_yield, inside long work
+ *   APP_BLE_PEERS   app_ble_scan_report, app_ble_device_keys   the devices one by one (plat_ble_connect_peer, above):
+ *                   each advertising report a scan hears, a pairing's keys
  *   APP_OVERLOAD    void app_overload(void)       the render took over 90 % of its time (shed voices)
  *   APP_SPLASH      void app_splash(void)         the first screen at boot, instead of the name
  *   APP_GAIN(m)     the render's gain from MASTER's position m (0..4096; default the square, m * m >> 12)

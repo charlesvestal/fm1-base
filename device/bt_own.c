@@ -443,5 +443,6 @@ int plat_ble_connect(int i) { (void)i; return -1; }
 void plat_ble_disconnect(void) {}
 int plat_ble_device(void) { return BLE_DEV_OFF; }
 int plat_ble_passkey(void) { return -1; }
+#include "ble_peers_none.c"
 #endif
 void plat_ble_start(void) { ble_start(); }

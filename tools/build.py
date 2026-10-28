@@ -57,7 +57,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   ble_trim = true            Bluetooth as a MIDI peripheral only: JieLi's central, classic and test code cut (flash and
                              RAM: Melodee's measure ~18 KB and ~4 KB); not with ble_central
   ble_no_pairing = true      with ble_trim: no pairing or encryption either (~19 KB more flash; iOS and macOS connect)
-  ble_central = true         and the FM-1 connects to Bluetooth MIDI devices too (FM1B_BLE_CENTRAL), beside a computer
+  ble_central = true         and the FM-1 connects to Bluetooth MIDI devices too (FM1B_BLE_CENTRAL), beside a computer;
+                             with ble_stack = "own", 3: without pairing (no bonds, no passkey: smaller)
   usb_audio_in = true        the FM-1 recordable over USB (FM1B_UAC; the default: true)
   usb_audio_out = true       a computer plays through the FM-1 over USB (FM1B_UAC_OUT; the default: true)
   usb_audio_first = true     the USB audio streaming interfaces listed first in the audio control collection
@@ -692,6 +693,8 @@ def build_app():
         flags += ["-DFM1B_BLE=1", "-DFM1B_BLE_OWN=1", *inc(SRC / "bt" / "ble", SRC / "bt" / "br")]
         if CONF.get("ble_central"):
             flags.append("-DFM1B_BLE_CENTRAL=1")
+            if CONF.get("ble_central") == 3:      # the central without pairing (bt/ble/ble_cfg.h BLE_CENTRAL 3)
+                flags.append("-DBLE_CENTRAL=3")
         if CONF.get("bt_audio"):                   # Bluetooth audio out (A2DP source, bt/br)
             flags.append("-DFM1B_BT_AUDIO=1")
             if CONF.get("bt_log"):                 # its step-by-step lines on the radio's log (fm1_remote.py log)

@@ -217,5 +217,8 @@ run backup-app sh -c "$PY tools/build.py tests/backup_app --host && mkdir -p tes
     tests/backup_app/build/host/bktest_host tests/backup_app/tests/backup.txt tests/backup_app/build/out"
 # the companion services (device/companion.c) in the host simulator, through tools/fm1_companion.py: tests/companion_app
 run companion "$PY" tests/companion_test.py $OUT/companion
+# an app with APP_BLE_PEERS (its own list: the scan's reports, plat_ble_connect_peer) in the host simulator
+run peers-app sh -c "$PY tools/build.py tests/peers_app --host && \
+    tests/peers_app/build/host/peertest_host tests/peers_app/tests/peers.txt tests/peers_app/build/host"
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL
