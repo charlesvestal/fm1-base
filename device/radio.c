@@ -812,6 +812,7 @@ void plat_ble_disconnect(void)
 }
 int plat_ble_device(void) { return ble_state == BLE_READY ? ble_midi_central_state() : BLE_DEV_OFF; }
 int plat_ble_passkey(void) { return -1; }
+#include "ble_peers_none.c"
 #else
 void plat_ble_scan(int on) { (void)on; }
 int plat_ble_found(int i, char *name, int *rssi) { (void)i, (void)name, (void)rssi; return 0; }
@@ -819,6 +820,7 @@ int plat_ble_connect(int i) { (void)i; return -1; }
 void plat_ble_disconnect(void) {}
 int plat_ble_device(void) { return BLE_DEV_OFF; }
 int plat_ble_passkey(void) { return -1; }
+#include "ble_peers_none.c"
 #endif
 void plat_ble_start(void) { ble_start(); }
 #endif                                            /* (FM1B_BLE_OWN) */

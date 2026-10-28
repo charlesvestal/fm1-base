@@ -352,6 +352,7 @@ void plat_ble_start(void)
 /* Bluetooth MIDI devices (FM1B_BLE_CENTRAL): one stand-in, "BLE MIDI", found half a second into a scan;
  * connecting takes 0.3 s; "ble device off" takes it away */
 static uint32_t bdev_t;
+static void bdev_report(void);
 static void ble_tick(void)
 {
     if (ble_state == BLE_STARTING && now_ms - ble_t0 >= 1000u) {
@@ -362,6 +363,7 @@ static void ble_tick(void)
         bdev_state = BLE_DEV_READY;
         ble_say("central: MIDI ready");
     }
+    bdev_report();
 }
 void plat_ble_scan(int on)
 {
@@ -400,6 +402,47 @@ void plat_ble_disconnect(void)
 }
 int plat_ble_device(void) { return bdev_state; }
 int plat_ble_passkey(void) { return -1; }
+/* the devices one by one (plat.h plat_ble_connect_peer): the stand-in's advertising report (ADV_IND, a random static
+ * address, the BLE-MIDI service, its name) to the app every 100 ms of a scan once it is found; connecting to its
+ * address as plat_ble_connect does; no pairing, so no keys */
+#ifdef APP_BLE_PEERS
+static const uint8_t BDEV_ADDR[6] = {0x01, 0x02, 0x03, 0x04, 0x05, 0xC6};
+static uint32_t bdev_said;
+static void bdev_report(void)
+{
+    static const uint8_t ad[] = {2, 0x01, 0x06,
+                                 17, 0x07, 0x00, 0xC7, 0xC4, 0x4E, 0xE3, 0x6C, 0x51, 0xA7, 0x33, 0x4B, 0xE8, 0xED, 0x5A, 0x0E,
+                                 0xB8, 0x03,
+                                 9, 0x09, 'B', 'L', 'E', ' ', 'M', 'I', 'D', 'I'};
+    uint8_t pdu[2 + 6 + sizeof ad];
+    if (bdev_state != BLE_DEV_SCANNING || now_ms - bdev_t < 500u || now_ms - bdev_said < 100u)
+        return;
+    bdev_said = now_ms;
+    pdu[0] = 0x40;                              /* (ADV_IND, TxAdd: random) */
+    pdu[1] = (uint8_t)(6u + sizeof ad);
+    memcpy(pdu + 2, BDEV_ADDR, 6);
+    memcpy(pdu + 8, ad, sizeof ad);
+    app_ble_scan_report(pdu, sizeof pdu, 60u);
+}
+int plat_ble_connect_peer(const struct plat_ble_peer *p)
+{
+    if (!FM1B_BLE_CENTRAL || ble_state != BLE_READY || bdev_state >= BLE_DEV_CONNECTING || memcmp(p->addr, BDEV_ADDR, 6))
+        return -1;
+    bdev_state = BLE_DEV_CONNECTING;
+    bdev_t = now_ms;
+    return 0;
+}
+int plat_ble_device_fail(uint32_t *code)
+{
+    if (code)
+        *code = 0;
+    return PLAT_BLE_CF_NONE;
+}
+uint32_t plat_ble_device_flags(void) { return 0; }
+int plat_ble_rpa_resolve(const uint8_t irk[16], const uint8_t addr[6]) { (void)irk, (void)addr; return 0; }
+#else
+static void bdev_report(void) {}
+#endif
 void plat_ble_enable(int on)
 {
     if (!on) {
