@@ -1273,7 +1273,8 @@ def emu_parts_out(emu, parts):
         + "".join(f'import * as {p} from "./parts/{p}.js";\n' for p in page)
         + ('import * as own from "./app_own.js";\n' if "app.js" in own else "const own = {};\n")
         + f"export const {{ attach, message }} = compose({{ {', '.join(page)} }}, own, "
-        + f"{{ id: {json.dumps(NAME)}, name: {json.dumps(CONF.get('name', NAME))} }});\n")
+        + f"{{ id: {json.dumps(NAME)}, name: {json.dumps(CONF.get('name', NAME))}, "
+        + f"backupExt: {json.dumps(CONF.get('backup_ext', 'bak'))} }});\n")
     (emu / "app_worklet.js").write_text(
         "// made by tools/build.py: the app's own part of the worklet, then the emulator's parts (fm1.toml emu)\n"
         + ('import "./app_own_worklet.js";\n' if "app_worklet.js" in own else "")
