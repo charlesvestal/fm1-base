@@ -47,7 +47,10 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   font_trim = true           each glyph stored as its lit box only (tools/gen_font.py FM1_FONT_TRIM): the same
                              pixels drawn, the fonts about 55 % smaller in flash
   font_pack = true           (with font_trim) each glyph's alphas Huffman-coded too (FM1_FONT_PACK), decoded as
-                             device/gfx.c draws: the same pixels, Barlow's faces about a third smaller again
+                             device/gfx.c draws: the same pixels, Barlow's faces about a third smaller again; text
+                             then costs about 3x the instructions, which app.h's APP_FONT_CACHE gives back: that many
+                             bytes of RAM (e.g. 6144u, at least the header's FONT_BOX_MAX) keep the glyphs drawn lately
+                             decoded, APP_FONT_CACHE_BITS (default 7) the log2 of its slots, 6 B each
   ble_stack_kb = 6           the Bluetooth tasks' stacks, KB each (default 8: three of them, in the pool; radio.c
                              logs each one's deepest, "stacks", 10 s after Bluetooth is ready and as they grow)
   ble_heap_kb = 16           its heap, KB (default 24, in RAM; the same log line's "heap": its most ever)

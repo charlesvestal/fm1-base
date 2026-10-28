@@ -126,6 +126,19 @@ run font-pack sh -c "mkdir -p $OUT/font/full $OUT/font/pack && \
     $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/full -o $OUT/font/full_test tests/font_trim_test.c && \
     $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/pack -o $OUT/font/pack_test tests/font_trim_test.c && \
     $OUT/font/full_test $OUT/font/full.bin && $OUT/font/pack_test $OUT/font/pack.bin && cmp $OUT/font/full.bin $OUT/font/pack.bin"
+# the packed fonts drawn through the decoded-glyph cache (app.h APP_FONT_CACHE, device/gfx.c font_cached) too: a cache
+# that forgets all the time (the largest glyph's bytes, 16 slots) and a roomy one
+run font-cache sh -c "mkdir -p $OUT/font/full $OUT/font/pack && \
+    FM1_FONT_FULL='T XS S B M L' $PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 FM1_FONT_PACK=1 $PY tools/gen_font.py $OUT/font/pack/felucca_font.h && \
+    $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/full -o $OUT/font/full_test tests/font_trim_test.c && \
+    $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -DAPP_FONT_CACHE=FONT_BOX_MAX -DAPP_FONT_CACHE_BITS=4 \
+        -I$OUT/font/pack -o $OUT/font/cache_small_test tests/font_trim_test.c && \
+    $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -DAPP_FONT_CACHE=6144u -DAPP_FONT_CACHE_BITS=8 \
+        -I$OUT/font/pack -o $OUT/font/cache_test tests/font_trim_test.c && \
+    $OUT/font/full_test $OUT/font/full.bin && $OUT/font/cache_small_test $OUT/font/cache_small.bin && \
+    $OUT/font/cache_test $OUT/font/cache.bin && cmp $OUT/font/full.bin $OUT/font/cache_small.bin && \
+    cmp $OUT/font/full.bin $OUT/font/cache.bin"
 run template template/build/host/template_host template/tests/basic.txt template/build/host
 # the own Bluetooth stack (bt/, Optimist's: ble_stack = "own"): its link layer, host, pairing, BLE-MIDI, central, the
 # radio driver against a fake engine, FM-1 to FM-1, and BR/EDR (A2DP) pieces; UBSan, and ASan where its runtime runs

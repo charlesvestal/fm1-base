@@ -167,6 +167,45 @@ static uint32_t font_alpha(const uint8_t *t, const uint8_t *d, uint32_t *bit)
     }
     return 0;                                        /* (no code that long: not from gen_font.py) */
 }
+
+#if defined(APP_FONT_CACHE) && APP_FONT_CACHE
+/* APP_FONT_CACHE bytes (app.h): the packed glyphs drawn lately kept decoded, an alpha a byte, so a glyph drawn again
+ * (every frame's labels and digits) costs a read, not its Huffman decode again (about 3.5x fewer instructions a
+ * glyph). Slots by the glyph's data address (2^APP_FONT_CACHE_BITS, a glyph each: one taking another's slot decodes
+ * again); the bytes taken in turn, all forgotten when the next glyph does not fit. The same alphas, the same pixels */
+#define FONT_CACHED 1
+#ifndef APP_FONT_CACHE_BITS
+#define APP_FONT_CACHE_BITS 7                        /* 2^7 slots (app.h may give more) */
+#endif
+#define FONT_CACHE_SLOTS (1u << APP_FONT_CACHE_BITS)
+_Static_assert(APP_FONT_CACHE >= FONT_BOX_MAX, "APP_FONT_CACHE: at least the largest glyph's box (FONT_BOX_MAX)");
+static const uint8_t *fc_gd[FONT_CACHE_SLOTS];      /* a slot's glyph: its coded rows (0: none) */
+static uint16_t fc_at[FONT_CACHE_SLOTS];             /* its alphas in fc_px */
+static uint8_t fc_px[APP_FONT_CACHE];
+static uint32_t fc_used;
+
+/* the n alphas of the glyph whose coded rows are gd (face f), decoded */
+static const uint8_t *font_cached(const felucca_font_t *f, const uint8_t *gd, uint32_t n)
+{
+    uint32_t s = ((uint32_t)(uintptr_t)gd * 2654435761u) >> (32 - APP_FONT_CACHE_BITS), i, bit = 0, prev = 0;
+    uint8_t *p;
+    _Static_assert(APP_FONT_CACHE <= 65535u, "font_cached: 16 bits an offset");
+    if (fc_gd[s] == gd)
+        return fc_px + fc_at[s];
+    if (fc_used + n > APP_FONT_CACHE) {              /* full: all forgotten */
+        for (i = 0; i < FONT_CACHE_SLOTS; i++)
+            fc_gd[i] = 0;
+        fc_used = 0;
+    }
+    p = fc_px + fc_used;
+    for (i = 0; i < n; i++)
+        p[i] = (uint8_t)(prev = font_alpha(f->data + FONT_HUF_SZ * (prev == 0u ? 0u : prev == 15u ? 1u : 2u), gd, &bit));
+    fc_gd[s] = gd;
+    fc_at[s] = (uint16_t)fc_used;
+    fc_used += n;
+    return p;
+}
+#endif
 #endif
 
 /* text in colour c, each pixel's coverage blended over what is already on the canvas (an
@@ -184,6 +223,35 @@ static int32_t cv_text(int32_t x, int32_t y, const felucca_font_t *f, const char
         int32_t bx = x - f->pad + gd[0], by = y + gd[1] + cv_oy;
         uint32_t rows = gd[2];
         gd += 3;
+#ifdef FONT_CACHED                   /* (APP_FONT_CACHE: the alphas decoded once, then read; the box clipped once) */
+        {
+            int32_t x0 = bx < 0 ? -bx : 0, x1 = bx + (int32_t)w > (int32_t)cv_w ? (int32_t)cv_w - bx : (int32_t)w;
+            int32_t y0 = by < cv_y0 ? cv_y0 - by : 0, y1 = by + (int32_t)rows > cv_y1 ? cv_y1 - by : (int32_t)rows, i, j;
+            const uint8_t *ca = x0 < x1 && y0 < y1 ? font_cached(f, gd, w * rows) : 0;   /* (nothing shown: not decoded) */
+            (void)bpr;
+            for (j = y0; ca && j < y1; j++) {
+                const uint8_t *ar = ca + (uint32_t)j * w;
+                uint16_t *row = &cv_px[(uint32_t)(by + j) * cv_w];
+                for (i = x0; i < x1; i++) {
+                    uint32_t a = ar[i];
+                    uint16_t *p = &row[(uint32_t)(bx + i)];
+                    if (!a)
+                        continue;
+                    if (a == 15u) {
+                        *p = swap16(c);
+                    } else {
+                        uint32_t bg = swap16(*p);
+                        uint32_t br = bg >> 11, bgg = (bg >> 5) & 63u, bb = bg & 31u;
+                        uint32_t nr = (r * a + br * (15u - a)) / 15u, ng = (g * a + bgg * (15u - a)) / 15u,
+                                 nb = (b * a + bb * (15u - a)) / 15u;
+                        *p = swap16((nr << 11) | (ng << 5) | nb);
+                    }
+                }
+            }
+            x += f->adv[gi];
+            continue;
+        }
+#endif
 #ifdef FONT_PACK                     /* (FM1_FONT_PACK: the alphas in turn, each by the code for the one before) */
         uint32_t bit = 0, prev = 0;
         (void)bpr;

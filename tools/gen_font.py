@@ -274,6 +274,7 @@ def main(out):
     if PACK:
         lines[-1:] = [f"#define FONT_PACK 1  /* the rows' alphas Huffman-coded, {HUF_CODES} codes first (FM1_FONT_PACK) */",
                       f"#define FONT_HUF_LEN {HUF_LEN}", f"#define FONT_HUF_SZ {HUF_LEN + 16}", ""]
+    box_max = 0                 # the largest glyph box's alphas (FONT_BOX_MAX: device/gfx.c APP_FONT_CACHE holds one)
     for name, ttf, px, scale, pixel, first, last in SIZES:
         h, glyphs = render(ttf, px, scale, pixel, first, last)
         data, offs = [], []
@@ -285,6 +286,7 @@ def main(out):
                 x0, y0, w, n = lit_box(g, bw, h)
                 data += [x0, y0, n]
             bws.append(w)
+            box_max = max(box_max, w * n)
             boxes.append(([x0, y0, n], [a for y in range(y0, y0 + n) for a in g[y * bw + x0:y * bw + x0 + w]]))
             for y in range(y0, y0 + n):
                 row = g[y * bw + x0:y * bw + x0 + w] + [0]
@@ -308,6 +310,9 @@ def main(out):
                      f"FONT_{name}_ADV, FONT_{name}_BW, FONT_{name}_OFF, FONT_{name}_DATA }};")
         lines.append("")
         print(f"font {name}: {ttf} {px}px h {h}, digit adv {glyphs[ord('0') - first][0]}, {len(data)} B")
+    if PACK:
+        lines.append(f"#define FONT_BOX_MAX {box_max}  /* the largest glyph's alphas (device/gfx.c APP_FONT_CACHE: at least this) */")
+        lines.append("")
     print(f"font set {FONTSET}: {sum(len(l) for l in lines if l.startswith('    0x')) // 6} B (approx)")
     Path(out).write_text("\n".join(lines))
 
