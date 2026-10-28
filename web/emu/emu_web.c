@@ -189,6 +189,25 @@ __attribute__((used, visibility("default"))) uint32_t web_data_len(void) { retur
 __attribute__((used, visibility("default"))) uint32_t web_data_base(void) { return DATA_BASE; }
 #endif
 
+#if FM1B_EMU_BACKUP && FM1B_BACKUP
+/* a backup in the file format of web/backup/index.html and tools/fm1_backup.py (device/backup.c's image: the magic,
+ * version, count, flags, then each saved object, every part and the whole checked by CRC-32): web_backup_make makes it
+ * (the unsaved saved first unless the app is playing: then flag bit 0) into web_backup_buf, its length returned;
+ * web_backup_restore(n) takes the n bytes the page put in web_backup_buf as the FM-1 does after its question is
+ * answered yes: checked whole before anything changes, then 0, or 10 playing (stop first), 3 not this app's or
+ * version's, 4..6 damaged */
+__attribute__((used, visibility("default"))) uint8_t *web_backup_buf(void) { return sim_img; }
+__attribute__((used, visibility("default"))) uint32_t web_backup_max(void) { return sizeof sim_img; }
+__attribute__((used, visibility("default"))) uint32_t web_backup_make(void) { return (uint32_t)sim_backup_image(); }
+__attribute__((used, visibility("default"))) int web_backup_restore(uint32_t n)
+{
+    restore_rc = n > sizeof sim_img ? 3 : sim_restore_image(n);
+    if (!restore_rc)
+        store_writes++;                             /* (the page keeps the objects it is told changed) */
+    return restore_rc;
+}
+#endif
+
 #ifdef APP_WEB
 #include "web.c"                        /* the app's own exports for its page (app.h APP_WEB) */
 #endif

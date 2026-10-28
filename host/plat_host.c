@@ -945,10 +945,9 @@ static uint32_t sim_crc32(uint32_t c, const uint8_t *p, size_t n)
 static void sim_wr32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24); }
 static uint32_t sim_rd32(const uint8_t *p) { return p[0] | p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static uint8_t sim_img[16 + SIM_NOBJ * (8 + PLAT_STORE_MAX) + 4];
-static int sim_backup(const char *path)
+static size_t sim_backup_image(void)              /* the image into sim_img: its length */
 {
     size_t n = 16;
-    FILE *f;
     int playing = app_backup_playing() != 0;
     if (!playing)
         app_backup_flush();
@@ -966,21 +965,21 @@ static int sim_backup(const char *path)
         n += 8 + len;
     }
     sim_wr32(sim_img + n, sim_crc32(0, sim_img, n));
-    n += 4;
-    if (!(f = fopen(path, "wb")))
+    return n + 4;
+}
+static int sim_backup(const char *path)
+{
+    size_t n = sim_backup_image();
+    FILE *f = fopen(path, "wb");
+    if (!f)
         return -1;
     fwrite(sim_img, 1, n, f);
     fclose(f);
     return 0;
 }
-static int sim_restore(const char *path)          /* 0, or backup.c's RS_E_*: 10 playing, 3 the head, 4..6 damaged */
+static int sim_restore_image(size_t n)            /* sim_img's n bytes: 0, or backup.c's RS_E_*: 10 playing, 3 the head, 4..6 damaged */
 {
-    size_t n, pos = 16;
-    FILE *f = fopen(path, "rb");
-    if (!f)
-        return 1;
-    n = fread(sim_img, 1, sizeof sim_img, f);
-    fclose(f);
+    size_t pos = 16;
     if (app_backup_playing())
         return 10;                                /* STOP FIRST */
     if (n < 16u + (size_t)SIM_NOBJ * 8u + 4u || sim_rd32(sim_img) != APP_BACKUP_MAGIC ||
@@ -1009,6 +1008,16 @@ static int sim_restore(const char *path)          /* 0, or backup.c's RS_E_*: 10
     app_panic();
     app_backup_restored();
     return 0;
+}
+static int sim_restore(const char *path)          /* 0, or backup.c's RS_E_*; 1: no such file */
+{
+    size_t n;
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return 1;
+    n = fread(sim_img, 1, sizeof sim_img, f);
+    fclose(f);
+    return sim_restore_image(n);
 }
 #endif
 
