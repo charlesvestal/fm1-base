@@ -149,6 +149,26 @@ static uint32_t glyph(const felucca_font_t *f, uint32_t ch)
     return ch - f->first;
 }
 
+#ifdef FONT_PACK
+/* the next alpha of a packed glyph (tools/gen_font.py FM1_FONT_PACK): t its code (the counts of each length, then the
+ * alphas in code order), d the glyph's bits, *bit the next one's index */
+static uint32_t font_alpha(const uint8_t *t, const uint8_t *d, uint32_t *bit)
+{
+    uint32_t len, code = 0, first = 0, at = 0;
+    for (len = 0; len < FONT_HUF_LEN; len++) {
+        uint32_t n = t[len];
+        code |= (uint32_t)(d[*bit >> 3] >> (7u - (*bit & 7u))) & 1u;
+        ++*bit;
+        if (code - first < n)
+            return t[FONT_HUF_LEN + at + code - first];
+        at += n;
+        first = (first + n) << 1;
+        code <<= 1;
+    }
+    return 0;                                        /* (no code that long: not from gen_font.py) */
+}
+#endif
+
 /* text in colour c, each pixel's coverage blended over what is already on the canvas (an
  * anti-aliased face on a coloured box gets no dark fringe); returns the end x */
 static int32_t cv_text(int32_t x, int32_t y, const felucca_font_t *f, const char *s, uint16_t c)
@@ -164,9 +184,18 @@ static int32_t cv_text(int32_t x, int32_t y, const felucca_font_t *f, const char
         int32_t bx = x - f->pad + gd[0], by = y + gd[1] + cv_oy;
         uint32_t rows = gd[2];
         gd += 3;
+#ifdef FONT_PACK                     /* (FM1_FONT_PACK: the alphas in turn, each by the code for the one before) */
+        uint32_t bit = 0, prev = 0;
+        (void)bpr;
+#endif
         for (gy = 0; gy < rows; gy++)
             for (gx = 0; gx < w; gx++) {
+#ifdef FONT_PACK
+                uint32_t a = font_alpha(f->data + FONT_HUF_SZ * (prev == 0u ? 0u : prev == 15u ? 1u : 2u), gd, &bit);
+                prev = a;
+#else
                 uint32_t a = gd[gy * bpr + gx / 2u];
+#endif
                 int32_t px = bx + (int32_t)gx, py = by + (int32_t)gy;
 #else
         for (gy = 0; gy < f->h; gy++)
@@ -174,7 +203,9 @@ static int32_t cv_text(int32_t x, int32_t y, const felucca_font_t *f, const char
                 uint32_t a = gd[gy * bpr + gx / 2u];
                 int32_t px = x - f->pad + (int32_t)gx, py = y + (int32_t)gy + cv_oy;
 #endif
+#ifndef FONT_PACK
                 a = (gx & 1u) ? (a & 15u) : (a >> 4);
+#endif
                 if (!a || (uint32_t)px >= cv_w || py < cv_y0 || py >= cv_y1)
                     continue;
                 if (a == 15u) {
