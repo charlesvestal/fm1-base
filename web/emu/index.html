@@ -48,9 +48,9 @@ a { color: var(--accent); }
 .keyface { transition: fill .06s; }
 .lit .keyface.white { fill: #f6b48e; }
 .lit .keyface.black { fill: #4cc3b6; }
-.dim .btnface { fill: #6e4636; }                /* the dim lights (plat_lights' db / dk, plat_lights_mid): half bright */
-.dim .keyface.white { fill: #e8c9b6; }
-.dim .keyface.black { fill: #8ac6bf; }
+.dim .btnface { fill: #6e4636; opacity: var(--dimop, 1); }                /* the dim lights (plat_lights' db / dk, plat_lights_mid): half bright */
+.dim .keyface.white { fill: #e8c9b6; opacity: var(--dimop, 1); }
+.dim .keyface.black { fill: #8ac6bf; opacity: var(--dimop, 1); }
 .start { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(10, 11, 13, .55); border-radius: 4.4% / 6.9%; }
 .start button { font: 600 1.25rem "Barlow Semi Condensed", "Barlow", sans-serif; letter-spacing: .04em; padding: .7em 1.6em;
                 border-radius: 999px; border: 0; background: #f28a5a; color: #2a140a; cursor: pointer; }
@@ -658,6 +658,7 @@ async function switchOn() {
         else if (m.type === "frame") {
           if (m.fb) drawScreen(m.fb);
           drawLights(m.buttons, m.keys, m.dimButtons, m.dimKeys);
+          if (m.dimOp !== undefined) document.documentElement.style.setProperty("--dimop", m.dimOp);   // APP_DIM_LEVELS
           if (m.said) onSaid(m.said);
           window.emuLast = m;
           if (m.load !== undefined) cpu.textContent = `{{NAME}} uses ${m.load}% of this computer's time`;
