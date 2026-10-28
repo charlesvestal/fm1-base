@@ -36,6 +36,10 @@ run lock sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/lock_tes
 # shim_irq_save / shim_irq_restore (the radio's) over a simulated interrupt enable: inside an interrupt they leave
 # interrupts off
 run shim_lock sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/shim_lock_test tests/shim_lock_test.c && $OUT/shim_lock_test"
+# plat_console_* (device/console.c) over the CDC rings, the interrupt's side simulated; and without the console
+run console sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/console_test tests/console_test.c && \
+    $OUT/console_test && $CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -DFM1B_CDC=0 -o $OUT/console_test0 \
+    tests/console_test.c && $OUT/console_test0"
 run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/storage_test"
 run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts
