@@ -1171,6 +1171,10 @@ static void boot(void)
 static uint8_t restart_req;                         /* plat_restart: at the end of this millisecond */
 static uint32_t restarts;
 void plat_restart(void) { restart_req = 1; }
+#if FM1B_EMU_REBOOT
+static uint8_t web_down;                            /* the browser emulator's restart or update mode: the app is not run,
+                                                     * the sound is silence (the page's part "reboot", web/emu/parts) */
+#endif
 
 /* one millisecond of the device, in three steps (run_ms; host/rfm1.c calls them on its host's clock): the clock and
  * what runs before the render (sim_ms_begin), the APP_BLOCK-frame renders that have fallen due (sim_render, each),
@@ -1235,6 +1239,17 @@ static void run_ms(uint32_t ms)
     static int32_t blk[2 * APP_BLOCK];
     uint32_t i, k;
     for (i = 0; i < ms; i++) {
+#if FM1B_EMU_REBOOT
+        if (web_down) {                             /* (the clock runs and the blocks are silence, as a stopped FM-1) */
+            now_ms++;
+            while (audio_due_ms <= (double)now_ms) {
+                memset(blk, 0, sizeof blk);
+                web_audio(blk, APP_BLOCK);
+                audio_due_ms += APP_BLOCK * 1000.0 / 44100.0;
+            }
+            continue;
+        }
+#endif
         sim_ms_begin(now_ms + 1u);
         while (audio_due_ms <= (double)now_ms) {      /* APP_BLOCK-frame blocks, as the device renders them */
             sim_render(blk);
@@ -1266,11 +1281,16 @@ static void run_ms(uint32_t ms)
         if (restart_req) {                          /* (as "reboot": the flash kept, the app's RAM forgotten) */
             restart_req = 0;
             restarts++;
+#if FM1B_EMU_REBOOT                                 /* (no printf: the browser's stdout takes nothing, it never returns) */
+            web_down = 1;                           /* (the page starts the app again from a fresh wasm: the app's RAM
+                                                     * forgotten as the FM-1's, the saved data kept) */
+#else
             printf("  restart (plat_restart) at %u ms\n", now_ms);
 #ifdef APP_HOST_REBOOT
             app_host_reboot();
 #endif
             boot();
+#endif
         }
     }
 }
