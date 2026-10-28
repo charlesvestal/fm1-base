@@ -211,10 +211,22 @@ int plat_battery(void) { return 3; }   /* (the host simulator: full) */
 int32_t plat_battery_raw(void) { return 620; }   /* (full: over the third bar's 591, as plat_battery's 3) */
 #endif
 #endif
+#ifdef APP_DIM_LEVELS
+static uint32_t dim_ns_app, dim_glow;   /* plat_dim_ns's pulse (0: the glow's); the glow plat_lights last got */
+void plat_dim_ns(uint32_t ns)           /* clamped as the FM-1's scan takes it: 500 .. 4,000 */
+{
+    dim_ns_app = !ns ? 0u : ns < 500u ? 500u : ns > 4000u ? 4000u : ns;
+}
+/* the pulse the dim ones have now (ns): the app's, else the glow's (1,600 or 3,200), 0 with no glow */
+static uint32_t dim_pulse(void) { return dim_ns_app ? dim_ns_app : dim_glow == 1 ? 1600u : dim_glow ? 3200u : 0u; }
+#endif
 /* the lights ("leds"): bright, and dim (glow 0: none); PLAY's green counts as PLAY */
 void plat_lights(uint32_t b, uint32_t k, uint32_t db, uint32_t dk, int glow)
 {
     lights_b = b, lights_db = db, lights_glow = glow;
+#ifdef APP_DIM_LEVELS
+    dim_glow = glow > 0 ? (uint32_t)glow : 0u;
+#endif
     lit_btn = (b & ((1u << NB) - 1u)) | (b & LED_PLAY_GREEN ? 1u << B_PLAY : 0u);
     lit_keys = k;
     db = (db & ((1u << NB) - 1u)) | (db & LED_PLAY_GREEN ? 1u << B_PLAY : 0u);
@@ -1332,6 +1344,10 @@ static int expect(const char *what, const char *val)
     else if (!strcmp(what, "battery_raw"))          /* plat_battery_raw: the battery's reading (the host's: full) */
         got = (int)plat_battery_raw();
 #endif
+#ifdef APP_DIM_LEVELS
+    else if (!strcmp(what, "dim_ns"))               /* the dim pulse (plat_dim_ns, else the glow's), ns */
+        got = (int)dim_pulse();
+#endif
     else if (!strcmp(what, "clocks_out"))
         got = (int)clock_out_count;
     else if (!strcmp(what, "usb_play_gain"))        /* plat_usb_play_gain's level, 0..4096 */
@@ -1739,6 +1755,9 @@ int main(int argc, char **argv)
             printf(" black ");
             for (i = 0; i < 11; i++)
                 printf("%c", (lit_keys >> HOST_BLACK_K[i] & 1u) ? '#' : ((dim_keys | mid_keys) >> HOST_BLACK_K[i] & 1u) ? '+' : '.');
+#ifdef APP_DIM_LEVELS
+            printf(" dim %u ns", (unsigned)dim_pulse());
+#endif
             printf("\n");
         } else if (!strcmp(cmd, "expect"))
             fails += expect(a, b);

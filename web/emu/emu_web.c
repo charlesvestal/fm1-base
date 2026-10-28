@@ -113,6 +113,10 @@ __attribute__((used, visibility("default"))) uint32_t web_lit_buttons(void) { re
 __attribute__((used, visibility("default"))) uint32_t web_lit_keys(void) { return lit_keys; }
 __attribute__((used, visibility("default"))) uint32_t web_dim_buttons(void) { return dim_btn; }
 __attribute__((used, visibility("default"))) uint32_t web_dim_keys(void) { return dim_keys | mid_keys; }
+#ifdef APP_DIM_LEVELS
+/* the dim lights' pulse a scan frame in ns (plat_dim_ns, else the glow's), for a page that draws their brightness */
+__attribute__((used, visibility("default"))) uint32_t web_dim_ns(void) { return dim_pulse(); }
+#endif
 
 /* MIDI: in from the page (port PORT_*: a Web MIDI input is USB), out as the app sent it (USB-MIDI packets) */
 __attribute__((used, visibility("default"))) void web_midi_in(uint32_t port, uint32_t pkt)

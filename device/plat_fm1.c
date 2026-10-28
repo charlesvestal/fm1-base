@@ -79,16 +79,42 @@ static void led_pos_init(void)
                     led_pos[id] = (uint8_t)((p << 3) | r);
     }
 }
+#ifdef APP_DIM_LEVELS
+static uint32_t dim_ns, dim_glow;                   /* the app's pulse (0: the glow's), the glow plat_lights last got */
+static int dim_lvl = -1;                            /* the glow's strength the scan has */
+void plat_dim_ns(uint32_t ns)                       /* any width of the dim pulse (fm1_led_dim_ns clamps it) */
+{
+    dim_ns = ns;
+    if (ns)
+        fm1_led_dim_ns(ns);
+    else if (dim_glow > 0) {
+        fm1_led_dim_level(dim_glow == 1 ? 1u : 0u); /* handed back: the glow's strength again */
+        dim_lvl = (int)dim_glow;
+    } else {
+        dim_lvl = -1;                               /* (no glow now: the next one sets its strength) */
+    }
+}
+#endif
 /* the dim ones: felucca-bsp's glow, a short pulse on every scan frame, in two strengths (fm1_led_dim_level) */
 void plat_lights(uint32_t buttons, uint32_t keys, uint32_t dim_buttons, uint32_t dim_keys, int glow)
 {
+#ifndef APP_DIM_LEVELS
     static int level = -1;
+#endif
     uint8_t nl[FM1_NCOL] = {0}, dl[FM1_NCOL] = {0};
     uint32_t i, c;
+#ifdef APP_DIM_LEVELS
+    dim_glow = (uint32_t)glow;
+    if (glow > 0 && !dim_ns && glow != dim_lvl) {   /* (the app's own pulse stays until plat_dim_ns(0)) */
+        fm1_led_dim_level(glow == 1 ? 1u : 0u);
+        dim_lvl = glow;
+    }
+#else
     if (glow > 0 && glow != level) {
         fm1_led_dim_level(glow == 1 ? 1u : 0u);     /* 1: DIM LO, 2: DIM HI */
         level = glow;
     }
+#endif
     for (i = 0; i < NB + NKEYS; i++) {
         uint32_t id = i < NB ? panel.btn[i] : 14u + (i - NB);
         int on = i < NB ? (buttons >> i) & 1u : (keys >> (i - NB)) & 1u;

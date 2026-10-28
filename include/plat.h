@@ -76,6 +76,12 @@ void plat_lights(uint32_t buttons, uint32_t keys, uint32_t dim_buttons, uint32_t
 /* a third level, between the glow and lit (~12 % of lit; ~8 % with glow 1): these buttons and keys, unless lit, until
  * the next call (0, 0: none). Call it after plat_lights each time the lights change */
 void plat_lights_mid(uint32_t buttons, uint32_t keys);
+/* the dim ones at any brightness, not the glow's two (an app with APP_DIM_LEVELS): ns is the pulse each scan frame, in
+ * nanoseconds (a lit LED is lit ~95 us a frame, plat_lights' glow 2 is 3,200 ns and glow 1 1,600 ns); the FM-1 takes
+ * 500 .. 4,000, a value outside it is clamped to it. 0 hands the dim ones back to plat_lights' glow. One pulse serves
+ * every dim LED (the buttons' glow and the keys': a scan frame has one), so it is the brightness of the whole dim layer;
+ * the half level of plat_lights_mid is not changed. The host simulator keeps it (expect dim_ns, and "leds" prints it) */
+void plat_dim_ns(uint32_t ns);
 /* the same, simpler: the lit buttons and keys, the unlit buttons glowing if plat_glow(1); PLAY lights green, red
  * while plat_play_red(1) */
 void plat_leds(uint32_t buttons, uint32_t keys);
@@ -416,6 +422,7 @@ const struct plat_cache_ram *plat_cache_ram(void);
  *   APP_GAIN(m)     the render's gain from MASTER's position m (0..4096; default the square, m * m >> 12)
  *   APP_BATTERY_RAW (no function) plat_battery_raw is built (the battery's reading, for an app's own volts)
  *   APP_CPU_KHZ     (no function) plat_cpu_khz is built (the CPU's clock)
+ *   APP_DIM_LEVELS  (no function) plat_dim_ns is built (the dim lights at any of many brightnesses)
  *   APP_QUIET       void app_quiet(int32_t *lr, uint32_t n)   the render while the flash must not be read (the
  *                   radio's first second, FM1B_BLE): keep time without sound (default: silence)
  *   APP_KEY_SENSE   void app_key_sample(uint32_t key, uint32_t v, uint32_t ticks, int driven) (rows PA7 / PA8),
