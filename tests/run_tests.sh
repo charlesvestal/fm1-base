@@ -47,6 +47,9 @@ run boot-pack sh tests/boot_pack_test.sh               # the boot's LZMA load im
 # the firmwares not on fm1-base): the protocol, the SAY frames, ann_later's settling
 run announce sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/announce_test tests/announce_test.c && \
     $OUT/announce_test"
+# the half rendered aside (device/audio_commit.c) over a simulated audio DMA: copied only while its half is free
+run audio-commit sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/audio_commit_test \
+    tests/audio_commit_test.c && $OUT/audio_commit_test"
 run installer "$PY" tests/install_test.py
 # finding the FM-1 from Python (tools/fm1ports.py, as web/fm1ports.js) and the tools that use it, on a fake mido
 run ports "$PY" tests/ports_test.py
