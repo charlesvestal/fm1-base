@@ -102,15 +102,33 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
     fm1b_dbg.in_audio = 0;
 }
 
+#ifndef FM1B_AUDIO_ASIDE
+#define FM1B_AUDIO_ASIDE 1
+#endif
+#if FM1B_AUDIO_ASIDE
+#include "audio_commit.c"                           /* the half rendered aside, copied in while its half is free;
+                                                     * FM1B_AUDIO_ASIDE 0: straight into the DMA's half, as before */
+#endif
+
 void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_isr.S) */
 {
     uint8_t p = fm1_audio_pending();
     fm1_audio_ack_aux(p);
     if (p & FM1_AUDIO_HALF) {
         uint32_t half = fm1_audio_free_half();
+#if FM1B_AUDIO_ASIDE
+        uint32_t ok;
+        fm1_audio_ack_half();                       /* (now: a new pending after the render = the DMA moved on) */
+        render_block(aside);
+        ok = audio_commit(half);
+        if (fm1_audio_pending() & FM1_AUDIO_HALF)
+            fm1_audio_ack_half();                   /* (the half missed: not rendered again) */
+        if (!ok) {
+#else
         render_block(&abuf[half * HALF_WORDS]);
         fm1_audio_ack_half();
         if (fm1_audio_free_half() != half) {
+#endif
             fm1b_dbg.late++;                         /* the DMA moved on while we rendered */
             audio_xruns++;
         }
