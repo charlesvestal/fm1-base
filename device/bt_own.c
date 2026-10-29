@@ -127,7 +127,7 @@ static volatile uint32_t oi_w, oi_r, oi_lost;
 static volatile uint8_t own_role;                 /* 0 none, 1 a computer connected to us, 2 we to a device */
 static volatile uint32_t own_events;              /* ble_app_state calls (the main loop logs what changed) */
 
-BLE_API int ble_app_midi_peek(uint32_t *pkt, uint32_t *t_ms)
+static int own_q_peek(uint32_t *pkt, uint32_t *t_ms)
 {
     if (oo_r == oo_w)
         return 0;
@@ -135,11 +135,14 @@ BLE_API int ble_app_midi_peek(uint32_t *pkt, uint32_t *t_ms)
     *t_ms = own_out[oo_r % OQ].ms;
     return 1;
 }
-BLE_API void ble_app_midi_pop(void)
+static void own_q_pop(void)
 {
     if (oo_r != oo_w)
         oo_r++;
 }
+static int own_stream_on(void) { return own_role == 1u && ble_midi_ready(); }   /* (the computer's link, listening) */
+static uint32_t own_stream_ms(void) { return fm1_ms; }
+#include "bt_own_stream.h"                        /* ble_app_midi_peek / pop: the queue and the app's stream */
 BLE_API void ble_app_midi_in(uint32_t pkt, uint16_t ts, uint16_t last_ts)
 {
 #if !FM1B_BLE_MIDI_TIME
@@ -418,6 +421,15 @@ static uint8_t ble_off;                           /* switched off by the player 
 int plat_ble_state(void) { return ble_off ? BLE_OFF : ble_state; }
 int plat_ble_connected(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_connected(); }
 int plat_ble_linked(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_linked(); }
+void plat_ble_link_info(uint32_t v[7])            /* the computer's link as agreed (0 each: none) */
+{
+    int on = !ble_off && ble_state == BLE_READY && own_role == 1u, i;
+    v[0] = on ? ble_ll_tx_octets() : 0u;
+    v[1] = on ? ble_att_mtu() : 0u;
+    v[2] = on ? ble_ll_interval() : 0u;
+    for (i = 0; i < 4; i++)
+        v[3 + i] = on ? ble_ll_peer_len((uint32_t)i) : 0u;
+}
 void plat_ble_enable(int on)
 {
     ble_off = (uint8_t)!on;

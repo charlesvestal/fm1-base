@@ -142,6 +142,24 @@ int plat_ble_connected(void);          /* a central is connected and listening *
 int plat_ble_linked(void);             /* a central is connected, listening or not yet (a Mac whose MIDI driver
                                         * never subscribed holds the link, and the FM-1 stops advertising) */
 void plat_ble_start(void);
+/* A stream of SysEx frames to the computer's link (ble_stack = "own"; a screen mirrored): the radio reads it in its own
+ * interrupts, a connection event at a time, as much as the link takes (full notifications, as many as the stack puts
+ * in an event), so it is never held to the main loop's pace or the out queue's 64 slots. peek: the next USB-MIDI
+ * SysEx packet (CIN 4..7) written whole, 0 none (asked again until pop); pop: it went; mid: a frame begun and not
+ * ended, which goes on before any message queued (plat_midi_send's) so none ends it; between frames those go
+ * first. All three run in the radio's interrupts while a computer listens (plat_ble_connected): short, no lock, a
+ * single-consumer ring the main loop fills. 1: taken; 0: not on this platform (the JieLi stack, no Bluetooth, the
+ * host), send by plat_midi_send. NULL: none again */
+struct plat_ble_stream {
+    int (*peek)(uint32_t *pkt);
+    void (*pop)(void);
+    int (*mid)(void);
+};
+int plat_ble_stream(const struct plat_ble_stream *s);
+/* the computer's link as agreed (ble_stack = "own"; 0 each when none, or another stack): v[0] the LL data length
+ * (octets), v[1] the ATT MTU, v[2] the connection interval (x 1.25 ms), v[3..6] the central's own LL_LENGTH values
+ * (MaxRxOctets, MaxRxTime, MaxTxOctets, MaxTxTime) */
+void plat_ble_link_info(uint32_t v[7]);
 uint32_t plat_ble_log_total(void);     /* lines written since the last start (survives a reset) */
 const char *plat_ble_log_line(int back);   /* 0 = the newest */
 /* Bluetooth MIDI devices (fm1.toml ble_central = true: FM1B_BLE_CENTRAL 1): the FM-1 connects to one (a keyboard,

@@ -25,7 +25,7 @@ parts it has.
 
 | Part | How to include it | What the app calls |
 | --- | --- | --- |
-| Bluetooth MIDI with a computer or tablet | `ble = true` (`tools/build.py --no-ble` leaves it out of one build) | `TO_BLE`, `PORT_BLE`; `plat_ble_state`, `plat_ble_connected`; `plat_ble_enable` |
+| Bluetooth MIDI with a computer or tablet | `ble = true` (`tools/build.py --no-ble` leaves it out of one build) | `TO_BLE`, `PORT_BLE`; `plat_ble_state`, `plat_ble_connected`; `plat_ble_enable`; with `ble_stack = "own"` a stream of SysEx frames read by the radio at the link's rate (`plat_ble_stream`: a screen mirrored) and the link as agreed (`plat_ble_link_info`) |
 | Bluetooth MIDI devices (the FM-1 connects to a keyboard or controller) | `ble_central = true`, with `ble` | `plat_ble_scan`, `plat_ble_found`, `plat_ble_connect`, `plat_ble_disconnect`, `plat_ble_device`; `TO_BLE_HOST`, `TO_BLE_DEV`, `plat_midi_in_from` (one link at a time); `plat_ble_passkey` on the own stack |
 | Bluetooth on fm1-base's own stack instead of JieLi's libraries (below) | `ble_stack = "own"`, with `ble` | the same calls |
 | Pairing on the own stack (LE legacy pairing, the bond kept) | `ble_pairing = true`, with `ble_stack = "own"` | nothing |

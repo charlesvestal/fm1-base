@@ -13,6 +13,13 @@ static uint32_t ble_midi_out_room(uint32_t to) { (void)to; return 0; }
 int plat_ble_state(void) { return BLE_OFF; }
 int plat_ble_connected(void) { return 0; }
 int plat_ble_linked(void) { return 0; }
+int plat_ble_stream(const struct plat_ble_stream *s) { (void)s; return 0; }   /* (send by plat_midi_send) */
+void plat_ble_link_info(uint32_t v[7])
+{
+    int i;
+    for (i = 0; i < 7; i++)
+        v[i] = 0;
+}
 void plat_ble_start(void) {}
 void plat_ble_scan(int on) { (void)on; }
 int plat_ble_found(int i, char *name, int *rssi) { (void)i, (void)name, (void)rssi; return 0; }
