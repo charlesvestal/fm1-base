@@ -1,0 +1,104 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# MODE AP in the host simulator (tests/wifi/run.sh): the Link example with wifi_ap = true, the FM-1 as the access point
+# and the simulator's client (host/wifi_air_client.c) as a phone: the password set (its key made and kept), MODE AP,
+# the beacon, the client's join (authentication, association, the 4-way handshake), its address by DHCP, a Link peer
+# over the access point both ways, a channel change (the client sent away, joins again), a reboot (AP AUTO comes up
+# again from the key kept), AP MAN (off at power-on, started, stopped), the key forgotten, and back to a station.
+wait 3500
+expect wifi_mode 1
+expect ap_state 0
+# a password while MODE is AUTO: the key is made and kept, nothing runs
+wifi ap auto short
+wifi ap auto password1
+wait 500
+expect ap_key 1
+expect ap_state 0
+expect ap_channel 6
+wifi mode AP
+wait 300
+expect wifi_mode 3
+expect ap_state 3
+expect wifi_step 0
+expect wifi_ip_last 1
+# a phone joins the FM-1's network (its automatic name), gets an address, is a Link peer at 120 BPM
+link tempo 120
+client_peer 120
+wifi_client auto password1
+wait 2000
+expect client_joins 1
+expect ap_clients 1
+expect client_ip_last 2
+expect ap_client_ip_last 2
+wait 3000
+expect link_peers 1
+expect client_peers 1
+expect client_phase_us <1000
+link tempo 100
+wait 1500
+expect client_bpm_x10 1000
+client_peer play 1
+wait 1000
+expect link_playing 1
+shot ap.png
+# the channel changed: kept at once, the access point moves after 1.2 s, the client sent away joins it again there
+wifi ap_channel 11
+wait 400
+expect ap_channel 11
+expect ap_clients 1
+wait 3000
+expect ap_state 3
+expect client_deauths 1
+expect client_joins 2
+expect ap_clients 1
+expect client_ip_last 2
+# a reboot: MODE AP and the key are kept, the access point comes up again; the client, still associated as it believes,
+# is told to join again (a stray's deauthentication) and does
+reboot
+wait 6000
+expect wifi_mode 3
+expect ap_state 3
+expect ap_channel 11
+expect ap_stray >0
+expect ap_clients 1
+expect client_ip_last 2
+wait 3000
+expect link_peers 1
+# AP MAN: stopped (the client told), started again by ap_run
+wifi mode AP_MAN
+wait 200
+expect ap_state 5
+expect ap_clients 0
+wifi ap_run 1
+wait 3000
+expect ap_state 3
+expect ap_clients 1
+# the key forgotten: the access point stops, ap_run refused
+wifi ap_forget
+wait 200
+expect ap_key 0
+expect ap_state 1
+wifi ap_run 1
+# a password typed in AP MAN starts it
+wifi ap auto password1
+wait 2500
+expect ap_state 3
+expect ap_clients 1
+# MODE MAN again: the access point stops, the station's manager comes back
+wifi mode MAN
+wait 500
+expect ap_state 0
+expect wifi_step 2
+expect wifi_ip_last 0
+wifi_client off
+# one not kept (MODE OFF): up, then stopped by a mode
+wifi mode OFF
+wifi_ap_start TESTNET password2 1
+wait 500
+expect ap_state 3
+expect ap_channel 1
+wifi_client TESTNET password2
+wait 2000
+expect ap_clients 1
+wifi mode MAN
+wait 300
+expect ap_state 0

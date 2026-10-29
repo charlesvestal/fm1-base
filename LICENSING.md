@@ -4,7 +4,14 @@
 `SPDX-License-Identifier: MPL-2.0` header. If you change one of these files and distribute it, publish your change to
 that file under MPL-2.0. Your own files, such as an app built on fm1-base, may use any licence, closed ones included.
 So a firmware made of felucca-bsp, fm1-base and its own code may link JieLi's binary Bluetooth and Wi-Fi libraries.
-A firmware on fm1-base's own Bluetooth stack (`ble_stack = "own"`) links none of them; the build checks it.
+A firmware on fm1-base's own Bluetooth stack (`ble_stack = "own"`) links none of them; the build checks it, and so does
+one on the own Wi-Fi stack (`wifi_stack = "own"`).
+
+**One opt-in part is GPL-3.0-only: Ableton Link** (`link/`, fm1.toml `link = true`; below). Nothing of it is compiled
+into a firmware without `link = true`. A firmware built with it is a combination with GPL-3.0-only code and is
+distributed under GPL-3.0-only as a whole (the MPL-2.0 files in it can be combined with GPL code under MPL-2.0 section
+3.3: none of them carries the "Incompatible With Secondary Licenses" notice); `tools/build.py` refuses `link = true`
+unless the app's fm1.toml says `licence = "GPL-3.0-only"` (or `"GPL-3.0-or-later"`).
 
 ## Where the code comes from
 
@@ -20,6 +27,9 @@ A firmware on fm1-base's own Bluetooth stack (`ble_stack = "own"`) links none of
 | `bt/` (the own Bluetooth stack: `bt/ble` BLE MIDI, link layer, host, SMP, central; `bt/br` BR/EDR and the A2DP source: SSP, L2CAP, AVDTP, AVRCP, SDP, AFH), its docs `docs/bt/`, tools `tools/bt/` and tests `tests/bt/`, but the third-party parts below. Copyright (C) 2026 Henri David (hdavid) | [Optimist](https://github.com/w0ts/optimist) (`3274ce5`), where its files carry `GPL-3.0-only OR MPL-2.0` | offered under either licence ([w0ts/optimist#55](https://github.com/w0ts/optimist/issues/55)), taken here under MPL-2.0. The files keep their dual SPDX header; the MPL's Exhibit B does not apply |
 | `device/bt_own.c`, `device/bt_own_central.c`, `device/bt_own_audio.c` (the glue between the own stack and the platform) | Charles Vestal | his own |
 | felucca-bsp's radio drivers (`bsp/chip/fm1_ble.h`, `fm1_ble_rf.h`, `fm1_bredr.h`) | Optimist, by Henri David | MPL-2.0 there, from the same offer (`bsp/NOTICE`) |
+| `wifi/` (the own Wi-Fi stack: the WPA2-PSK station, its crypto, the IP layer, the networks kept) but `wifi_ap.c`, `wifi_ap.h`, `wifi_ap_dhcp.c`, `wifi_ap_dhcp.h` (below), `device/wifi_own.c` (the connection manager, the service; but `device/fm1_wifi_wlc.h`, below), `device/wifi_own_ap.c` (MODE AP on the radio), `host/wifi_air.c`, `host/wifi_air_client.c` and `host/wifi_fake/` (the host simulator's radio and network), `tests/wifi/` but `link_test.c`, `link_ap/` and `wifi_wlc_ref.h`, `examples/link/tests/`. Copyright (C) 2026 Henri David (hdavid) | [Optimist](https://github.com/w0ts/optimist) (its `firmware/src/wifi/`, branch `link`), where these files carry `GPL-3.0-only OR MPL-2.0` | offered under either licence by their author, taken here under MPL-2.0 (as `bt/`). The files keep their dual SPDX header; the MPL's Exhibit B does not apply |
+| `wifi/wifi_ap.c`, `wifi_ap.h`, `wifi_ap_dhcp.c`, `wifi_ap_dhcp.h` (MODE AP's authenticator, beacon and management answers, DHCP server; the host simulator's access point runs them too) | [Optimist](https://github.com/w0ts/optimist) (its `firmware/src/wifi/`, branch `link`), committed there by Henri David; written in Optimist's tree on 2026-10-28 by someone other than the sessions that wrote the rest of its Wi-Fi, and taken over there at Henri David's word; no copyright line of their own | the header they carry, `GPL-3.0-only OR MPL-2.0`, is kept as it is (no copyright line added here); fm1-base takes them under its MPL-2.0 option, as that header offers. Compiled into a firmware only with `wifi_ap = true` |
+| felucca-bsp's Wi-Fi MAC driver (`bsp/chip/fm1_wifi.h`) | Optimist, by Henri David | `GPL-3.0-only OR MPL-2.0`, the same offer (`bsp/NOTICE`); its register addresses and values are JieLi's facts (Apache-2.0, below) |
 
 The screen reader's firmware side, `device/announce.c` and `tools/gen_words.py` (Charles Vestal's, from
 [fm1-reader](https://github.com/charlesvestal/fm1-reader), where they were MIT), is MPL-2.0 like the rest, and
@@ -56,6 +66,31 @@ values in `ble/shim/rf_const.c` (Apache-2.0 only). Each file's header says which
 The GPL copies in Felucca and in those firmwares stay under the GPL; the copies here are MPL-2.0. No code by other
 Felucca contributors is in fm1-base: the history of every file was checked when it was imported (from fm1-fomni
 `7e7547f`).
+
+## The own Wi-Fi stack's other parts
+
+The own Wi-Fi stack is not a clean-room implementation. It is a reverse-engineered implementation with captured vendor
+initialisation data: it was written (for Optimist) after reading JieLi's Apache-2.0 Wi-Fi driver libraries of the AC79
+SDK as LLVM IR and running them in an emulator to record their register writes; no vendor code was copied. The
+register addresses and values it uses are JieLi's (Copyright (c) 2024-2026 Zhuhai Jieli Technology Co., Ltd., AC79 AIoT
+SDK), kept under their Apache-2.0:
+
+| What | Licence | Where |
+| --- | --- | --- |
+| The coexistence controller's set-up: the 565 words JieLi's `wlc.c` writes when Wi-Fi starts on a radio Bluetooth has started, recorded in an emulator and packed by Optimist; the header states the changes. felucca-bsp's driver takes them from its caller (`fm1_wifi_up`), so they are here, not in `bsp/`. Compiled into a firmware only with `wifi_stack = "own"` (not into the host simulator or the browser emulator) | Apache-2.0 (`LICENSES/Apache-2.0.txt`) | `device/fm1_wifi_wlc.h` (`NOTICE`) |
+| The same words as first recorded, unpacked, the reference the test compares against | Apache-2.0 | `tests/wifi/wifi_wlc_ref.h` |
+| The Wi-Fi MAC's register map and the station driver's MAC settings (Ralink RT3070's layout on JieLi's wl30 core), as facts in a driver of Optimist's | facts from Apache-2.0 code; the driver `GPL-3.0-only OR MPL-2.0` | `bsp/chip/fm1_wifi.h` |
+
+## Ableton Link (GPL-3.0-only, opt-in)
+
+`link/link.c` and `link/link.h` are a C port of the tempo / beat / start-stop part of Ableton's Link library
+(<https://github.com/Ableton/link>, Copyright 2016 Ableton AG, GPL-2.0-or-later): its discovery, measurement and
+session rules, with its wire format and timings (no Link Audio). Written by Henri David for Optimist, where it is
+GPL-3.0-only (Ableton's code taken under its GPL-2.0-or-later option). Here it stays GPL-3.0-only, with
+`link/link_own.c` (the platform's `plat_link_*` on it) and `tests/wifi/link_test.c`, and `examples/link/` and `tests/wifi/link_ap/` (apps that
+use it, so GPL-3.0-only too). Full text: `LICENSES/GPL-3.0.txt`. It is built only with `link = true`; see the top of
+this file for what that makes of a firmware. The name "Link" and Ableton's logo are Ableton's: a product that says it
+works with Link should read Ableton's guidelines for that first.
 
 ## Not part of fm1-base
 

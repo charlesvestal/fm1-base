@@ -156,6 +156,17 @@ app.h); the build prints what it has.
                              calls the platform through plat.h, runs in a task of its own (plat_net_task)
   net_include = ["tls/inc"]  more include directories for those, relative to APP_DIR
   net_cflags = ["-DX=0"]     more flags for those
+  wifi_stack = "own"         with wifi, and ble with ble_stack = "own": fm1-base's own Wi-Fi stack instead (wifi/ and
+                             device/wifi_own.c, Henri David's from Optimist; FM1B_WIFI_OWN): a WPA2-PSK station, a small
+                             IP layer (ARP, DHCP, IGMP, UDP: plat_net_udp_*), on the radio the own Bluetooth stack
+                             starts, Bluetooth and WiFi together; nothing of the SDK's linked, no shim, no lwIP, no task
+                             (net is not built). The radio's buffers are checked to sit below 0x01C20000 (the frame DMA)
+  link = true                with wifi_stack = "own": Ableton Link (link/: GPL-3.0-only, an opt-in part: FM1B_LINK,
+                             plat_link_*); the build refuses it unless licence = "GPL-3.0-only" (or "-or-later") says
+                             the firmware as a whole is GPL-3.0 (LICENSING.md)
+  wifi_ap = true             with wifi_stack = "own": MODE AP, the FM-1 as the access point (device/wifi_own_ap.c,
+                             wifi/wifi_ap.c, wifi_ap_dhcp.c; FM1B_WIFI_AP, plat_wifi_ap_*): WPA2-PSK, up to 4 clients,
+                             DHCP on 192.168.4.0/24, Link (with link) over it; WIFI_MODE_AP / WIFI_MODE_AP_MAN
   gen = ["tools/places.py --out {gen}/places.h"]   the app's generators, run before the build (relative to APP_DIR;
                              {gen} is the generated headers' directory, on the include path)
   asm = ["cpu1/entry.S"]     the app's own assembly units (relative to APP_DIR), assembled as felucca-bsp's are; an
@@ -227,7 +238,10 @@ PRODUCT = None                      # package identity (fm1.toml id_prefix; see 
 VERSION = None                      # APP_VERSION for release builds (default: "DEV", device/unity.c)
 BLE = False                         # fm1.toml ble = true, unless --no-ble
 OWN = False                         # with BLE: fm1.toml ble_stack = "own" (bt/, no JieLi library)
-WIFI = False                        # fm1.toml wifi = true
+WIFI = False                        # fm1.toml wifi = true (JieLi's WiFi libraries and lwIP)
+WIFI_OWN = False                    # fm1.toml wifi = true, wifi_stack = "own" (wifi/, device/wifi_own.c)
+LINK = False                        # fm1.toml link = true (link/, with WIFI_OWN)
+WIFI_AP = False                     # fm1.toml wifi_ap = true (MODE AP: device/wifi_own_ap.c, with WIFI_OWN)
 CPU2 = False                        # fm1.toml cpu2 = true (FM1B_CPU2=0 / 1 in the environment: without / with)
 STEM = None                         # the build's file names: NAME, or NAME-usb (--no-ble)
 BT_SYMS = ("btstack_init", "bt_ble_init", "bt_max_pwr_set", "le_controller_set_mac", "lmp_set_sniff_disable",
@@ -706,6 +720,20 @@ def cpu2_stack_flags():
     return [f"-DFM1_CPU1_USTACK_BYTES={n}"]
 
 
+def wifi_own_flags(host=False):
+    """the own Wi-Fi stack's switches and include directories (the host's: its simulated radio, host/wifi_air.c)"""
+    if not WIFI_OWN:
+        return []
+    f = ["-DFM1B_WIFI=1", "-DFM1B_WIFI_OWN=1", *inc(SRC / "wifi")]
+    if host:
+        f = [*inc(SRC / "host" / "wifi_fake"), *f]
+    if LINK:
+        f += ["-DFM1B_LINK=1", *inc(SRC / "link")]
+    if WIFI_AP:
+        f.append("-DFM1B_WIFI_AP=1")
+    return f
+
+
 def build_app():
     flags = [*CFLAGS, *FPU, *inc(BSP / "chip", BSP / "boards" / "fm1", SRC / "device", SRC / "include", SRC / "lib", APP, GEN,
                                  *(APP / d for d in CONF.get("include", []) + CONF.get("device_include", [])))]
@@ -735,6 +763,7 @@ def build_app():
             flags.append("-DFM1B_BLE_CENTRAL=1")
     if WIFI:
         flags += ["-DFM1B_WIFI=1", "-DSHIM_WIFI=1", *inc(SRC / "ble" / "shim")]
+    flags += wifi_own_flags()
     flags += opt_flags()
     for key, flag in (("usb_audio_in", "FM1B_UAC"), ("usb_audio_out", "FM1B_UAC_OUT")):
         if key in CONF and flag not in os.environ:
@@ -1060,6 +1089,18 @@ def check(img, syms, dis, rt):
     elif cr_ways:
         notes.append(f"cache RAM: {cr_ways} data-cache ways ({cr_ways * 4096} B), {cr_used} B of objects in .cache_ram, "
                      f"{cr_ways * 4096 - cr_used} B for the app (plat_cache_ram, after its test at the start)")
+    if WIFI_OWN:                    # the own Wi-Fi stack: nothing of JieLi's WiFi, the frame DMA's buffers below 0x01C20000
+        jl = [n for n in ("wifi_on", "wifi_enter_sta_mode", "lwip_init", "wpa_supplicant_init", "wl_wifi_sta_init")
+              if re.search(r"\s" + n + r"$", syms, re.M)]
+        if jl:
+            errors.append(f"wifi_stack = own links JieLi's WiFi code: {jl}")
+        bad = [n for n in ("wifi_txb", "wifi_rxb") if not 0x01C00000 <= sym(n) < 0x01C20000 - 4096]
+        if bad:
+            errors.append(f"the Wi-Fi frame DMA's buffers must sit below 0x01C20000 (main RAM): {bad} at "
+                          f"{', '.join(hex(sym(n)) for n in bad)}")
+        else:
+            notes.append("own WiFi stack: nothing of JieLi's linked, the frame DMA's buffers at "
+                         f"{sym('wifi_txb'):#x} / {sym('wifi_rxb'):#x} (below 0x01C20000)" + (", Ableton Link (GPL-3.0-only)" if LINK else ""))
     if os.environ.get("FM1B_POOL_SPARE", "").isdigit():   # an app's own build for itself (a demo build with mirror)
         spare = int(os.environ["FM1B_POOL_SPARE"])
     if "SRAM" in LAYOUT:                          # device/app.ld: one packed region, one budget
@@ -1119,6 +1160,7 @@ def mmio_check():
     errors = []
     skip = CONF.get("mmio_skip", [])
     files = [*(SRC / "device").glob("*.[ch]"), *(SRC / "include").glob("*.h"), *(SRC / "lib").glob("*.[ch]"),
+             *((SRC / "wifi").glob("*.[ch]") if WIFI_OWN else []), *((SRC / "link").glob("*.[ch]") if LINK else []),
              *[f for f in APP.rglob("*.[ch]") if "build" not in f.relative_to(APP).parts
                and not any(str(f.relative_to(APP)).startswith(v) for v in CONF.get("vendored", []))]]
     for f in sorted(files):
@@ -1222,6 +1264,7 @@ def build_host():
                          out / "o2")
     cmd = [os.environ.get("CC", "cc"), "-O2", "-ffp-contract=off", "-std=c99", "-Wall", "-Wextra",
            "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *opt_flags(), f"-DFM1B_BUILD={build_id():#010x}u", *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_BT_AUDIO=1"] * (BLE and OWN and bool(CONF.get("bt_audio"))), *(bta_mem_flags() if BLE and OWN else []), *["-DFM1B_WIFI=1"] * WIFI,
+           *wifi_own_flags(host=True),
            *(f"-I{d}" for d in (SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            "-o", str(exe), str(SRC / "host" / "plat_host.c"), *o2_objs, "-lm"]
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -1325,7 +1368,7 @@ def build_web():
                            emu / "web")
     parts = emu_parts()
     cmd = ["emcc", "-O2", "-ffp-contract=off", "-std=gnu99", "-Wall", "-Wno-unused-function", "-Wno-unused-parameter",
-           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *opt_flags(), *(f"-DFM1B_EMU_{p.upper()}=1" for p in parts), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_BT_AUDIO=1"] * (BLE and OWN and bool(CONF.get("bt_audio"))), *(bta_mem_flags() if BLE and OWN else []), *["-DFM1B_WIFI=1"] * WIFI, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
+           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *opt_flags(), *(f"-DFM1B_EMU_{p.upper()}=1" for p in parts), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_BT_AUDIO=1"] * (BLE and OWN and bool(CONF.get("bt_audio"))), *(bta_mem_flags() if BLE and OWN else []), *["-DFM1B_WIFI=1"] * WIFI, *wifi_own_flags(host=True), *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
            *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            *wf, "--no-entry", "-sSTANDALONE_WASM", "-sSTACK_SIZE=1048576", "-sINITIAL_MEMORY=33554432", "-sFILESYSTEM=0",
            "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *o2_objs,
@@ -1465,7 +1508,7 @@ def build_rfm1():
 
 
 def main():
-    global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, OWN, WIFI, CPU2, STEM
+    global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, OWN, WIFI, WIFI_OWN, LINK, WIFI_AP, CPU2, STEM
     ap = argparse.ArgumentParser()
     ap.add_argument("app", type=Path, help="the app's directory (with fm1.toml)")
     ap.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity id_prefix + XXYYZZ, version string X.Y[.Z]")
@@ -1483,6 +1526,26 @@ def main():
     if CONF.get("ble_stack", "jieli") not in ("jieli", "own"):
         raise SystemExit(f"fm1.toml ble_stack {CONF['ble_stack']!r}: \"jieli\" or \"own\"")
     WIFI = bool(CONF.get("wifi"))
+    if CONF.get("wifi_stack", "jieli") not in ("jieli", "own"):
+        raise SystemExit(f"fm1.toml wifi_stack {CONF['wifi_stack']!r}: \"jieli\" or \"own\"")
+    WIFI_OWN = WIFI and CONF.get("wifi_stack", "jieli") == "own"
+    if WIFI_OWN:
+        WIFI = False                              # (WIFI: JieLi's libraries and lwIP; none of them here)
+        if not OWN and not a.no_ble:
+            raise SystemExit("fm1.toml wifi_stack = \"own\": with ble = true and ble_stack = \"own\" (the Wi-Fi side "
+                             "is the radio the own Bluetooth stack starts)")
+        if a.no_ble:
+            raise SystemExit("wifi_stack = \"own\" needs the own Bluetooth stack's radio: not with --no-ble")
+        if CONF.get("net"):
+            raise SystemExit("fm1.toml net: lwIP's sockets, not with wifi_stack = \"own\" (plat_net_udp_* instead)")
+    for key in ("link", "wifi_ap"):
+        if CONF.get(key) and not WIFI_OWN:
+            raise SystemExit(f"fm1.toml {key} = true: with wifi = true and wifi_stack = \"own\"")
+    LINK = WIFI_OWN and bool(CONF.get("link"))
+    WIFI_AP = WIFI_OWN and bool(CONF.get("wifi_ap"))
+    if LINK and CONF.get("licence") not in ("GPL-3.0-only", "GPL-3.0-or-later"):
+        raise SystemExit("fm1.toml link = true: Ableton Link (link/) is GPL-3.0-only, so the firmware as a whole is: "
+                         "say licence = \"GPL-3.0-only\" (or \"GPL-3.0-or-later\") in fm1.toml (LICENSING.md)")
     CPU2 = (bool(CONF.get("cpu2")) and os.environ.get("FM1B_CPU2") != "0") or os.environ.get("FM1B_CPU2") == "1"
     if BLE and WIFI:
         raise SystemExit("fm1.toml: ble and wifi together are not supported yet (one radio a build; --no-ble for WiFi)")
@@ -1532,6 +1595,8 @@ def main():
         v = os.environ.get(env)
         return v == "1" if v in ("0", "1") else bool(CONF.get(key, default))
     parts = [("Bluetooth MIDI", BLE), ("Bluetooth MIDI devices", BLE and bool(CONF.get("ble_central"))), ("WiFi", WIFI),
+             ("WiFi (own stack)", WIFI_OWN),
+             ("Ableton Link (GPL-3.0-only)", LINK), ("WiFi access point (MODE AP)", WIFI_AP),
              ("USB audio in", on("usb_audio_in", "FM1B_UAC", True)),
              ("USB audio out", on("usb_audio_out", "FM1B_UAC_OUT", True) and on("usb_audio_in", "FM1B_UAC", True)),
              ("screen mirroring", bool(CONF.get("mirror")) or os.environ.get("FM1B_MIRROR") == "1"), ("backup and restore", bool(CONF.get("backup")) and os.environ.get("FM1B_BACKUP") != "0"),

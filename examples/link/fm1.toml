@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# The Link example's build settings (tools/build.py): Wi-Fi on the own stack and Ableton Link
+name = "LINK"
+id_prefix = "FM-1_13"          # package identity: dev FM-1_1300
+usb_manufacturer = "fm1-base"
+usb_product = "LINK FM-1"
+ble = true                     # the radio: the own Bluetooth stack starts it (Bluetooth MIDI comes with it)
+ble_stack = "own"
+wifi = true
+wifi_stack = "own"             # fm1-base's own Wi-Fi (wifi/): nothing of JieLi's
+link = true                    # Ableton Link (link/: GPL-3.0-only)
+licence = "GPL-3.0-only"       # (link = true: the firmware as a whole is GPL-3.0-only)
+usb_audio_in = false
+usb_audio_out = false

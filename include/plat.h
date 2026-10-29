@@ -302,7 +302,8 @@ int plat_bta_streams(void);            /* 1: the last render went to Bluetooth (
 /* WiFi (fm1.toml wifi = true: FM1B_WIFI 1): a station on JieLi's WiFi libraries and the SDK's lwIP, on the same shim.
  * Off until the app turns it on; then it joins the networks it joined before (kept in the app's store object OBJ_WIFI,
  * six, the most recent first). The app's network code runs in a task of its own (plat_net_task) with lwIP's sockets
- * (lwip/sockets.h): a socket call waits, and the main loop must not. A build has Bluetooth or WiFi, not both (yet). */
+ * (lwip/sockets.h): a socket call waits, and the main loop must not. A build with these has Bluetooth or WiFi, not both
+ * (yet); the own stack below (wifi_stack = "own") has both. */
 #ifndef FM1B_WIFI
 #define FM1B_WIFI 0
 #endif
@@ -326,6 +327,121 @@ void plat_wifi_rx(uint32_t *frames, int *rssi);   /* reception: frames received 
 uint32_t plat_wifi_scans(void);        /* scans done since the start: a change means plat_wifi_found has new results */
 int plat_net_task(void (*fn)(void *), void *arg, const char *name);   /* a task for the app's network code (8 KiB
                                                                         * of stack); 0 = made */
+
+/* WiFi on fm1-base's own stack (fm1.toml wifi_stack = "own": FM1B_WIFI 1 and FM1B_WIFI_OWN 1; device/wifi_own.c, wifi/;
+ * from Optimist's Wi-Fi): a WPA2-PSK station (CCMP; open, WPA3-only, TKIP and protected-management networks are listed
+ * but not joined) on the radio the own Bluetooth stack starts (ble_stack = "own": Bluetooth and WiFi together), a small
+ * IP layer (ARP, DHCP, IGMP, UDP: no TCP, no DNS, no sockets: plat_net_task makes nothing). Nothing of JieLi's
+ * linked. Everything above works here too, with these differences: plat_wifi_on(1) is MODE AUTO (unless a mode is
+ * set), plat_wifi_on(0) MODE OFF; four networks are kept (their SSID and the WPA2 key made from the password, never the
+ * password), the most recent first, with the mode: a record of PLAT_WIFI_STORE_SIZE bytes (wifi_nets.h) in the
+ * app's store object OBJ_WIFI, or the app's own: APP_WIFI_STORE (app.h) and
+ *   uint8_t *app_wifi_store(void)      the app's record (it loads it before the main loop; zeros: none yet)
+ *   void app_wifi_store_dirty(void)    fm1-base changed it (a join kept, a network forgotten, the mode): save it
+ * Everything runs from the main loop, a step a pass (plat_yield too). Main loop only, unless said. */
+#ifndef FM1B_WIFI_OWN
+#define FM1B_WIFI_OWN 0
+#endif
+#define PLAT_WIFI_STORE_SIZE 336u
+enum { WIFI_MODE_OFF, WIFI_MODE_AUTO, WIFI_MODE_MAN, WIFI_MODE_AP, WIFI_MODE_AP_MAN };
+void plat_wifi_mode(int mode);         /* OFF: nothing runs (the radio, once started, stays up); MAN: joins when asked;
+                                        * AUTO: and the best saved network heard, at the start and whenever none is
+                                        * joined; AP, AP_MAN: the FM-1 is the access point (wifi_ap = true, below).
+                                        * Kept */
+int plat_wifi_get_mode(void);
+/* the manager's step (finer than plat_wifi_state), and why the last join failed */
+enum { WIFI_STEP_OFF, WIFI_STEP_RADIO, WIFI_STEP_IDLE, WIFI_STEP_SCAN, WIFI_STEP_KEY, WIFI_STEP_AUTH, WIFI_STEP_ASSOC,
+       WIFI_STEP_HANDSHAKE, WIFI_STEP_UP, WIFI_STEP_FAIL, WIFI_STEP_JOINED, WIFI_STEP_PRE };   /* KEY: the key made from the
+                                        * password; JOINED: the handshake done, DHCP next; PRE: the old association
+                                        * ended first; UP: joined (plat_wifi_ip once DHCP answered) */
+enum { WIFI_FAIL_NONE, WIFI_FAIL_RADIO, WIFI_FAIL_NOT_FOUND, WIFI_FAIL_AUTH, WIFI_FAIL_ASSOC, WIFI_FAIL_HANDSHAKE,
+       WIFI_FAIL_KEY, WIFI_FAIL_LOST };   /* KEY: a key frame failed its check on every attempt: the password is wrong;
+                                        * LOST: joined, then the AP went (nothing heard for 8 s) or sent the FM-1 away */
+int plat_wifi_step(void);
+int plat_wifi_fail(void);
+uint32_t plat_wifi_fails(void);        /* failures since the start: a change is a new one */
+struct plat_wifi_ap {                  /* an access point heard (wifi_nets.h struct wn_ap) */
+    uint8_t bssid[6];
+    uint8_t ch, ssid_len, sec;         /* sec: PLAT_WIFI_SEC_* */
+    int8_t rssi;
+    uint8_t ssid[32];
+};
+enum { PLAT_WIFI_SEC_OTHER, PLAT_WIFI_SEC_PSK, PLAT_WIFI_SEC_OPEN };   /* PSK: WPA2-PSK with CCMP (the one joined) */
+int plat_wifi_found_ap(int i, struct plat_wifi_ap *a);   /* the scan's table, strongest first; 0 = none */
+void plat_wifi_scanning(int on);       /* scan again and again while on (a list on screen), nothing joined */
+int plat_wifi_join_ssid(const uint8_t *ssid, uint32_t len, const char *pass);   /* by name (any bytes): its strongest AP;
+                                        * pass 0 or "": the saved key. 0 asked, -1 MODE OFF / AP or a bad name, -2 no
+                                        * password and not kept, -3 the radio not up yet */
+int plat_wifi_joining(struct plat_wifi_ap *a);   /* the AP being joined or joined: 1 */
+int plat_wifi_joined_slot(void);       /* the kept network joined (plat_wifi_saved's i), -1 none */
+int plat_wifi_saved_join(void);        /* the join in hand uses a kept key */
+void plat_wifi_leave(void);            /* the AP told, the link ended (the mode stays) */
+uint32_t plat_wifi_addr(void);         /* the address in host order (192.168.1.42 = 0xC0A8012A), 0 none */
+int64_t plat_wifi_us(void);            /* the IP layer's clock, microseconds (an FM-1: plat_ticks24's) */
+/* UDP (the app's ports, up to 4, Link's included): a datagram to port (unicast to the FM-1, broadcast, or to the group
+ * joined) to rx with its arrival time (plat_wifi_us's); main loop. src_ip in host order */
+int plat_net_udp_open(uint16_t port, void (*rx)(void *ctx, uint32_t src_ip, uint16_t src_port, const uint8_t *p,
+                                                uint32_t n, int64_t at_us), void *ctx);   /* 0, -1 taken / full */
+void plat_net_udp_close(uint16_t port);
+int plat_net_udp_send(uint16_t src_port, uint32_t ip, uint16_t port, const void *p, uint32_t n);   /* ip host order;
+                                        * 512 B at most; 0 sent, -1 no address yet / no way there */
+void plat_net_join(uint32_t group);    /* the multicast group (host order, 0 none) whose datagrams the ports get */
+
+/* MODE AP (fm1.toml wifi_ap = true, with wifi_stack = "own": FM1B_WIFI_AP 1; device/wifi_own_ap.c): the FM-1 is a
+ * WPA2-PSK access point (CCMP) for up to 4 clients (a phone, a laptop), on channel 1..13 (6 by default), at 192.168.4.1,
+ * its clients 192.168.4.2.. by DHCP; a ping to it is answered; the app's UDP ports and Link run on it as on a network
+ * joined (plat_wifi_addr is 192.168.4.1). Its network is kept in the record with the networks: the name (none: FM1- and
+ * the last four digits of the radio's address), the channel and the WPA2 key made from the password (never the
+ * password). WIFI_MODE_AP runs it whenever a key is kept, from power-on; WIFI_MODE_AP_MAN only once started
+ * (plat_wifi_ap_run, or a password set), off again at power-on. The station's manager rests meanwhile. No web server,
+ * no internet behind it. (Declared in every build; defined only with wifi_ap = true.) */
+#ifndef FM1B_WIFI_AP
+#define FM1B_WIFI_AP 0
+#endif
+enum { WIFI_AP_OFF, WIFI_AP_NOKEY, WIFI_AP_STARTING, WIFI_AP_UP, WIFI_AP_FAILED, WIFI_AP_STOPPED };   /* OFF: not an AP
+                                        * mode; NOKEY: no key kept (no access point runs without one); STARTING: the
+                                        * key being made, the radio starting; FAILED: the radio did not start;
+                                        * STOPPED: AP_MAN, not started */
+int plat_wifi_ap_state(void);
+int plat_wifi_ap_set(const uint8_t *ssid, uint32_t len, const char *pass);   /* the network's name (len 0: the
+                                        * automatic one) and password (8..63 printable characters): the key made (a
+                                        * slice a pass) and kept, the access point started again on it (AP_MAN: started).
+                                        * 0, -1 a bad name or password */
+int plat_wifi_ap_set_channel(int ch);  /* 1..13, kept; a running access point moves once it has rested 1.2 s. 0 / -1 */
+int plat_wifi_ap_channel(void);        /* the channel (kept, or the one plat_wifi_ap_start runs) */
+int plat_wifi_ap_name(char *name);     /* the network's name (33 bytes, may be 0): its length */
+int plat_wifi_ap_has_key(void);        /* a key is kept */
+void plat_wifi_ap_forget(void);        /* the key goes (the name and channel stay): the access point stops */
+int plat_wifi_ap_run(int on);          /* AP_MAN: start / stop. 0, -1 not AP_MAN, -2 no key kept */
+int plat_wifi_ap_start(const uint8_t *ssid, uint32_t len, const char *pass, int ch);   /* one not kept, with MODE OFF
+                                        * (until a mode is chosen): 0, -1 not MODE OFF or a bad name / password / channel */
+void plat_wifi_ap_stop(void);          /* .. stopped (the clients told) */
+uint32_t plat_wifi_ap_clients(void);   /* the clients joined (their keys in) */
+int plat_wifi_ap_client(int i, uint8_t mac[6], uint32_t *ip);   /* client slot i (0..3): 1 joined, its address (host
+                                        * order, 0 none yet); 0 none */
+
+/* Ableton Link (fm1.toml link = true, with wifi_stack = "own": FM1B_LINK 1; link/, GPL-3.0-only: a firmware with it is
+ * GPL-3.0-only as a whole): a peer of the tempo / beat / start-stop session on the network joined,
+ * with Live, the iOS apps and Ableton's library. Times: Link's clock, plat_link_now (microseconds; an interrupt may
+ * read it); beats in micro-beats (1,000,000 a beat), tempo in microseconds a beat. Main loop, but plat_link_now and
+ * plat_link_t24 */
+#ifndef FM1B_LINK
+#define FM1B_LINK 0
+#endif
+void plat_link_enable(int on);         /* on: Link runs whenever there is an address (a session of its own at the
+                                        * tempo set, joined to the others'); off: it leaves */
+int plat_link_on(void);                /* it runs */
+uint32_t plat_link_peers(void);        /* the peers in the session (0: alone) */
+int32_t plat_link_mpb(void);           /* the session's tempo (us a beat) */
+int64_t plat_link_beat_at(int64_t us); /* the session's beat at a time; -1 not running */
+int64_t plat_link_time_at(int64_t ub); /* the time of a beat */
+int64_t plat_link_phase(int64_t ub, int64_t quantum_ub);   /* ub modulo the quantum (4 beats: 4000000), in [0, q) */
+int plat_link_playing(void);           /* the session's start / stop */
+int64_t plat_link_play_beat(void);     /* the beat it took effect at */
+void plat_link_set_tempo(int32_t mpb); /* the beat now kept; also the tempo a new session starts with */
+void plat_link_set_playing(int play);  /* from the beat now */
+int64_t plat_link_now(void);           /* Link's clock (us) */
+uint32_t plat_link_t24(int64_t us);    /* plat_ticks24 at a Link time within a minute of now */
 
 /* the 1 kHz tick (app_tick, an app with APP_TICK) runs in the timer interrupt: the main loop locks it out around
  * what they share. It nests, and plat_unlock takes what its plat_lock returned: the outermost unlock switches the

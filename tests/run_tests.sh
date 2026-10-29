@@ -280,5 +280,9 @@ run stack-c1 sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 
     $OUT/stack_c1_test"
 run host-dbgstats sh -c "mkdir -p $OUT/dbgstats && $H/template_host tests/dbgstats.txt $OUT/dbgstats && \
     $PY tests/dbgstats_host_test.py $H/template_host $OUT/dbgstats"
+# the own Wi-Fi stack (wifi/, device/wifi_own.c: wifi_stack = "own", Optimist's) and Ableton Link (link/, GPL-3.0-only,
+# link = true): the station, the crypto, the IP layer, the simulator's access point, Link; the Link example on a simulated
+# network in the host simulator
+if sh tests/wifi/run.sh; then :; else FAIL=1; fi
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL

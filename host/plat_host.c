@@ -94,6 +94,13 @@
  *   sysex_log FILE|off           every frame the app sends from now on, appended to FILE as it went out (raw)
  *   usb unplug|plug|stall|read   the computer: the cable out, in again (a new plat_usb_session), the computer stops
  *                                reading the device's SysEx, reads again
+ *   wifi_net NAME PASS [CH] | wifi_net off   (wifi_stack = "own") the simulated network (host/wifi_air.c): an access
+ *                                point on channel CH (6), its DHCP server (192.168.50.2..); off: it is gone
+ *   wifi mode OFF|AUTO|MAN | wifi join NAME [PASS] | wifi leave | wifi scan   the FM-1's (plat_wifi_*)
+ *   link on|off | link tempo BPM | link play 0|1   (link = true) the FM-1's Link (plat_link_*)
+ *   link_peer BPM | link_peer tempo BPM | link_peer play 0|1 | link_peer off   a Link peer on the access point
+ *                                (expect wifi_state, wifi_step, wifi_fail, wifi_ip_last, wifi_found, wifi_saved, wifi_mode,
+ *                                link_peers, link_bpm_x10, link_playing, link_phase_us, peer_peers, peer_bpm_x10, ...)
  * FILE "out:NAME" for backup, restore, backup_damage and mirror: NAME in OUTDIR (fbdump: always there).
  * NAME_host --serve [OUTDIR] (FM1B_MIRROR, FM1B_COMPANION): driven over stdin by a tool, as an FM-1 over USB:
  *   sx HEX      one SysEx message from the host (F0 .. F7, hex): the mirror's requests (cmd 0x50, 0x54), the companion's (0x60..)
@@ -888,7 +895,7 @@ static int bta_script(const char *what, const char *name, int lineno)   /* "bta 
     return 1;
 }
 #endif
-#if FM1B_WIFI
+#if FM1B_WIFI && !FM1B_WIFI_OWN
 /* WiFi (FM1B_WIFI): a stand-in, two networks around ("Home", kept, and "Cafe", open), on 0.5 s after asked, joined
  * 1.5 s after (an address 0.5 s later); the network code (fm1.toml net) is the device's alone: plat_net_task runs
  * nothing here */
@@ -1920,11 +1927,25 @@ static double now_ns(void)
     return (double)t.tv_sec * 1e9 + (double)t.tv_nsec;
 }
 
+#if FM1B_WIFI_OWN
+/* WiFi on the own stack (wifi_stack = "own"): the device's own code (device/wifi_own.c) over a simulated radio and
+ * network (host/wifi_air.c: an access point, its DHCP server, with Link a Link peer), every millisecond */
+#include "wifi_own.c"
+#include "wifi_air.c"
+static void wifi_tick(void)
+{
+    air_tick();
+    wifi_poll();
+}
+#endif
 static void boot(void)
 {
     hcr_boot();                                     /* a crash before this boot into the flash history (main_fm1.c) */
     hds_boot();                                     /* the debug stats' queue, a crash's snapshot (main_fm1.c) */
     palette_set(APP_PALETTE);                       /* as the device does at boot */
+#if FM1B_WIFI_OWN
+    wifi_own_forget();                              /* (a reboot: the Wi-Fi stack's RAM as after a restart) */
+#endif
     app_init();
     lcd_fill(0, 0, 240, 240, 0);
     ble_state = BLE_OFF;                            /* Bluetooth starts at every boot, as on the device */
@@ -2131,6 +2152,11 @@ static int expect(const char *what, const char *val)
     int got;
 #ifdef APP_HOST_EXPECT
     if (app_expect(what, &got))                   /* the app's own state (app.h), first: it may count its own way */
+        ;
+    else
+#endif
+#if FM1B_WIFI_OWN
+    if (air_expect(what, &got))                   /* the own Wi-Fi stack and the simulated network (host/wifi_air.c) */
         ;
     else
 #endif
@@ -2523,6 +2549,10 @@ int main(int argc, char **argv)
         plat_host_line = line;
 #ifdef APP_HOST_CMD
         if (app_host_cmd(cmd, a, b, c, d))          /* the app's own commands (app.h; more words: plat_host_line) */
+            continue;
+#endif
+#if FM1B_WIFI_OWN
+        if (air_cmd(cmd, a, b, c))                  /* the simulated network (wifi_net, link_peer) and wifi, link */
             continue;
 #endif
         if (!strcmp(cmd, "wait"))
