@@ -35,6 +35,14 @@
  *                                flash's byte at ADDR, as plat_data reads it; -1 outside its windows)
  *   reboot                       re-run boot from the simulated flash (persistence test)
  *                                (the app's plat_restart does the same, at the end of its millisecond; expect restarts)
+ *   crash [PC [VEC]]             a CPU fault (hex; 02012344, 3): the .noinit crash record as felucca-bsp's fm1_fault_c
+ *                                writes it (its count one up, the registers a pattern), then the restart; the boot keeps
+ *                                it in the flash history (device/crashlog.c) as the device's does
+ *   crash_in_save [PC [VEC]]     the same, struck while the boot's save was under way (that boot keeps nothing)
+ *   power                        a power-off and on: .noinit lost (the crash record), the flash kept, then the boot
+ *                                (expect crashes: the history's records, crash_count: .noinit's count, crash_boot_rc:
+ *                                the last boot's save, 1 kept, 0 nothing new, < 0 not kept; the history over "sysex
+ *                                F0 7D 4C 48 F7", cleared with "sysex F0 7D 4C 48 43 4C 52 F7")
  *   data FILE OFFSET             a file into the simulated data area (plat_data) at OFFSET, in any of its windows
  *                                (plat.h), up to that window's end
  *   res 0|1                      (FM1B_RES) the resource region there (1, at start) or not (0: an FM-1 updated
@@ -1122,6 +1130,77 @@ int plat_console_read(void) { return -1; }
 uint32_t plat_console_room(void) { return 0; }
 uint32_t plat_console_write(const void *p, uint32_t n) { (void)p, (void)n; return 0; }
 void plat_console_present(int on) { (void)on; }
+/* the crash history (device/crashlog.c) over the simulated flash's staging sectors (data_area holds the gap between
+ * the windows: plat_data refuses it, as on the device). The device's .noinit crash record simulated: "crash" fills it
+ * as felucca-bsp's fm1_fault_c does and restarts (.noinit kept), "power" a power-off and on (.noinit lost, the flash
+ * kept); each boot hands it to cl_boot as main_fm1.c does. "sysex F0 7D 4C 48 F7" asks for the history (the platform's
+ * frame, before the app's), expect crashes / crash_count / crash_boot_rc read it */
+#ifndef FM1B_BUILD
+#define FM1B_BUILD 0u                               /* (tools/build.py's build_id) */
+#endif
+#include "crashlog.c"
+static int cl_in(uint32_t off, uint32_t n) { return off >= CL_LO && n <= CL_SECTORS * 0x1000u - (off - CL_LO); }
+static int cl_read(uint32_t off, void *dst, uint32_t n)
+{
+    data_init();
+    if (!cl_in(off, n))
+        return -1;
+    memcpy(dst, &data_area[off - DATA_BASE], n);
+    return 0;
+}
+static int cl_erase(uint32_t off)
+{
+    data_init();
+    if (!cl_in(off, 0x1000u) || (off & 0xFFFu))
+        return -1;
+    memset(&data_area[off - DATA_BASE], 0xFF, 0x1000u);
+    return 0;
+}
+static int cl_prog(uint32_t off, const void *src, uint32_t n)
+{
+    uint32_t i;
+    data_init();
+    if (!cl_in(off, n) || (off & 0xFFu) + n > 256u)
+        return -1;                                  /* (as the device's driver: within a page) */
+    for (i = 0; i < n; i++)
+        data_area[off - DATA_BASE + i] &= ((const uint8_t *)src)[i];
+    return 0;
+}
+static int cl_send(const uint8_t *f, uint32_t n) { plat_sysex_send(f, n); return 0; }   /* (its answer: the device ignores it too) */
+#define HCR_MAGIC 0x43525348u                       /* felucca-bsp's FM1_CRASH_MAGIC, "CRSH" */
+static struct {                                     /* the device's .noinit: fm1_crash, fm1_crash_ctx, fm1b_dbg's two */
+    uint32_t magic, count, vec, pc, rets, sp, uptime_ms;
+    uint32_t r[16], usp;
+    uint32_t kept, busy;
+} hcr;
+static uint32_t hcr_boot_ms;                        /* (now_ms at the last boot: the crash's uptime) */
+static int hcr_rc;                                  /* the last boot's cl_boot: 1 kept, 0 nothing new, < 0 not kept */
+static void hcr_crash(uint32_t pc, uint32_t vec, int in_save)   /* a fault, as fm1_fault_c records it */
+{
+    uint32_t i;
+    hcr.count = hcr.magic == HCR_MAGIC ? hcr.count + 1u : 1u;
+    hcr.magic = HCR_MAGIC;
+    hcr.vec = vec, hcr.pc = pc, hcr.rets = pc - 0x40u, hcr.sp = 0x01C7A000u - 4u * hcr.count;
+    hcr.uptime_ms = now_ms - hcr_boot_ms;
+    for (i = 0; i < 16u; i++)
+        hcr.r[i] = 0x11111111u * i ^ hcr.count;
+    hcr.usp = hcr.sp + 0x100u;
+    if (in_save)
+        hcr.busy = 1;                               /* (crash_in_save: the boot's save under way when it struck) */
+}
+static void hcr_boot(void)                          /* main_fm1.c fm1_main's: a crash since the last boot, kept */
+{
+    cl_rec_t r;
+    hcr_boot_ms = now_ms;
+    hcr_rc = 0;
+    if (hcr.magic != HCR_MAGIC)
+        return;
+    memset(&r, 0, sizeof r);
+    r.count = hcr.count, r.vec = hcr.vec, r.pc = hcr.pc, r.rets = hcr.rets, r.sp = hcr.sp, r.uptime_ms = hcr.uptime_ms;
+    r.build = FM1B_BUILD, r.flags = CL_CTX, r.usp = hcr.usp, r.ssp = hcr.usp - 0x800u;
+    memcpy(r.r, hcr.r, sizeof r.r);
+    hcr_rc = cl_boot(&r, &hcr.kept, &hcr.busy);
+}
 /* no host to pull from (an app's transfer is tested on its own, or by writing the flash: "data") */
 int plat_host_read(uint32_t addr, uint8_t *dst, uint32_t n) { (void)addr, (void)dst, (void)n; return -1; }
 void plat_host_patience(uint32_t try_ms, uint32_t total_ms) { (void)try_ms, (void)total_ms; }
@@ -1191,8 +1270,9 @@ int plat_store_save(uint32_t obj, const void *src, uint32_t len)
 /* the whole flash as a file (flash_dump / flash_load, FM1B_FLASH): a 1 MiB image at the FM-1's offsets, a reference
  * FM-1's flash read whole, say. What the simulator has of it: plat.h's data windows, byte for byte, and the store's
  * objects as device/storage.c keeps them (each at its APP_STORE_MAP offset, A then B: a 32-byte header at 0, the
- * payload at 256; the current copy is the valid one with the highest seq). The rest (the head, the app area, the
- * update's staging, the SDK's sectors) is not the simulator's: erased in a dump, left out of a load */
+ * payload at 256; the current copy is the valid one with the highest seq), and the crash history's two sectors in the
+ * update's staging (device/crashlog.c CL_LO). The rest (the head, the app area, the rest of the staging, the SDK's
+ * sectors) is not the simulator's: erased in a dump, left out of a load */
 #define HIMG_SIZE 0x100000u
 #define HIMG_MAGIC 0x30583058u                  /* storage.c's ST_MAGIC, "X0X0" */
 #define HIMG_PAYLOAD 256u                       /* storage.c's ST_PAYLOAD_OFF */
@@ -1237,6 +1317,7 @@ static int himg_dump(const char *path)
     for (off = 0; off < HIMG_SIZE; off += 0x1000u)
         if (PLAT_DATA_OK(off, 0x1000u))
             memcpy(&himg[off], plat_data(off), 0x1000u);
+    memcpy(&himg[CL_LO], &data_area[CL_LO - DATA_BASE], CL_SECTORS * 0x1000u);   /* (the crash history) */
     for (obj = 0; obj < OBJ_NOBJ; obj++) {      /* copy A, seq 1 (B erased): what a first save leaves */
         uint32_t s = himg_sector(obj, 0);
         uint8_t *h = &himg[s];
@@ -1273,6 +1354,7 @@ static int himg_load(const char *path, uint32_t *objs)   /* 0 = loaded (*objs: t
     for (off = 0; off < HIMG_SIZE; off += 0x1000u)
         if (PLAT_DATA_OK(off, 0x1000u))
             memcpy(&data_area[off - DATA_BASE], &himg[off], 0x1000u);
+    memcpy(&data_area[CL_LO - DATA_BASE], &himg[CL_LO], CL_SECTORS * 0x1000u);   /* (the crash history) */
     *objs = 0;
     for (obj = 0; obj < OBJ_NOBJ; obj++) {
         uint32_t sa = 0, sb = 0;
@@ -1672,6 +1754,7 @@ static double now_ns(void)
 
 static void boot(void)
 {
+    hcr_boot();                                     /* a crash before this boot into the flash history (main_fm1.c) */
     palette_set(APP_PALETTE);                       /* as the device does at boot */
     app_init();
     lcd_fill(0, 0, 240, 240, 0);
@@ -1866,6 +1949,13 @@ static int expect(const char *what, const char *val)
         got = (int)restarts;
     else if (!strcmp(what, "store_tries"))
         got = (int)store_tries;
+    else if (!strcmp(what, "crashes")) {           /* the flash history's records, as a readout lists them (at most 8) */
+        uint32_t at[CL_KEEP];
+        got = (int)cl_list(at);
+    } else if (!strcmp(what, "crash_count"))       /* the simulated .noinit record's count (0: none, a power-on) */
+        got = hcr.magic == HCR_MAGIC ? (int)hcr.count : 0;
+    else if (!strcmp(what, "crash_boot_rc"))       /* the last boot's cl_boot: 1 kept, 0 nothing new, < 0 not kept */
+        got = hcr_rc;
 #if FM1B_BACKUP
     else if (!strcmp(what, "restore_rc"))
         got = restore_rc;
@@ -1990,6 +2080,8 @@ static int serve(const char *dir)
             }
             if (n < 3 || raw[0] != 0xF0 || raw[n - 1] != 0xF7)
                 continue;
+            if (cl_request(raw + 1, n - 2u))
+                continue;                            /* (the crash history: the platform's, before the app's) */
             d = sv_unpack7(raw + 1, n - 2, dec);
             if (d >= 7 && dec[0] == 0 && dec[1] == 0x59 && (uint32_t)(dec[3] | dec[4] << 8 | dec[5] << 16) + 7u == d) {
                 uint32_t sum = 0;
@@ -2082,6 +2174,8 @@ static int hsx_in(const char *hex)
 #endif
     if (!ok || n - 2u > HOST_SX_MAX || !hsx_session)
         return 0;                                 /* (a status byte inside, or too long: the device drops it) */
+    if (cl_request(raw + 1, n - 2u))
+        return 0;                                 /* (the crash history: the platform's, before the app's) */
 #ifdef APP_SYSEX
     (void)app_sysex(raw + 1, n - 2u);
 #endif
@@ -2373,6 +2467,18 @@ int main(int argc, char **argv)
 #endif
             usbh_reboot();                      /* (every boot is a device: plat_usb_host) */
             boot();
+        } else if (!strcmp(cmd, "crash") || !strcmp(cmd, "crash_in_save") || !strcmp(cmd, "power")) {
+            if (!strcmp(cmd, "power"))
+                memset(&hcr, 0, sizeof hcr);    /* (.noinit lost; the flash kept) */
+            else                                /* crash [PC [VEC]] (hex): the fault, then the restart */
+                hcr_crash(a[0] ? (uint32_t)strtoul(a, 0, 16) : 0x02012344u, b[0] ? (uint32_t)strtoul(b, 0, 16) : 3u,
+                          cmd[5] != 0);
+#ifdef APP_HOST_REBOOT
+            app_host_reboot();
+#endif
+            boot();
+            printf("  %s at %u ms: restarted, crash count %u, history %d\n", cmd, now_ms,
+                   hcr.magic == HCR_MAGIC ? hcr.count : 0u, hcr_rc);
         } else if (!strcmp(cmd, "listen")) {
             static const uint8_t HELLO[] = {ANN_H0, ANN_H1, ANN_H2, ANN_HELLO, ANN_VER};
             sim_listen = 1;

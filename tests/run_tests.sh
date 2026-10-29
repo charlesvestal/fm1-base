@@ -211,5 +211,13 @@ run sysex-app sh -c "$PY tools/build.py tests/sysex_app --host && \
 # the USB port as a MIDI host (usb_host, plat_usb_host, plat_usb_host_name) in the host simulator's model of it: tests/usbh_app
 run usbh-app sh -c "$PY tools/build.py tests/usbh_app --host && \
     tests/usbh_app/build/host/usbhtest_host tests/usbh_app/tests/usbh.txt tests/usbh_app/build/host"
+# the crash history in flash (device/crashlog.c): the ring against a simulated NOR (filled past both sectors, a power
+# cut at every program and in an erase, the boot's dedup across restarts and power-offs, a save cut short not tried
+# again, the frames, the clear); then in the template's simulator (crash, restart, power, the request's frames and
+# "end N", the clear, a power-on with the dumped flash) read through tools/fm1_remote.py's parser and its --elf symbols
+run crashlog sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -o $OUT/crashlog_test tests/crashlog_test.c && \
+    $OUT/crashlog_test"
+run host-crashlog sh -c "mkdir -p $OUT/crashlog && $H/template_host tests/crashlog.txt $OUT/crashlog && \
+    $PY tests/crashlog_host_test.py $H/template_host $OUT/crashlog"
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL

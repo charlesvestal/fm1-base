@@ -14,9 +14,13 @@ or by a program (an agent). Needs mido with python-rtmidi.
     wait MS                                 let it run (with listen: print what it says meanwhile)
     listen                                  a screen reader starts listening: every message it says is printed
     screen                                  what is on the screen, in words (the screen reader's channel)
-    log                                     the last crash, the registers at the last four, the supplies, the
-                                            clock as the boot loader left it, and the radio's log
-                                            (all survive a restart)
+    log                                     the last crash, the registers at the last four, the crash history kept
+                                            in flash, the supplies, the clock as the boot loader left it, and the
+                                            radio's log (all survive a restart; the history a power-off too)
+    crashes [--clear]                       the crash history kept in flash (the newest 8, oldest first: it
+                                            survives a power-off; an install starts it again), each crash's pc
+                                            and rets as function+offset with --elf; --clear erases it
+  options (anywhere): --elf FILE            the firmware's ELF (build/NAME.elf) for crashes' symbols
     release-all                             every button and key up, MASTER the pot's own
     wifi on | wifi off | wifi scan          WiFi (a firmware with wifi = true): on, off, look for networks
     wifi status | wifi found | wifi saved   its state, network, address and signal; the networks the scan found;
@@ -33,12 +37,18 @@ or by a program (an agent). Needs mido with python-rtmidi.
   e.g.  tools/fm1_remote.py tap REC wait 800 screen
 
 The firmware's side: device/main_fm1.c remote_frame (F0 7D 4C 43 ...), log_frame (F0 7D 4C 47), wifi_frame
-(F0 7D 4C 57), and the screen
-reader's protocol (fm1-reader PROTOCOL.md: F0 7D 53 52)."""
+(F0 7D 4C 57), the crash history (device/crashlog.c, F0 7D 4C 48: its frames documented above log_frame), and the
+screen reader's protocol (fm1-reader PROTOCOL.md: F0 7D 53 52).
+
+The crash history's frames, for a program (parse_crash_frames reads them):
+  F0 7D 4C 48 F7                  asks; the answer, one frame a record, the oldest first, F0 7D 4C 48 <ASCII> F7:
+    crash I/N n COUNT vec HEX pc HEX rets HEX sp HEX ms DEC emu HEX dbg HEX psr HEX build HEX seq DEC
+    regs I/N r0 HEX .. r15 HEX usp HEX ssp HEX        (when the record has the registers)
+  then "end N" (N records: none is "end 0", no end is an answer lost)
+  F0 7D 4C 48 43 4C 52 F7         ("LHCLR") erases it; the answer "cleared" or "clear failed"."""
+import struct
 import sys
 import time
-
-import mido
 
 import fm1ports
 
@@ -53,21 +63,124 @@ LD = [0x7D, 0x4C, 0x44]                    # Bluetooth MIDI devices, own stack (
 DEV_OP = {"scan": 1, "stop": 2, "found": 3, "connect": 4, "disconnect": 5, "status": 6}
 
 
+LH = [0x7D, 0x4C, 0x48]                    # the crash history in flash (device/crashlog.c cl_request)
+LH_CLEAR = LH + [0x43, 0x4C, 0x52]         # "CLR": erase it
+CRASH_HEX = ("vec", "pc", "rets", "sp", "emu", "dbg", "psr", "build")
+
+
 def nibbles(text):
     return [v for byte in text.encode() for v in (byte >> 4, byte & 15)]
 
 
+def parse_crash_frames(texts):
+    """the history's answer (each frame's text after F0 7D 4C 48) into (records, end): records a list of dicts, the
+    oldest first (i, n, count, vec, pc, rets, sp, ms, emu, dbg, psr, build, seq; regs: r0..r15, usp, ssp when sent),
+    end the "end N" count, None when the end frame never came (an answer lost: not the same as none)"""
+    recs, end = {}, None
+    for t in texts:
+        t = t.decode("latin1") if isinstance(t, (bytes, bytearray)) else t
+        w = t.split()
+        if not w:
+            continue
+        if w[0] == "end" and len(w) == 2:
+            end = int(w[1])
+        elif w[0] in ("crash", "regs") and len(w) % 2 == 0:
+            i, n = (int(x) for x in w[1].split("/"))
+            kv = dict(zip(w[2::2], w[3::2]))
+            r = recs.setdefault(i, {"i": i, "n": n})
+            if w[0] == "crash":
+                for k, v in kv.items():
+                    r[k] = int(v, 16) if k in CRASH_HEX else int(v)
+                r["count"] = r.pop("n", r.get("count"))
+                r["n"] = n
+            else:
+                r["regs"] = {k: int(v, 16) for k, v in kv.items()}
+    return [recs[i] for i in sorted(recs)], end
+
+
+class ElfSymbols:
+    """an ELF's function and object symbols (32- or 64-bit, little-endian: the FM-1's is ELF32), for an address as
+    function+offset, addr2line's way without the toolchain"""
+
+    def __init__(self, path):
+        d = open(path, "rb").read()
+        if d[:4] != b"\x7fELF" or d[5] != 1:
+            raise SystemExit(f"{path}: not a little-endian ELF")
+        is64 = d[4] == 2
+        if is64:
+            shoff, = struct.unpack_from("<Q", d, 0x28)
+            shentsize, shnum = struct.unpack_from("<HH", d, 0x3A)
+        else:
+            shoff, = struct.unpack_from("<I", d, 0x20)
+            shentsize, shnum = struct.unpack_from("<HH", d, 0x2E)
+        secs = []
+        for k in range(shnum):
+            o = shoff + k * shentsize
+            if is64:
+                _, typ, _, _, off, size, link, _, _, entsize = struct.unpack_from("<IIQQQQIIQQ", d, o)
+            else:
+                _, typ, _, _, off, size, link, _, _, entsize = struct.unpack_from("<IIIIIIIIII", d, o)
+            secs.append((typ, off, size, link, entsize))
+        syms = []
+        for typ, off, size, link, entsize in secs:
+            if typ != 2 or not entsize:                 # SHT_SYMTAB
+                continue
+            stroff = secs[link][1]
+            for j in range(size // entsize):
+                o = off + j * entsize
+                if is64:
+                    name, info, _, _, value, sz = struct.unpack_from("<IBBHQQ", d, o)
+                else:
+                    name, value, sz, info, _, _ = struct.unpack_from("<IIIBBH", d, o)
+                if info & 15 not in (1, 2) or not value:      # STT_OBJECT, STT_FUNC
+                    continue
+                end = d.index(b"\0", stroff + name)
+                syms.append((value, sz, d[stroff + name:end].decode("latin1")))
+        self.syms = sorted(syms)
+
+    def name(self, addr):
+        """addr as "function+0xOFF" (the symbol at or below it: inside its size, or the nearest when sizes are 0);
+        "?" none"""
+        best = None
+        for value, sz, nm in self.syms:
+            if value > addr:
+                break
+            if not sz or addr < value + sz:
+                best = (value, nm)
+        if best is None:
+            return "?"
+        return f"{best[1]}+{addr - best[0]:#x}"
+
+
+def format_crash(r, elf=None):
+    """one record as lines for a reader"""
+    where = (lambda a: f" ({elf.name(a)})") if elf else (lambda a: "")
+    lines = [f"crash {r['i']}/{r['n']}: n {r['count']} vec {r['vec']:#x} pc {r['pc']:08X}{where(r['pc'])} "
+             f"rets {r['rets']:08X}{where(r['rets'])}",
+             f"  sp {r['sp']:08X} at {r['ms']} ms, emu {r['emu']:08X} dbg {r['dbg']:08X} psr {r['psr']:08X}, "
+             f"build {r['build']:08X}, seq {r['seq']}"]
+    regs = r.get("regs")
+    if regs:
+        rs = [f"r{k} {regs[f'r{k}']:08X}" for k in range(16)]
+        lines += ["  " + " ".join(rs[k:k + 8]) for k in (0, 8)]
+        lines.append(f"  usp {regs['usp']:08X} ssp {regs['ssp']:08X}")
+    return lines
+
+
 class FM1:
-    def __init__(self, port=None):
+    def __init__(self, port=None, elf=None):
+        import importlib
+        self.mido = importlib.import_module("mido")   # (here: the parser above needs no MIDI)
         try:
-            self.inp, self.out, self.name = fm1ports.connect(port, mido=mido)
+            self.inp, self.out, self.name = fm1ports.connect(port, mido=self.mido)
         except LookupError as e:
             raise SystemExit(f"fm1_remote: {e}")
         self.btn = self.keys = 0
         self.listening = False
+        self.elf = ElfSymbols(elf) if elf else None
 
     def sysex(self, data):
-        self.out.send(mido.Message("sysex", data=data))
+        self.out.send(self.mido.Message("sysex", data=data))
 
     def frames(self, head, secs, until=None):
         got, t = [], time.time()
@@ -160,6 +273,25 @@ class FM1:
                     if f != b"end":
                         print("log:", f.decode("latin1", "replace"))
                 i += 1
+            elif c == "crashes":
+                clear = a == "--clear"
+                if clear:
+                    self.sysex(LH_CLEAR)
+                    got = self.frames(LH, 3.0, until=lambda f: f in (b"cleared", b"clear failed"))
+                    print("crashes:", got[-1].decode("latin1") if got else "no answer (an older firmware?)")
+                else:
+                    self.sysex(LH)
+                    recs, end = parse_crash_frames(self.frames(LH, 3.0, until=lambda f: f.startswith(b"end ")))
+                    if end is None:
+                        print("crashes: no answer (an older firmware, or the answer lost)")
+                    elif not recs:
+                        print("crashes: none saved")
+                    for r in recs:
+                        for line in format_crash(r, self.elf):
+                            print(line)
+                    if end is not None and end != len(recs):
+                        print(f"crashes: {end} sent, {len(recs)} read: some frames lost")
+                i += 2 if clear else 1
             elif c == "wifi":
                 op = WIFI_OP.get(a)
                 if op is None:
@@ -211,11 +343,18 @@ class FM1:
 
 def main(argv):
     port = None
+    elf_path = None
+    if "--elf" in argv:                          # (anywhere: the firmware's ELF for crashes' symbols)
+        k = argv.index("--elf")
+        if k + 1 >= len(argv):
+            sys.exit("--elf FILE")
+        elf_path = argv[k + 1]
+        argv = argv[:k] + argv[k + 2:]
     if argv[:1] == ["--port"] and len(argv) > 1:
         port, argv = argv[1], argv[2:]
     if not argv:
         sys.exit(__doc__)
-    FM1(port).run(argv)
+    FM1(port, elf_path).run(argv)
 
 
 if __name__ == "__main__":

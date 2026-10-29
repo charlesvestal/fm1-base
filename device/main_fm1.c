@@ -21,6 +21,8 @@ struct fm1b_dbg {
     uint32_t magic, halves, max_us, nested, in_audio, late, timer_irqs, ui_frames;
     uint32_t last_us, cpu_q12, boots, stage;
     uint32_t crash_seen;                            /* the crash count already reported at a boot */
+    uint32_t crash_kept, crash_saving;              /* the crash count already in the flash history; a boot's save of it
+                                                     * under way (crashlog.c cl_boot: one cut short is not tried again) */
 } fm1b_dbg __attribute__((section(".noinit")));
 static uint8_t safe_mode;                           /* two failed boots: no audio, USB on (safe_main) */
 int8_t clock_fix;                                   /* fm1_clock_stock() at the start: 0 stock already, 1 set, -1 failed */
@@ -237,6 +239,53 @@ static void hexs(char *b, uint32_t v)
         b[i] = "0123456789ABCDEF"[(v >> (28u - 4u * i)) & 15u];
     b[8] = 0;
 }
+
+/* the crash history in flash (crashlog.c: the staging area's 0xE2000..0xE3FFF), the boot's save and the readouts */
+#ifndef FM1B_BUILD
+#define FM1B_BUILD 0u                               /* (tools/build.py's build_id) */
+#endif
+#include "crashlog.c"
+_Static_assert(CL_LO >= OTA_AREA + 0x2000u && CL_LO + CL_SECTORS * 0x1000u <= (OTA_RES & ~0xFFFu),
+               "the crash history: in ota.c's staging, past the loader's head and backup.c's journal, before its record");
+#if FM1B_BACKUP
+_Static_assert(RS_REC + 0x1000u <= CL_LO, "the crash history: off backup.c's journal record");
+#endif
+static int cl_in(uint32_t off, uint32_t n) { return flash_ok && off >= CL_LO && n <= CL_SECTORS * 0x1000u - (off - CL_LO); }
+static int cl_read(uint32_t off, void *dst, uint32_t n) { return cl_in(off, n) ? st_read(off, dst, n) : -1; }
+static int cl_erase(uint32_t off)                   /* (the main loop's too: the clear, sliced as plat_data_erase's) */
+{
+    int rc;
+    if (!cl_in(off, 0x1000u) || (off & 0xFFFu))
+        return -1;
+    fm1_wdt_feed();
+    rc = data_erase(off);
+    fm1_wdt_feed();
+    return rc;
+}
+static int cl_prog(uint32_t off, const void *src, uint32_t n)
+{
+    return cl_in(off, n) ? fl_write(off, (const uint8_t *)src, n) : -1;   /* (src: a record on the stack, RAM) */
+}
+static int cl_send(const uint8_t *f, uint32_t n) { return ota_wire_send(f, n); }
+static void crash_keep(void)                        /* the boot: a crash since the last one into the flash history */
+{
+    cl_rec_t r;
+    const fm1_crash_ctx_t *x = &fm1_crash_ctx[fm1_crash.count % FM1_CRASH_CTX_N];
+    uint32_t i;
+    if (fm1_crash.magic != FM1_CRASH_MAGIC || !flash_ok)
+        return;
+    memset(&r, 0, sizeof r);
+    r.count = fm1_crash.count, r.vec = fm1_crash.vec, r.pc = fm1_crash.pc, r.rets = fm1_crash.rets;
+    r.sp = fm1_crash.sp, r.uptime_ms = fm1_crash.uptime_ms, r.emu = fm1_crash.emu, r.dbg = fm1_crash.dbg;
+    r.psr = fm1_crash.psr, r.build = FM1B_BUILD;
+    if (x->count == fm1_crash.count) {              /* (its registers, when the ring still holds them) */
+        r.flags = CL_CTX;
+        for (i = 0; i < 16u; i++)
+            r.r[i] = x->r[i];
+        r.usp = x->usp, r.ssp = x->ssp;
+    }
+    (void)cl_boot(&r, &fm1b_dbg.crash_kept, &fm1b_dbg.crash_saving);
+}
 #if FM1B_BLE
 static char *log_dec(char *b, uint32_t v)            /* v in decimal at b; the end */
 {
@@ -253,9 +302,15 @@ static char *log_dec(char *b, uint32_t v)            /* v in decimal at b; the e
 #endif
 
 /* a readout for development over USB-MIDI: F0 7D 4C 47 F7 ("LG") asks; the answer is one frame per line,
- * F0 7D 4C 47 <ASCII> F7: the last crash (count, vector, pc, rets, sp, uptime), the supplies' registers (rails), the
+ * F0 7D 4C 47 <ASCII> F7: the last crash (count, vector, pc, rets, sp, uptime), the crash history kept in flash (its
+ * records, the oldest first, in crashlog.c's form: it survives a power-off), the supplies' registers (rails), the
  * power setup's and the clock's as the boot loader left them, then
- * Bluetooth's log, the oldest first (it survives a reset) */
+ * Bluetooth's log, the oldest first (it survives a reset); "end" last.
+ * The crash history alone, for a program: F0 7D 4C 48 F7 ("LH") asks; one frame a record, F0 7D 4C 48 <ASCII> F7,
+ *   crash I/N n COUNT vec HEX pc HEX rets HEX sp HEX ms DEC emu HEX dbg HEX psr HEX build HEX seq DEC
+ *   regs I/N r0 HEX .. r15 HEX usp HEX ssp HEX (when the record has the registers)
+ * the oldest first (I of N, at most 8), then "end N". F0 7D 4C 48 43 4C 52 F7 ("LHCLR") erases it and answers
+ * "cleared" (or "clear failed"); a boot never clears it (an install does: the update's staging, crashlog.c) */
 static void log_line_send(const char *t)
 {
     uint8_t f[48];
@@ -331,6 +386,12 @@ static int log_frame(const uint8_t *p, uint32_t n)
         }
     } else {
         log_line_send("no crash recorded");
+    }
+    {   /* the crash history in flash (crashlog.c: it survives a power-off): its records, the oldest first, as the
+         * history's own request (F0 7D 4C 48 F7) gives them */
+        log_line_send("saved in flash, the oldest first:");
+        if (!cl_print(0x47))
+            log_line_send("saved none");
     }
     {   /* the supplies: as the boot loader left them, the raises, and now (raw registers: a broken read shows) */
         static const char H[] = "0123456789ABCDEF";
@@ -874,7 +935,7 @@ static void safe_main(void)
         {   /* the log readout works here too: what crashed is the question safe mode raises */
             const uint8_t *p;
             uint32_t n;
-            if (ota_frame_get(&p, &n) && log_frame(p, n))
+            if (ota_frame_get(&p, &n) && (log_frame(p, n) || cl_request(p, n)))
                 ota_frame_done();
             else
                 ota_service();                      /* (only at a frame the log didn't take) */
@@ -965,6 +1026,9 @@ static void fm1_main(void)
     }
     fm1b_dbg.in_audio = 0;                          /* (.noinit: a crash inside the render left it set, and safe mode,
                                                      * with no render to clear it, then never polled USB) */
+    crash_keep();                                   /* a crash since the last boot into the flash history (crashlog.c):
+                                                     * before safe mode, whose crashes at the start matter most; the
+                                                     * staging cleaned up above first (ota_boot_cleanup erases it) */
     if (safe_mode)
         safe_main();                                /* never returns */
     if (fm1_crash.magic == FM1_CRASH_MAGIC && fm1_crash.count != fm1b_dbg.crash_seen) {
@@ -1067,7 +1131,8 @@ static void fm1_main(void)
             const uint8_t *p;
             uint32_t n;
             took = 0;
-            if (ota_frame_get(&p, &n) && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || remote_frame(p, n)
+            if (ota_frame_get(&p, &n) && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || cl_request(p, n) ||
+                                          remote_frame(p, n)
 #if FM1B_WIFI
                                           || wifi_frame(p, n)
 #endif
