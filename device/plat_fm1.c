@@ -273,12 +273,19 @@ int plat_sysex_end(void)
 int plat_sysex_send(const uint8_t *frame, uint32_t n) { return ota_wire_send(frame, n); }
 #endif
 
-/* the data area and its two more windows (plat.h): read through the unencrypted XIP window (main_fm1.c
- * fl_plain_window_init, from the app area's end up: 0x93000, or a bigger slot's); erased and written by felucca-bsp's
- * RAM driver (FL_RANGE_OK: the store, its FL_XDATA windows) */
+/* the data area and its more windows, and the system sectors PLAT_SYS read only (plat.h): read through the
+ * unencrypted XIP window (main_fm1.c fl_plain_window_init, from the app area's end up: 0x93000, or a bigger slot's);
+ * erased and written by felucca-bsp's RAM driver (FL_RANGE_OK: the store, its FL_XDATA windows, which still take the
+ * system sectors: plat_data_erase / plat_data_write keep to PLAT_DATA_OK, which does not) */
 _Static_assert(FL_APP_END == FM1B_APP_END && FL_DATA_LO == PLAT_DATA_LO, "plat.h's app area end is felucca-bsp's");
-_Static_assert(FL_XDATA0_LO == PLAT_XDATA0_LO && FL_XDATA0_HI == PLAT_XDATA0_HI && FL_XDATA1_HI == PLAT_XDATA1_HI &&
-               FL_AUTO_LO == PLAT_XDATA1_LO && FL_AUTO_HI == FL_XDATA1_LO, "plat.h's windows are felucca-bsp's");
+_Static_assert(FL_XDATA0_LO == PLAT_XDATA0_LO && FL_XDATA0_HI == PLAT_XDATA0_HI && FL_AUTO_LO == PLAT_XDATA1_LO &&
+               FL_AUTO_HI == PLAT_XDATA1_HI && FL_XDATA1_LO == PLAT_SYS_LO && PLAT_XDATA3_LO == PLAT_SYS_HI &&
+               FL_XDATA1_HI == PLAT_XDATA3_HI, "plat.h's windows are felucca-bsp's (its FL_XDATA1 less the system "
+               "sectors PLAT_SYS)");
+/* the FM-1's own sectors (plat.h PLAT_SYS, key_mac) in no window an app erases or writes */
+_Static_assert(PLAT_DATA_HI <= PLAT_SYS_LO && PLAT_XDATA0_HI <= PLAT_SYS_LO && PLAT_XDATA1_HI <= PLAT_SYS_LO &&
+               PLAT_XDATA3_LO >= PLAT_SYS_HI && PLAT_XDATA2_LO >= PLAT_SYS_HI && PLAT_XDATA2_HI <= PLAT_KEYMAC_LO &&
+               PLAT_XDATA3_HI <= PLAT_KEYMAC_LO, "no plat_data window over the SDK's VM, BTIF or key_mac");
 #if FM1B_XDATA2                                   /* the fourth window: felucca-bsp's FL_GLOB (in its FL_STORE_OK), the
                                                    * store's objects there refused (plat_xdata2.h) */
 #include "plat_xdata2.h"
@@ -289,7 +296,7 @@ _Static_assert(FL_GLOB_LO == PLAT_XDATA2_LO && FL_GLOB_HI == PLAT_XDATA2_HI, "PL
 #endif
 const uint8_t *plat_data(uint32_t off)
 {
-    return flash_ok && PLAT_DATA_OK(off, 1u) ? (const uint8_t *)FL_XIP(off) : 0;
+    return flash_ok && PLAT_READ_OK(off, 1u) ? (const uint8_t *)FL_XIP(off) : 0;
 }
 int plat_boot_read(uint32_t off, void *dst, uint32_t n)   /* (unity.c st_read: the RAM driver in 256-byte IRQ-off windows) */
 {

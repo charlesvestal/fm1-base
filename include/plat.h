@@ -377,14 +377,23 @@ void plat_log(const char *line);
  * for one build): windows of about 1 ms, the interrupts and the sound on between them, the sector reading anything
  * until it is done; a flash part that does not suspend an erase is still waited out in one window, the sound silenced
  * (plat_flash_held counts those).
- * Two more windows for big data, outside the store: PLAT_XDATA0 (16 KiB, just above the app area) and PLAT_XDATA1
- * (92 KiB, above the update's staging). The update loader clears an update record it finds in the last 256 bytes of
- * a sector there (bsp/loader/ldr_core.c: "AT" at bytes 0xF06..0xF07, a nonzero CRC-16 at 0xF00 over the 78 bytes
- * from 0xF02) in place: those bytes, 8 to 80 from 0xF00, programmed to 0, the rest of the sector kept. So in these
- * two an app keeps bytes 0xF00..0xF07 of every sector erased (0xFF), or else makes sure
+ * Three more windows for big data, outside the store: PLAT_XDATA0 (16 KiB, just above the app area), PLAT_XDATA1
+ * (8 KiB, above the update's staging) and PLAT_XDATA3 (72 KiB, the SDK's USR area 0xEA000..0xFBFFF: the stock
+ * firmware's own files (its patches), which the stock package brings again (its UFW entry "USR",
+ * 73,226 B for 0xEA000), so an app's data there is gone after a return to stock, and stock finds its own again).
+ * Between XDATA1 and XDATA3 lie the FM-1's own system sectors, PLAT_SYS 0xE7000..0xE9FFF, that every firmware (stock
+ * included) keeps: the SDK's VM at 0xE8000 (the radio's RF calibration, records 106 107 187 108 113 109: measured on
+ * an FM-1, tests/bt/ble_vm_test.c; read by bt/ble/ble_vm.h), its probable second area 0xE7000 (unmeasured) and BTIF
+ * 0xE9000 (the Bluetooth pairing, the MAC address a Wi-Fi station takes). plat_data reads them in place;
+ * plat_data_erase and plat_data_write refuse them, as they refuse key_mac (0xFF000, in no window). Until this
+ * split XDATA1 ran 0xE5000..0xFBFFF over them: an app that filled it erased the FM-1's calibration and pairing.
+ * The update loader clears an update record it finds in the last 256 bytes of a sector below 0xFC000
+ * (bsp/loader/ldr_core.c: "AT" at bytes 0xF06..0xF07, a nonzero CRC-16 at 0xF00 over the 78 bytes from 0xF02) in
+ * place: those bytes, 8 to 80 from 0xF00, programmed to 0, the rest of the sector kept. So in these three an app
+ * keeps bytes 0xF00..0xF07 of every sector erased (0xFF), or else makes sure
  * those bytes never read as a record: never "AT" at 0xF06 (LOOM-8's sample bank moves its data so, and refuses a
  * bank that has it).
- * A fourth, on request (fm1.toml xdata2 = true: FM1B_XDATA2): PLAT_XDATA2, the three sectors 0xFC000..0xFEFFF
+ * One more, on request (fm1.toml xdata2 = true: FM1B_XDATA2): PLAT_XDATA2, the three sectors 0xFC000..0xFEFFF
  * (12 KiB) between the SDK's last area (USR, up to 0xFBFFF) and its key_mac sector (0xFF000, never written), where
  * Felucca keeps its globals: an app that was a Felucca firmware reads and writes its own bytes there. The update loader
  * looks for records below 0xFC000 only, so no 0xF00 rule here. Store objects may sit there too (the template's
@@ -401,24 +410,34 @@ void plat_log(const char *line);
 #define PLAT_XDATA0_LO (FM1B_APP_END < 0x97000u ? FM1B_APP_END : 0x97000u)
 #define PLAT_XDATA0_HI 0x97000u
 #define PLAT_XDATA1_LO 0xE5000u
-#define PLAT_XDATA1_HI 0xFC000u
+#define PLAT_XDATA1_HI 0xE7000u
+#define PLAT_SYS_LO 0xE7000u              /* the SDK's VM (and its second area), BTIF: read only */
+#define PLAT_SYS_HI 0xEA000u
+#define PLAT_XDATA3_LO 0xEA000u
+#define PLAT_XDATA3_HI 0xFC000u
 #define PLAT_XDATA2_LO 0xFC000u
 #define PLAT_XDATA2_HI 0xFF000u
+#define PLAT_KEYMAC_LO 0xFF000u           /* key_mac: in no window */
+/* where plat_data_erase / plat_data_write go ([off, off + n) inside one window) */
 #if FM1B_XDATA2
 #define PLAT_DATA_OK(off, n) (plat_in((off), (n), PLAT_DATA_LO, PLAT_DATA_HI) || \
                               plat_in((off), (n), PLAT_XDATA0_LO, PLAT_XDATA0_HI) || \
                               plat_in((off), (n), PLAT_XDATA1_LO, PLAT_XDATA1_HI) || \
+                              plat_in((off), (n), PLAT_XDATA3_LO, PLAT_XDATA3_HI) || \
                               plat_in((off), (n), PLAT_XDATA2_LO, PLAT_XDATA2_HI))
 #else
 #define PLAT_DATA_OK(off, n) (plat_in((off), (n), PLAT_DATA_LO, PLAT_DATA_HI) || \
                               plat_in((off), (n), PLAT_XDATA0_LO, PLAT_XDATA0_HI) || \
-                              plat_in((off), (n), PLAT_XDATA1_LO, PLAT_XDATA1_HI))
+                              plat_in((off), (n), PLAT_XDATA1_LO, PLAT_XDATA1_HI) || \
+                              plat_in((off), (n), PLAT_XDATA3_LO, PLAT_XDATA3_HI))
 #endif
+/* where plat_data reads: the windows, and the system sectors between XDATA1 and XDATA3 */
+#define PLAT_READ_OK(off, n) (PLAT_DATA_OK((off), (n)) || plat_in((off), (n), PLAT_SYS_LO, PLAT_SYS_HI))
 static inline int plat_in(uint32_t off, uint32_t n, uint32_t lo, uint32_t hi)   /* [off, off + n) in [lo, hi) */
 {
     return off >= lo && off <= hi && n <= hi - off;
 }
-const uint8_t *plat_data(uint32_t off);   /* read in place; 0 = outside the windows */
+const uint8_t *plat_data(uint32_t off);   /* read in place (the windows and PLAT_SYS); 0 = outside them */
 /* the boot area [0, 0x4000) read as stored (the bootloader and its configuration; the flash driver's own read, not XIP): an app
  * that tells the installers which bootloader the FM-1 has. Read only; main loop; 0 = read */
 int plat_boot_read(uint32_t off, void *dst, uint32_t n);

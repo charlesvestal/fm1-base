@@ -327,6 +327,10 @@ run backup-app sh -c "$PY tools/build.py tests/backup_app --host && mkdir -p tes
 # an app with APP_BLE_PEERS (its own list: the scan's reports, plat_ble_connect_peer) in the host simulator
 run peers-app sh -c "$PY tools/build.py tests/peers_app --host && \
     tests/peers_app/build/host/peertest_host tests/peers_app/tests/peers.txt tests/peers_app/build/host"
+# the FM-1's own system sectors (plat.h PLAT_SYS: the SDK's VM with the radio's calibration, BTIF with the pairing;
+# key_mac): read in place, never erased or written; XDATA1 below them and XDATA3 above them the app's
+# (tests/data_sysflash.txt)
+run host-data-sysflash template/build/host/template_host tests/data_sysflash.txt template/build/host
 # the fourth window on request (xdata2 = true, FM1B_XDATA2): the template's host build with it (kept apart, the plain
 # build put back after), the window the app's, the store's sectors in it refused (tests/data_xdata2.txt)
 run host-xdata2 sh -c "FM1B_XDATA2=1 $PY tools/build.py template --host >/dev/null && \

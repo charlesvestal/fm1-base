@@ -14,7 +14,7 @@
  *
  * The flash image (flash_size bytes, the host keeps it): the app's saved objects at 0, packed (RF_MAGIC, a count,
  * then each object's number, length and bytes, a CRC-32 over it all), and the data area and its windows at their
- * device addresses (PLAT_XDATA0_LO .. PLAT_XDATA1_HI), where plat_data reads them in place. A fresh image (no staged
+ * device addresses (PLAT_XDATA0_LO .. PLAT_XDATA3_HI), where plat_data reads them in place. A fresh image (no staged
  * bytes, or not ours) is an empty store and an erased data area.
  *
  * SysEx: a screen reader (fm1-reader's protocol, device/announce.c) talks to the module over its MIDI: the frames

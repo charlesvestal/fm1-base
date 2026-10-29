@@ -11,7 +11,8 @@
  *
  * The radio is calibrated at every start, by our own measurement (felucca-bsp chip/fm1_rf_cal.h, after JieLi's SDK;
  * docs/bt/RF-CALIBRATION.md): nothing stored is needed, so a unit whose stock calibration was overwritten (the SDK's
- * VM at 0x0E8000 lies in PLAT_XDATA1) works the same. Records 106, 107 and 108 are the SDK board's constants.
+ * VM at 0x0E8000 lay in PLAT_XDATA1 until plat.h kept the system sectors, PLAT_SYS, out of it) works the same.
+ * Records 106, 107 and 108 are the SDK board's constants.
  *
  * Part of radio.c (the unity build). */
 #ifndef BLE_DEVICE_NAME

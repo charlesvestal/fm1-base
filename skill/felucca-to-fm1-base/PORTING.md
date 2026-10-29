@@ -137,7 +137,7 @@ Before writing a feature into the app, look for it in fm1-base (`include/plat.h`
 | its screen and panel on a computer, the panel played from it | `mirror = true` (device/mirror.c, web/mirror, tools/fm1_mirror.py); `APP_REDRAW`, `APP_MIRROR_TEST` |
 | a backup of its saved objects over USB | `backup = true` (device/backup.c, web/backup, tools/fm1_backup.py): `APP_BACKUP_OBJS`, `_MAGIC`, `_VERSION`, `app_backup_*`; keep the fork's magic and version and its old backups restore |
 | its own commands in the update's SysEx framing, data pulled from the host | `APP_USB_CMD` (`app_usb_cmd`), `plat_host_read`, `plat_host_patience` |
-| big data in flash beyond the store | `plat_data`, `plat_data_erase`, `plat_data_write`: the data area and two more windows (`PLAT_XDATA0`, `PLAT_XDATA1`) |
+| big data in flash beyond the store | `plat_data`, `plat_data_erase`, `plat_data_write`: the data area and three more windows (`PLAT_XDATA0`, `PLAT_XDATA1`, `PLAT_XDATA3`; the SDK's VM and BTIF, `PLAT_SYS` 0xE7000..0xE9FFF, read only) |
 | a store object read whole or not at all; its header only | `plat_store_size`, `plat_store_head` (`plat_store_load` cuts an object longer than its buffer short) |
 | room in the MIDI out queue, a new USB connection | `plat_midi_out_room(to)`, `plat_midi_out_link()` |
 | dim keys, PLAY's green LED | `plat_lights` |

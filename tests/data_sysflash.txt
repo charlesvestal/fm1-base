@@ -1,0 +1,84 @@
+# The FM-1's own system sectors (plat.h PLAT_SYS: the SDK's VM 0xE8000 with the radio's RF trims, its probable second
+# area 0xE7000, BTIF 0xE9000 with the pairing; key_mac 0xFF000), on the template's host build, from tests/run_tests.sh:
+#   template/build/host/template_host tests/data_sysflash.txt template/build/host
+# Every firmware, stock included, keeps them: plat_data reads 0xE7000..0xE9FFF in place, plat_data_erase and
+# plat_data_write refuse them, and the windows around them (PLAT_XDATA1 below, PLAT_XDATA3 above) are the app's
+wait 50
+# a stock VM's first bytes where an FM-1 has them (the script's "data" puts them there; an app cannot)
+data template/build/tests/data4.bin 0xE8000
+expect data.0xE8000 0x12
+expect data.0xE8003 0x78
+expect data.0xE7000 0xFF
+expect data.0xE9FFF 0xFF
+# never erased, never written: each of the three sectors, a page in each, a byte at each end
+data_erase 0xE7000
+expect data_rc -1
+data_erase 0xE8000
+expect data_rc -1
+data_erase 0xE9000
+expect data_rc -1
+data_write 0xE7000 00
+expect data_rc -1
+data_write 0xE8000 00
+expect data_rc -1
+data_write 0xE8F06 0000
+expect data_rc -1
+data_write 0xE9000 00
+expect data_rc -1
+data_write 0xE9FFF 00
+expect data_rc -1
+expect data.0xE8000 0x12
+expect data.0xE8003 0x78
+# nor across a window's end into them, from below or from above
+data_write 0xE6FFF 0000
+expect data_rc -1
+data_write 0xE9FFF 0000
+expect data_rc -1
+expect data.0xE6FFF 0xFF
+expect data.0xEA000 0xFF
+# key_mac: outside everything, not even read
+expect data.0xFF000 -1
+data_erase 0xFF000
+expect data_rc -1
+data_write 0xFF000 00
+expect data_rc -1
+# PLAT_XDATA1 (0xE5000..0xE6FFF, 8 KiB) is the app's
+data_erase 0xE5000
+expect data_rc 0
+data_erase 0xE6000
+expect data_rc 0
+data_write 0xE6FFF A5
+expect data_rc 0
+expect data.0xE6FFF 0xA5
+# PLAT_XDATA3 (0xEA000..0xFBFFF, 72 KiB, the SDK's USR area) is the app's
+data_erase 0xEA000
+expect data_rc 0
+data_write 0xEA000 A55A
+expect data_rc 0
+expect data.0xEA000 0xA5
+expect data.0xEA001 0x5A
+data_erase 0xFB000
+expect data_rc 0
+data_write 0xFBFFF 3C
+expect data_rc 0
+expect data.0xFBFFF 0x3C
+data template/build/tests/data4.bin 0xFBFFE
+expect data.0xFBFFE 0x12
+expect data.0xFBFFF 0x34
+# and the other two still: XDATA0, the data area
+data_erase 0x93000
+expect data_rc 0
+data_write 0x93000 11
+expect data_rc 0
+expect data.0x93000 0x11
+data_erase 0xDF000
+expect data_rc 0
+data_write 0xDFFFF 22
+expect data_rc 0
+expect data.0xDFFFF 0x22
+# a power-on keeps it all: the VM's bytes as they were, the app's where it put them
+reboot
+wait 50
+expect data.0xE8000 0x12
+expect data.0xE6FFF 0xA5
+expect data.0xEA001 0x5A

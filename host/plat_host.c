@@ -1036,16 +1036,22 @@ const char *plat_ble_log_line(int back)
 }
 void plat_midi_out(uint32_t pkt) { plat_midi_send(pkt, TO_USB); }
 void plat_log(const char *line) { ble_say(line); }
-/* the data area and its two more windows (plat.h): a simulated flash from the first window to the last (the gap
+/* the data area and its more windows (plat.h): a simulated flash from the first window to the last (the gap
  * between, the update's staging, refused as on the device), erased at the start, kept across a simulated reboot.
- * FM1B_XDATA2: the fourth window too, just above the third, the store's objects there refused as on the device */
+ * The FM-1's system sectors between XDATA1 and XDATA3 (PLAT_SYS: the SDK's VM, BTIF) in it too, read only as on the
+ * device: plat_data reads them, plat_data_erase / plat_data_write refuse them (the script's "data" and flash_load put
+ * a stock FM-1's bytes there). FM1B_XDATA2: the fourth window too, above XDATA3, the store's objects there refused as
+ * on the device */
+_Static_assert(PLAT_DATA_HI <= PLAT_SYS_LO && PLAT_XDATA0_HI <= PLAT_SYS_LO && PLAT_XDATA1_HI <= PLAT_SYS_LO &&
+               PLAT_XDATA3_LO >= PLAT_SYS_HI && PLAT_XDATA2_LO >= PLAT_SYS_HI && PLAT_XDATA2_HI <= PLAT_KEYMAC_LO &&
+               PLAT_XDATA3_HI <= PLAT_KEYMAC_LO, "no plat_data window over the SDK's VM, BTIF or key_mac");
 #define DATA_BASE PLAT_XDATA0_LO
 #if FM1B_XDATA2
 #include "plat_xdata2.h"
 #define DATA_TOP PLAT_XDATA2_HI
 #define DATA_STORE_HIT(off, n) plat_xdata2_store_hit((off), (n))
 #else
-#define DATA_TOP PLAT_XDATA1_HI
+#define DATA_TOP PLAT_XDATA3_HI
 #define DATA_STORE_HIT(off, n) 0
 #endif
 #ifdef PLAT_DATA_AREA
@@ -1063,10 +1069,12 @@ static void data_init(void)
         data_ready = 1;
     }
 }
-static uint32_t data_window_hi(uint32_t off)   /* the end of the window that holds off, 0 = none */
+static uint32_t data_window_hi(uint32_t off)   /* the end of the window that holds off, 0 = none (the script's "data":
+                                                * the system sectors too, an app's plat_data_* never) */
 {
     static const uint32_t W[][2] = {{PLAT_DATA_LO, PLAT_DATA_HI}, {PLAT_XDATA0_LO, PLAT_XDATA0_HI},
-                                    {PLAT_XDATA1_LO, PLAT_XDATA1_HI},
+                                    {PLAT_XDATA1_LO, PLAT_XDATA1_HI}, {PLAT_SYS_LO, PLAT_SYS_HI},
+                                    {PLAT_XDATA3_LO, PLAT_XDATA3_HI},
 #if FM1B_XDATA2
                                     {PLAT_XDATA2_LO, PLAT_XDATA2_HI},
 #endif
@@ -1080,7 +1088,7 @@ static uint32_t data_window_hi(uint32_t off)   /* the end of the window that hol
 const uint8_t *plat_data(uint32_t off)
 {
     data_init();
-    return PLAT_DATA_OK(off, 1u) ? &data_area[off - DATA_BASE] : 0;
+    return PLAT_READ_OK(off, 1u) ? &data_area[off - DATA_BASE] : 0;
 }
 int plat_boot_read(uint32_t off, void *dst, uint32_t n)   /* (no boot area on the host: a bootloader not known) */
 {

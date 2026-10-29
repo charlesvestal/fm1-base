@@ -192,7 +192,7 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              an app's own that load app_worklet.js and call fm1App); "-resample" leaves it out.
                              FM1B_EMU="midi data" in the environment instead: those parts and no others ("" for
                              none). Without any, the page, the worklet and app.wasm are what they were
-  xdata2 = true              a fourth plat_data window, PLAT_XDATA2 0xFC000..0xFEFFF (FM1B_XDATA2: plat.h; Felucca's
+  xdata2 = true              one more plat_data window, PLAT_XDATA2 0xFC000..0xFEFFF (FM1B_XDATA2: plat.h; Felucca's
                              globals' sectors, for an app that was a Felucca firmware); the store's objects there are
                              refused to plat_data_erase / plat_data_write
   headphones = true          the headphone jack read every main-loop pass, debounced (FM1B_HEADPHONES: device/plat_hp.c,
