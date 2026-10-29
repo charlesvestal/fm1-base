@@ -15,7 +15,12 @@
   drivers, from [Optimist](https://github.com/w0ts/optimist): BLE MIDI, pairing, the central role, and Bluetooth
   audio (BR/EDR, Secure Simple Pairing, A2DP), written from the Bluetooth specifications and measurements of the
   FM-1's radio. Offered under GPL-3.0-only or MPL-2.0 ([w0ts/optimist#55](https://github.com/w0ts/optimist/issues/55)),
-  used here under MPL-2.0.
+  used here under MPL-2.0. And the own Wi-Fi stack in `wifi/` and `device/wifi_own*.c` and felucca-bsp's Wi-Fi MAC
+  driver, from Optimist's Wi-Fi: a WPA2-PSK station and a small IP layer on the FM-1's radio, written after
+  reading JieLi's SDK and measuring the FM-1 (offered under GPL-3.0-only or MPL-2.0, used here under MPL-2.0), and
+  Optimist's C port of Ableton Link (`link/`, GPL-3.0-only).
+- **Ableton** ([Ableton Link](https://github.com/Ableton/link), GPL-2.0-or-later): the protocol and the session rules
+  that `link/` ports.
 - JieLi's AC79 SDK (Zhuhai Jieli Technology, Apache-2.0): the radio's calibration that felucca-bsp's
   `chip/fm1_rf_cal.h` rewrites in C, and the radio's start-up tables (`chip/ble_rf_tables_v15.h`, as M-VAVE's stock
   firmware runs them).

@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# MODE AP's host test app (tests/wifi/run.sh): the Link example (examples/link) built with wifi_ap = true, so the
+# simulator's client joins the FM-1's own access point and is a Link peer over it (tests/ap.txt)
+name = "LINKAP"
+id_prefix = "FM-1_13"
+usb_manufacturer = "fm1-base"
+usb_product = "LINK AP FM-1"
+ble = true
+ble_stack = "own"
+wifi = true
+wifi_stack = "own"
+link = true
+wifi_ap = true                 # MODE AP: the FM-1 as the access point (device/wifi_own_ap.c)
+licence = "GPL-3.0-only"
+usb_audio_in = false
+usb_audio_out = false
+words = "../../../examples/link/words.tsv"

@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# The Link example in the host simulator over its simulated network (host/wifi_air.c): tools/build.py examples/link
+# --host, then examples/link/build/host/link_host examples/link/tests/link.txt examples/link/build/host
+# A network with a Link peer at 120 BPM; the FM-1 (MODE AUTO, nothing kept) is told its password, joins, gets an
+# address, takes the session's tempo and phase, follows the peer's tempo change and start, and the peer follows its own.
+wifi_net HOSTNET password1 6
+link_peer 120
+wait 4000
+expect wifi_mode 1
+expect wifi_step 2
+wifi scan
+wait 2500
+expect wifi_found 1
+wifi join HOSTNET password1
+wait 8000
+expect air_keyed 1
+expect air_dhcp_acks 1
+expect wifi_state 5
+expect wifi_ip_last 2
+expect wifi_saved 1
+shot joined.png
+wait 3000
+expect link_peers 1
+expect peer_peers 1
+expect link_bpm_x10 1200
+expect link_phase_us <1000
+link_peer tempo 133
+wait 1500
+expect link_bpm_x10 1330
+expect link_phase_us <1000
+link_peer play 1
+wait 1000
+expect link_playing 1
+link tempo 100
+wait 1500
+expect peer_bpm_x10 1000
+expect link_phase_us <1000
+link play 0
+wait 1000
+expect peer_playing 0
+shot session.png
+# the network gone: after 8 s with nothing heard from it, NETWORK LOST, the address and Link's peers gone (AUTO looks
+# for a network kept again at once: the state is ON, scanning)
+wifi_net off
+wait 9000
+expect wifi_state 2
+expect wifi_fail 7
+expect wifi_ip_last 0
+expect link_peers 0
+# back (a new peer at 90 BPM): AUTO finds the network kept and joins it again; the session's tempo is the peer's
+wifi_net HOSTNET password1 6
+link_peer 90
+wait 30000
+expect wifi_state 5
+expect link_peers 1
+expect wifi_saved 1
+# a reboot: AUTO joins the network kept at the start
+reboot
+wait 12000
+expect wifi_state 5
+expect link_peers 1
