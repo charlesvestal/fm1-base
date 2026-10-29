@@ -27,6 +27,26 @@
 #define CL_SLOTS (0xF00u / CL_REC)                  /* 30 a sector: 0xF00..0xFFF erased (the loader's record scan) */
 #define CL_KEEP 8u                                  /* the newest shown */
 #define CL_CTX 1u                                   /* flags: r[] and usp hold the registers at the crash */
+#define CL_STK 2u                                   /* flags: bits 2..31 hold the stacks' room at the crash (CL_STK_*) */
+/* each stack's room left at the crash in 10 bits of flags, in 32-byte units (rounded down; CL_STK_NONE: not known):
+ * main bits 2..11, interrupts 12..21, the second core's 22..31 (main_fm1.c fm1_fault: stacks.c pst_at_crash) */
+#define CL_STK_NONE 1023u
+#define CL_STK_AT(k) (2u + 10u * (k))
+static uint32_t cl_stk_pack(const int32_t left[3])
+{
+    uint32_t k, f = CL_STK;
+    for (k = 0; k < 3u; k++) {
+        uint32_t u = (uint32_t)left[k] / 32u;
+        u = left[k] < 0 ? CL_STK_NONE : u < CL_STK_NONE ? u : CL_STK_NONE - 1u;   /* (the most: 32,704 bytes) */
+        f |= u << CL_STK_AT(k);
+    }
+    return f;
+}
+static int32_t cl_stk_left(uint32_t flags, uint32_t k)   /* bytes (a multiple of 32), -1 not known */
+{
+    uint32_t u = flags >> CL_STK_AT(k) & CL_STK_NONE;
+    return !(flags & CL_STK) || u == CL_STK_NONE ? -1 : (int32_t)(u * 32u);
+}
 #if !defined PLAT_DATA_HI || !defined PLAT_XDATA1_LO
 #error "crashlog.c: plat.h first"
 #endif
@@ -39,7 +59,7 @@ typedef struct {
     uint32_t seq;                                   /* the ring's order: 1 up, the newest the highest */
     uint32_t count, vec, pc, rets, sp, uptime_ms, emu, dbg, psr;   /* fm1_crash's (felucca-bsp chip/fm1_irq.h) */
     uint32_t build;                                 /* FM1B_BUILD of the firmware that saved it (tools/build.py) */
-    uint32_t flags;                                 /* CL_CTX */
+    uint32_t flags;                                 /* CL_CTX, CL_STK and the stacks' room */
     uint32_t r[16], usp, ssp;                       /* fm1_crash_ctx's for this count (flags CL_CTX) */
     uint32_t crc;                                   /* CRC-32 of seq .. ssp */
 } cl_rec_t;
@@ -202,7 +222,28 @@ static void cl_frame(uint8_t h2, uint8_t *f, char *end)   /* f: F0 7D 4C h2 then
  *   crash I/N n COUNT vec HEX pc HEX rets HEX sp HEX ms DEC emu HEX dbg HEX psr HEX build HEX seq DEC
  * and, when it has them, a second:
  *   regs I/N r0 HEX .. r15 HEX usp HEX ssp HEX
+ * and, when it has them, a third:
+ *   stk I/N main DEC irq DEC c1 DEC guard 0|1
+ * (each stack's bytes left at the crash, -1 not known; guard 1: a stack ran into its guard, EMU_MSG bit 3 (sp out of
+ * the stacks' window) or DBG_MSG bit 13 (a write into a guard band; the same bit as the top window's, 0x01C7FD50..))
  * then "end N" (N records sent: a reader tells none from an answer lost). Hex: 8 digits, upper case */
+static void cl_stk_line(uint8_t h2, uint32_t k, uint32_t n, const cl_rec_t *r)
+{
+    static const char *const L[3] = {" main ", " irq ", " c1 "};
+    uint8_t f[4u + 64u];
+    char *q = cl_str((char *)f + 4, "stk ");
+    uint32_t j;
+    q = cl_dec(q, k + 1u);
+    *q++ = '/';
+    q = cl_dec(q, n);
+    for (j = 0; j < 3u; j++) {
+        int32_t v = cl_stk_left(r->flags, j);
+        q = cl_str(q, L[j]);
+        q = v < 0 ? cl_str(q, "-1") : cl_dec(q, (uint32_t)v);
+    }
+    q = cl_dec(cl_str(q, " guard "), (r->emu >> 3 & 1u) | (r->dbg >> 13 & 1u));
+    cl_frame(h2, f, q);
+}
 /* a line's fields from the record's words: label i at word w[i] (dec: decimal, else hex), after "HEAD I/N" */
 static __attribute__((noinline)) void cl_line(uint8_t h2, const char *head, uint32_t k, uint32_t n,
                                               const uint32_t *rw, const char *const *lab, const uint8_t *w,
@@ -238,6 +279,8 @@ static uint32_t cl_print(uint8_t h2)
         cl_line(h2, "crash ", k, n, (const uint32_t *)&r, LC, WC, 11u, 1u << 0 | 1u << 5 | 1u << 10);
         if (r.flags & CL_CTX)
             cl_line(h2, "regs ", k, n, (const uint32_t *)&r, LR, WR, 18u, 0u);
+        if (r.flags & CL_STK)
+            cl_stk_line(h2, k, n, &r);
     }
     return n;
 }
