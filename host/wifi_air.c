@@ -31,8 +31,11 @@ static struct {
     uint32_t frames_in, frames_out, dhcp_acks;
     uint8_t txb[AIR_FRAME];
 } air;
+static int air_rssi = -45;                        /* the signal the FM-1 hears every frame at ("wifi_air rssi N"; a good one) */
 static void air_queue(const uint8_t *f, uint32_t n)
 {
+    if (n && n <= AIR_FRAME && fm1_fake_ch == air.ch && air.qw - air.qr >= AIR_Q)
+        fm1_fake_rx_over++;                       /* (the receive queue full: the MAC's overflow count) */
     if (!n || n > AIR_FRAME || air.qw - air.qr >= AIR_Q || fm1_fake_ch != air.ch)
         return;                                   /* (the FM-1 listens elsewhere, or its queue is full: lost, as on air) */
     memcpy(air.q[air.qw % AIR_Q].f, f, n);
@@ -54,7 +57,7 @@ static int32_t air_rx(uint32_t *buf, uint32_t max)   /* the RX DMA: length word 
     memset(b + 4, 0, FM1_WIFI_RXWI);
     b[4 + 2] = (uint8_t)air.q[k].n;
     b[4 + 3] = (uint8_t)(air.q[k].n >> 8 & 0x0Fu);
-    b[4 + 8] = (uint8_t)(int8_t)-45;             /* (a good signal) */
+    b[4 + 8] = (uint8_t)(int8_t)air_rssi;
     memcpy(b + 4 + FM1_WIFI_RXWI, air.q[k].f, air.q[k].n);
     return (int32_t)n;
 }
@@ -123,7 +126,13 @@ static void air_net(const char *name, const char *pass, uint32_t ch)   /* the ac
     air.name_len = (uint8_t)n;
     air.ch = (uint8_t)(ch >= 1u && ch <= 13u ? ch : 6u);
     memcpy(air.bssid, BSSID, 6);
-    wc_pmk(pass, air.name, n, pmk);
+    if (!strcmp(pass, "default")) {               /* an Optimist access point: its default password (wifi_ap_default_key) */
+        char k[WIFI_AP_KEY_LEN + 1u];
+        wifi_ap_default_key(air.name, n, k);
+        wc_pmk(k, air.name, n, pmk);
+    } else {
+        wc_pmk(pass, air.name, n, pmk);
+    }
     wifi_ap_init(&air.ap, air.bssid, pmk, own_rand);
     wifi_ap_set_net(&air.ap, air.name, n, air.ch);
     wifi_ap_dhcp_init(&air.dhcp, SRV);
@@ -224,6 +233,8 @@ static void wifi_own_forget(void)
 #endif
     wn_stp = &own_store;
     fm1_fake_up = 0;
+    memset(&wt, 0, sizeof wt);                    /* (the tuning's radio side: as at power-on) */
+    fm1_fake_agc = FM1_WIFI_AGC_START;
 #if FM1B_LINK
     memset(&own_lk, 0, sizeof own_lk);
     lko.want = lko.on = 0;
@@ -241,6 +252,22 @@ static int air_cmd(const char *cmd, const char *a, const char *b, const char *c)
             air_net(a, b, c[0] ? (uint32_t)atoi(c) : 6u);
         return 1;
     }
+    if (!strcmp(cmd, "wifi_air")) {               /* wifi_air rssi DBM | wifi_air lost PCT | wifi_air retry PCT: the air's
+                                                   * quality (the FM-1's frames never / only after a retry acknowledged) */
+        if (!strcmp(a, "rssi"))
+            air_rssi = atoi(b);
+        else if (!strcmp(a, "lost"))
+            fm1_fake_lost_pct = (uint32_t)atoi(b);
+        else if (!strcmp(a, "retry"))
+            fm1_fake_retry_pct = (uint32_t)atoi(b);
+        else if (!strcmp(a, "lost_fast"))      /* (frames sent faster than 1 Mb/s only: the tuning's (f)) */
+            fm1_fake_lost_fast_pct = (uint32_t)atoi(b);
+        return 1;
+    }
+    if (!strcmp(cmd, "wifi") && !strcmp(a, "tune")) {   /* wifi tune MASK: the tuning's switches (1 cal, 2 filter, 4 agc, 8 rate) */
+        plat_wifi_tune_set((uint32_t)atoi(b));
+        return 1;
+    }
     if (!strcmp(cmd, "wifi")) {                   /* wifi mode OFF|AUTO|MAN | wifi join NAME [PASS] | wifi leave | wifi scan */
         static const char *const M[] = {"OFF", "AUTO", "MAN", "AP", "AP_MAN"};
         int i;
@@ -248,6 +275,8 @@ static int air_cmd(const char *cmd, const char *a, const char *b, const char *c)
             for (i = 0; i < (FM1B_WIFI_AP ? 5 : 3); i++)
                 if (!strcmp(b, M[i]))
                     plat_wifi_mode(i);
+            if (!strcmp(b, "JAM"))
+                plat_wifi_mode(WIFI_MODE_JAM);
         } else if (!strcmp(a, "join")) {
             printf("  wifi join %s: %d\n", b, plat_wifi_join(b, c[0] ? c : 0));
         } else if (!strcmp(a, "leave")) {
@@ -308,6 +337,8 @@ static int air_expect(const char *what, int *got)
         *got = (int)wc_tab.n;
     else if (!strcmp(what, "wifi_saved"))
         *got = (int)wn_count(&wn_st);
+    else if (!strcmp(what, "wifi_jam"))         /* plat_wifi_jam: 1 joined / joining an Optimist AP, 2 refused */
+        *got = plat_wifi_jam();
     else if (!strcmp(what, "wifi_mode"))
         *got = plat_wifi_get_mode();
     else if (!strcmp(what, "air_dhcp_acks"))
@@ -318,6 +349,24 @@ static int air_expect(const char *what, int *got)
         *got = (int)air.frames_out;
     else if (!strcmp(what, "air_keyed"))
         *got = air.keyed;
+    else if (!strncmp(what, "wifi_t_", 7)) {      /* plat_wifi_tune_info: wifi_t_on, _cal, _cal_in, _filt, _agc, _slow, _kbps, _falls, _fast */
+        struct plat_wifi_tune t;
+        const char *k = what + 7;
+        (void)plat_wifi_tune_info(&t);
+        *got = !strcmp(k, "on") ? t.on : !strcmp(k, "cal") ? t.cal : !strcmp(k, "cal_in") ? t.cal_in : !strcmp(k, "filt") ? t.filt_sta :
+               !strcmp(k, "agc") ? t.agc_gain : !strcmp(k, "slow") ? t.rate_slow : !strcmp(k, "kbps") ? t.tx_kbps :
+               !strcmp(k, "falls") ? (int)t.falls : !strcmp(k, "fast") ? (int)t.fast : -9999;
+    }
+    else if (!strcmp(what, "wifi_q_on"))          /* measuring now (someone asked in the last 15 s); asks nothing itself */
+        *got = oq.on;
+    else if (!strncmp(what, "wifi_q_", 7)) {      /* plat_wifi_quality: wifi_q_ok, _rssi, _kbps, _tx, _retry_pct, _lost_pct, _over, _secs */
+        struct plat_wifi_quality q;
+        int ok = plat_wifi_quality(&q), w = q.tx ? q.tx : 1;
+        const char *k = what + 7;
+        *got = !strcmp(k, "ok") ? ok : !strcmp(k, "rssi") ? q.rssi : !strcmp(k, "kbps") ? q.tx_kbps : !strcmp(k, "tx") ? q.tx :
+               !strcmp(k, "retry_pct") ? q.retried * 100 / w : !strcmp(k, "lost_pct") ? q.lost * 100 / w :
+               !strcmp(k, "over") ? q.rx_over : !strcmp(k, "secs") ? q.secs : -9999;
+    }
 #if FM1B_WIFI_AP
     else if (cli_expect(what, got))
         ;

@@ -3,7 +3,8 @@
 # and the simulator's client (host/wifi_air_client.c) as a phone: the password set (its key made and kept), MODE AP,
 # the beacon, the client's join (authentication, association, the 4-way handshake), its address by DHCP, a Link peer
 # over the access point both ways, a channel change (the client sent away, joins again), a reboot (AP AUTO comes up
-# again from the key kept), AP MAN (off at power-on, started, stopped), the key forgotten, and back to a station.
+# again from the key kept), AP MAN (off at power-on, started, stopped), the typed key forgotten (the default password of the
+# name takes over), and back to a station.
 wait 3500
 expect wifi_mode 1
 expect ap_state 0
@@ -72,12 +73,15 @@ wifi ap_run 1
 wait 3000
 expect ap_state 3
 expect ap_clients 1
-# the key forgotten: the access point stops, ap_run refused
+# the typed key forgotten: the access point starts again on the default password, a function of its name (it no
+# longer stops for want of a key: the behaviour changed with wifi_ap_default_key), ap_run is accepted
 wifi ap_forget
 wait 200
 expect ap_key 0
-expect ap_state 1
+expect ap_key_default 1
 wifi ap_run 1
+wait 3000
+expect ap_state 3
 # a password typed in AP MAN starts it
 wifi ap auto password1
 wait 2500

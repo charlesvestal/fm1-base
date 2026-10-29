@@ -13,7 +13,15 @@
  * plat_link_set_tempo / plat_link_set_playing. Part of wifi_own.c (the unity build). */
 #include "link.c"
 
+#if FM1B_WIFI_MEM
+/* the session's node (1.8 KB) in the app's memory (fm1.toml wifi_mem = "app": plat.h plat_link_mem): lent before Link
+ * can run, taken back once it no longer does (lko.on 0); every reader checks lko.on, which is never 1 without it */
+static struct lk_node *own_lkp;
+#define OWN_LK own_lkp
+#else
 static struct lk_node own_lk;
+#define OWN_LK (&own_lk)
+#endif
 static struct {
     uint8_t want, on;                             /* the app wants Link; it runs (an address and the port) */
     int32_t mpb;                                  /* the tempo it starts a session of its own with (us a beat) */
@@ -62,7 +70,7 @@ static void own_link_rx(void *ctx, uint32_t src_ip, uint16_t src_port, const uin
 {
     (void)ctx;
     if (lko.on)
-        lk_rx(&own_lk, at_us, src_ip, src_port, p, n);
+        lk_rx(OWN_LK, at_us, src_ip, src_port, p, n);
 }
 static void own_link_start(uint32_t ip)           /* an address and Link wanted: a session of our own, then the others' */
 {
@@ -72,17 +80,21 @@ static void own_link_start(uint32_t ip)           /* an address and Link wanted:
     c.port = LK_MCAST_PORT;
     c.send = own_link_send;
     c.ctx = 0;
+#if FM1B_WIFI_MEM
+    if (!own_lkp)
+        return;                                   /* (no node lent yet: started once it is, own_link_poll) */
+#endif
     if (!lko.seed)
         own_rand((uint8_t *)&lko.seed, 4);
-    lk_init(&own_lk, &c, lko.seed, lko.mpb);
-    lk_enable(&own_lk, 1, now);
-    lk_set_addr(&own_lk, ip, LK_MCAST_PORT);
+    lk_init(OWN_LK, &c, lko.seed, lko.mpb);
+    lk_enable(OWN_LK, 1, now);
+    lk_set_addr(OWN_LK, ip, LK_MCAST_PORT);
     lko.on = 1;
 }
 static void own_link_stop(void)
 {
     if (lko.on) {
-        lk_enable(&own_lk, 0, own_us());          /* (bye-bye, while the address is still there) */
+        lk_enable(OWN_LK, 0, own_us());          /* (bye-bye, while the address is still there) */
         lko.on = 0;
     }
 }
@@ -90,22 +102,38 @@ static void own_link_addr(uint32_t ip)            /* wifi_own.c: DHCP bound (or 
 {
     if (!ip) {
         if (lko.on)
-            lk_set_addr(&own_lk, 0, LK_MCAST_PORT);
+            lk_set_addr(OWN_LK, 0, LK_MCAST_PORT);
         lko.on = 0;
         return;
     }
     if (lko.want && !lko.on)
         own_link_start(ip);
     else if (lko.on)
-        lk_set_addr(&own_lk, ip, LK_MCAST_PORT);
+        lk_set_addr(OWN_LK, ip, LK_MCAST_PORT);
 }
 static void own_link_poll(int64_t now)
 {
 #ifndef PLAT_HOST
     lk_snap_put();
 #endif
+#if FM1B_WIFI_MEM
+    if (lko.want && !lko.on && own_lkp && wl.on && wl.ip.ip)
+        own_link_start(wl.ip.ip);                 /* (the node lent after the address came) */
+#endif
     if (lko.on)
-        lk_poll(&own_lk, now);
+        lk_poll(OWN_LK, now);
+}
+uint32_t plat_link_mem_bytes(void) { return FM1B_WIFI_MEM ? (uint32_t)(sizeof(struct lk_node) + 3u) / 4u * 4u : 0u; }
+int plat_link_mem(void *p)                        /* (the main loop; the app's interrupts off around it) */
+{
+#if FM1B_WIFI_MEM
+    if ((!p && lko.on) || ((uintptr_t)p & 3u))
+        return -1;                                /* (running: plat_link_enable(0) or the Wi-Fi off first) */
+    own_lkp = (struct lk_node *)p;
+    return 0;
+#else
+    return p ? -1 : 0;
+#endif
 }
 
 void plat_link_enable(int on)
@@ -124,12 +152,12 @@ void plat_link_enable(int on)
     }
 }
 int plat_link_on(void) { return lko.on; }
-uint32_t plat_link_peers(void) { return lko.on ? lk_peers(&own_lk) : 0u; }
-int32_t plat_link_mpb(void) { return lko.on ? lk_mpb(&own_lk) : lko.mpb; }
-int64_t plat_link_beat_at(int64_t us) { return lko.on ? lk_beat_at(&own_lk, us) : -1; }
-int64_t plat_link_time_at(int64_t ub) { return lko.on ? lk_time_at(&own_lk, ub) : 0; }
-int plat_link_playing(void) { return lko.on && lk_playing(&own_lk); }
-int64_t plat_link_play_beat(void) { return lko.on ? lk_play_beat(&own_lk) : 0; }
+uint32_t plat_link_peers(void) { return lko.on ? lk_peers(OWN_LK) : 0u; }
+int32_t plat_link_mpb(void) { return lko.on ? lk_mpb(OWN_LK) : lko.mpb; }
+int64_t plat_link_beat_at(int64_t us) { return lko.on ? lk_beat_at(OWN_LK, us) : -1; }
+int64_t plat_link_time_at(int64_t ub) { return lko.on ? lk_time_at(OWN_LK, ub) : 0; }
+int plat_link_playing(void) { return lko.on && lk_playing(OWN_LK); }
+int64_t plat_link_play_beat(void) { return lko.on ? lk_play_beat(OWN_LK) : 0; }
 int64_t plat_link_phase(int64_t ub, int64_t quantum_ub) { return lk_phase(ub, quantum_ub); }
 void plat_link_set_tempo(int32_t mpb)
 {
@@ -137,7 +165,7 @@ void plat_link_set_tempo(int32_t mpb)
         return;
     lko.mpb = mpb;
     if (lko.on)
-        lk_set_tempo(&own_lk, mpb, own_us());
+        lk_set_tempo(OWN_LK, mpb, own_us());
 }
 void plat_link_set_playing(int play)
 {
@@ -145,5 +173,5 @@ void plat_link_set_playing(int play)
     if (!lko.on)
         return;
     now = own_us();
-    lk_set_playing(&own_lk, play != 0, lk_beat_at(&own_lk, now), now);
+    lk_set_playing(OWN_LK, play != 0, lk_beat_at(OWN_LK, now), now);
 }

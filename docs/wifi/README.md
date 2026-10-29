@@ -19,10 +19,27 @@ Link"; the calls: `include/plat.h`.
 | `wifi/wifi_nets.c` | the networks kept (four: SSID and key, never the password; the mode) and the scan's table (beacons parsed: WPA2-PSK with CCMP joinable, the rest listed) |
 | `wifi/wifi_ap.c`, `wifi_ap_dhcp.c` | an access point's side (beacons, the management answers, the authenticator, a DHCP server): MODE AP (`wifi_ap = true`) and the host simulator's network run them; a firmware without `wifi_ap` builds none of it |
 | `device/wifi_own_ap.c` | MODE AP (`wifi_ap = true`): the access point on the radio: a beacon every 102 ms, each client's handshake (M1 / M3 again after 1 s, let go after 4), its key in the MAC at WCID 1..4, the frames in the clear at WCID 8 (never keyed), a group frame sent to each client as a unicast copy, a stray station told to join again; the network kept (name, channel, key), AP / AP MAN, `plat_wifi_ap_*` |
+| `wifi/wifi_tune.c`, `device/wifi_own_tune.c` | the tuning, four switches for an A/B on the FM-1 (`plat_wifi_tune_*`, kept in the record's spare byte; below) |
 | `device/wifi_own.c` | the radio's start (on Bluetooth's: `plat_ble_start` if needed), the connection manager (OFF / MAN / AUTO, the scan, the join and its retries, NETWORK LOST), the service once joined (the IP layer, the app's UDP ports), `plat_wifi_*`, `plat_net_udp_*` |
 | `link/link.c`, `link/link_own.c` | Ableton Link (GPL-3.0-only): discovery, measurement, the session; `plat_link_*` |
 | `host/wifi_fake/fm1_wifi.h`, `host/wifi_air.c`, `host/wifi_air_client.c` | the host simulator's radio and network: an access point, DHCP, a Link peer, all in the process; with `wifi_ap` a client of the FM-1's access point (join, the 4-way, DHCP, a Link peer on its address) |
 | `tests/wifi/` | the host tests (`run.sh`): the crypto against published vectors, the station against the authenticator, the IP layer both ways, Link's wire format and session rules, MODE AP against the stack's own station (`wifi_apd_test.c`), the Link example on the simulated network, as a station and (`link_ap`) as the access point |
+
+## The tuning (2026-10-30)
+
+Four switches after what JieLi's SDK does and the own stack did not (from a review of the own stack's reception;
+`wifi/wifi_tune.h` has each one's reference). All on by default (`FM1B_WIFI_TUNE`); each acts at once, on and off;
+`plat_wifi_quality`'s signal, retries and losses are what to compare. `fm1_remote.py wifi status` prints
+their state on a third line, `wifi tune abcf` / `wifi tune none` sets them.
+
+| Switch | What it does | JieLi's |
+| --- | --- | --- |
+| (a) `CAL` | the FM-1's stored VM record 187 (its own check holding): its TX gains, phases, DCs and RX gains, phases into the Wi-Fi PHY (window D 0x04-0x09, 0x61, 0x62; D' 0x09-0x0C) once Wi-Fi is up; off: the start's own (neutral: `FM1_RF_CAL_FULL` 0) back. TX LO, RX DC, the filter codes and the BT trims stay the start's measurement | `RFIinitUseTrimValue` 1, `quick_start_wifi_trim` (`wf_rf_init.c`) |
+| (b) `FILT` | 0x1400 = 0x17F97 (Ralink's STANORMAL) once associated; 0x1 (all in) while scanning, joining, in MODE AP | the STA driver's `NICInitializeAsic` value |
+| (c) `AGC` | window C entry 44 (the AGC's highest gain) from the AP's signal mean: 34 above -36 dBm, 43 above -46, 51 above -60, 57 above -76, else 66; 3 dB of hysteresis; 66 (the start's) after 220 ms with nothing from the AP | `adj_agc_max_gain` (`wf_soft_adj.c`) from `WifiRecvPkgHook` (`wl_hw_init.c`) |
+| (f) `RATE` | unicast data with an ACK at CCK 2 Mb/s once joined (TXWI 0x000100B0); management, EAPOL, group and no-ACK frames at 1 Mb/s; the MAC's own retries at 1 Mb/s (LG_FBK_CFG1 = 0x2100); 1 Mb/s for 10 s (20, 40, 80 if it falls again within 30 s) after 3 never-acknowledged frames in a second | the rate table (`wl_usb_to_sdio.c`: CCK 1, 2, 5.5, OFDM 6 ...), `wifi_set_tx_rate_control_tab`'s fallback tables |
+
+Host-tested (`tests/wifi/wifi_tune_test.c`, `examples/link/tests/link.txt`); not yet measured on an FM-1.
 
 ## Timing and memory
 

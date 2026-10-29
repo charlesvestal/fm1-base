@@ -26,6 +26,8 @@ static struct lk_node cli_lk;
 
 static void cli_queue(const uint8_t *f, uint32_t n)   /* a frame the client sends, to the FM-1 if it listens there */
 {
+    if (n && n <= AIR_FRAME && fm1_fake_ch == cli.ch && air.qw - air.qr >= AIR_Q)
+        fm1_fake_rx_over++;                       /* (the receive queue full: the MAC's overflow count) */
     if (!n || n > AIR_FRAME || air.qw - air.qr >= AIR_Q || fm1_fake_ch != cli.ch)
         return;
     memcpy(air.q[air.qw % AIR_Q].f, f, n);
@@ -183,7 +185,13 @@ static void cli_start(const char *name, const char *pass)   /* the client on (na
     }
     cli.name_len = (uint8_t)n;
     memcpy(cli.mac, MAC, 6);
-    wc_pmk(pass, cli.name, n, cli.pmk);
+    if (pass && !strcmp(pass, "default")) {           /* the Optimist default password of that name (wifi_ap_default_key) */
+        char k[WIFI_AP_KEY_LEN + 1u];
+        wifi_ap_default_key(cli.name, n, k);
+        wc_pmk(k, cli.name, n, cli.pmk);
+    } else {
+        wc_pmk(pass, cli.name, n, cli.pmk);
+    }
     cli_to(CLI_LOOK);
 }
 
@@ -244,12 +252,21 @@ static int cli_expect(const char *what, int *got)
         *got = (int)plat_wifi_ap_clients();
     else if (!strcmp(what, "ap_channel"))
         *got = plat_wifi_ap_channel();
-    else if (!strcmp(what, "ap_key"))
+    else if (!strcmp(what, "ap_key"))             /* a typed key is kept */
         *got = plat_wifi_ap_has_key();
+    else if (!strcmp(what, "ap_key_default"))     /* 1: the default password is the one in use */
+        *got = plat_wifi_ap_default_key((char[WIFI_AP_KEY_LEN + 1u]){0});
+    else if (!strcmp(what, "ap_key_sum")) {       /* the default password's characters added (a stand-in for its text) */
+        char k[WIFI_AP_KEY_LEN + 1u];
+        int i;
+        (void)plat_wifi_ap_default_key(k);
+        for (*got = 0, i = 0; k[i]; i++)
+            *got += (unsigned char)k[i];
+    }
     else if (!strcmp(what, "ap_client_ip_last"))  /* the first client's address, as the FM-1 gave it (192.168.4.N) */
         *got = plat_wifi_ap_client(0, mac, &ip) ? (int)(ip & 255u) : 0;
     else if (!strcmp(what, "ap_stray"))
-        *got = (int)wa.n.stray;
+        *got = wa.m ? (int)wa.m->n.stray : 0;
     else if (!strcmp(what, "client_state"))       /* 5 keyed, 6 with an address asked for / got */
         *got = cli.st;
     else if (!strcmp(what, "client_joins"))

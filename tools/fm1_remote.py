@@ -27,7 +27,14 @@ or by a program (an agent). Needs mido with python-rtmidi.
     release-all                             every button and key up, MASTER the pot's own
     wifi on | wifi off | wifi scan          WiFi (a firmware with wifi = true): on, off, look for networks
     wifi status | wifi found | wifi saved   its state, network, address and signal; the networks the scan found;
-                                            the networks kept
+                                            the networks kept. The own stack, joined: a second status line,
+                                            "q RSSI dBm RATEk tx N retried N lost N rxover N in Ss": the link over
+                                            the last S seconds (10 at most); the first status starts the measuring,
+                                            so ask again 10 s later ("wifi status wait 11000 wifi status"); a third,
+                                            "tune a:on b:on c:on f:on | cal 187 in | filt sta | agc 51 | 2000k falls 0":
+                                            the tuning's switches and what each does now
+    wifi tune abcf | wifi tune none         the own stack's tuning (kept): a the stored calibration, b the RX filter,
+                                            c the AGC, f 2 Mb/s data; the letters given on, the rest off
     wifi join SSID [PASSWORD]               join a network (kept once joined); no password: a kept one's, or none
     wifi forget N                           forget the network kept at N (0 = the most recent)
     bta on | bta off | bta scan             Bluetooth audio (ble_stack = "own" with bt_audio = true): on, off, look
@@ -72,7 +79,17 @@ import fm1ports
 BTN = ["FX", "SEL", "ENV", "LFO", "EDIT", "GLO", "HOME", "SAVE", "ARP", "SEQ", "PLAY", "REC", "OCT-", "OCT+"]
 ENC = ["SELECT", "ALGO", "PRESET", "K1", "K2", "K3", "K4"]
 LC, LG, LW, SR = [0x7D, 0x4C, 0x43], [0x7D, 0x4C, 0x47], [0x7D, 0x4C, 0x57], [0x7D, 0x53, 0x52]
-WIFI_OP = {"on": 1, "off": 2, "scan": 3, "status": 4, "saved": 5, "forget": 6, "join": 7, "found": 8}
+WIFI_OP = {"on": 1, "off": 2, "scan": 3, "status": 4, "saved": 5, "forget": 6, "join": 7, "found": 8, "tune": 9}
+
+
+def tune_mask(arg: str) -> int:
+    """'wifi tune' letters -> the switches' mask (device/main_fm1.c wifi_frame op 9): a 1, b 2, c 4, f 8; 'none' 0"""
+    if arg == "none":
+        return 0
+    bits = {"a": 1, "b": 2, "c": 4, "f": 8}
+    if not arg or any(ch not in bits for ch in arg):
+        raise SystemExit(f"wifi tune {arg!r}: letters of abcf (each on, the rest off), or none")
+    return sum(bits[ch] for ch in set(arg))
 LA = [0x7D, 0x4C, 0x41]                    # Bluetooth audio (device/bt_own_audio.c bta_frame)
 BTA_OP = {"on": 1, "off": 2, "scan": 3, "status": 4, "found": 5, "pick": 6, "connect": 7, "known": 8, "hangup": 9,
           "forget": 10}
@@ -394,6 +411,8 @@ class FM1:
                 data, used = [], 2
                 if a == "forget":
                     data, used = [int(b)], 3
+                elif a == "tune":
+                    data, used = [tune_mask(b)], 3
                 elif a == "join":
                     pw = args[i + 3] if i + 3 < len(args) and args[i + 3] not in ("wait", "wifi", "log", "screen") else None
                     data = nibbles(b) + ([0, 0] + nibbles(pw) if pw is not None else [])

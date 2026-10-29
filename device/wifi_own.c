@@ -30,9 +30,12 @@
 #include "wifi_sta.c"
 #include "wifi_ip.c"
 #include "wifi_nets.c"
+#include "wifi_tune.c"                   /* the tuning's pure part (device/wifi_own_tune.c: the radio's) */
 #if defined(PLAT_HOST) || FM1B_WIFI_AP
 #include "wifi_ap.c"                         /* (MODE AP: wifi_own_ap.c; the host: its simulated access point too, host/wifi_air.c) */
 #include "wifi_ap_dhcp.c"
+#else
+#include "wifi_ap_key.c"                     /* (MODE JAM: an Optimist access point's default password, no MODE AP built) */
 #endif
 
 _Static_assert(sizeof(struct plat_wifi_ap) == sizeof(struct wn_ap), "plat.h plat_wifi_ap: wifi_nets.h wn_ap");
@@ -51,6 +54,7 @@ _Static_assert((int)WIFI_MODE_OFF == (int)WN_MODE_OFF && (int)WIFI_MODE_AUTO == 
 #define WC_PRE_MS 150u                   /* after the deauth: the AP drops its record of us */
 #define WC_LINK_MS 300u                  /* M4 sent -> DHCP: the AP needs this to take the key into use */
 #define WC_RETRY_MS 20000u               /* AUTO: another round after a failure or nothing found */
+#define WC_JAM_BAD_MS 120000u            /* JAM: an access point that refused the default password is left alone this long */
 #define WC_LOST_MS 8000u                 /* joined, and nothing heard from the AP this long (its beacons): gone */
 #define WC_RADIO_MS 3000u                /* the radio is started this long after power-on at the earliest (the start's own work first) */
 #define OWN_RX_MAX 1024u                 /* the largest frame taken, with its receive header (a UDP datagram of 512 B and more fits) */
@@ -137,6 +141,9 @@ static void own_store_poll(void)                 /* a change saved from the main
 }
 
 /* ---- the radio */
+static void wt_prepare(uint32_t len, uint32_t wcid, uint32_t ack);   /* (wifi_own_tune.c: a frame at the tuning's rate) */
+static void wt_radio_up(void);
+static void wt_heard(int8_t rssi);
 static int own_radio_started(void) { return fm1_wifi_is_up(); }
 /* the Wi-Fi side up: 1 now (or already), 0 not yet (Bluetooth still starting), -1 it cannot (no radio in this build) */
 static int own_radio_up(void)
@@ -154,11 +161,12 @@ static int own_radio_up(void)
 #else
     fm1_wifi_up(fm1_wlc_hi, fm1_wlc_c, FM1_WLC_N);
 #endif
+    wt_radio_up();                                /* (the tuning's radio side: wifi_own_tune.c) */
     return 1;
 }
 static void own_tx(uint32_t len, uint32_t wcid, uint32_t ack)   /* wifi_txb's frame out */
 {
-    fm1_wifi_tx_prepare(wifi_txb, len, wcid, ack);
+    wt_prepare(len, wcid, ack);
     (void)fm1_wifi_tx(wifi_txb);
 }
 static uint8_t *own_frame(void) { return (uint8_t *)wifi_txb + FM1_WIFI_TX_HDR; }
@@ -222,6 +230,80 @@ static void own_rx_second(void)
     own_rx_rssi_sum = 0;
 }
 
+/* ---- how well the link works (plat_wifi_quality): measured only while asked for, then the MAC's counters once a second
+ * into a ring of 10, and a running mean of the signal of the frames that matter (the AP's; MODE AP: each client's) */
+#define OQ_SLOTS 10u
+#define OQ_HOLD_MS 15000u                /* measuring stops this long after the last ask */
+#define OQ_STALE_MS 3000u                /* a signal not heard this long: none */
+#define OQ_RX_STA_CNT2 0x1708u           /* Ralink's: [31:16] frames lost to a full receive queue */
+#define OQ_TX_STA_CNT0 0x170Cu           /* [15:0] frames never acknowledged (the retries used up) */
+#define OQ_TX_STA_CNT1 0x1710u           /* [15:0] acknowledged at once, [31:16] acknowledged after a retry */
+#define OQ_PEERS 5u                      /* the AP (station), or MODE AP's clients 1..4 */
+static struct {
+    uint8_t on, n, k;                     /* measuring; seconds in the ring; the next slot */
+    uint32_t t_ask, t_sec;
+    uint16_t ok[OQ_SLOTS], rty[OQ_SLOTS], fail[OQ_SLOTS], over[OQ_SLOTS];
+    int16_t ema[OQ_PEERS];                /* the signal, 1/16 dBm (0: none yet) */
+    uint32_t t_heard[OQ_PEERS];
+} oq;
+static void oq_clear_counters(void)       /* (they clear when read) */
+{
+    (void)fm1_wifi_mac_rd(OQ_RX_STA_CNT2);
+    (void)fm1_wifi_mac_rd(OQ_TX_STA_CNT0);
+    (void)fm1_wifi_mac_rd(OQ_TX_STA_CNT1);
+}
+static void oq_signal(uint32_t peer, int8_t rssi)   /* a frame of peer p heard (only while measuring) */
+{
+    int32_t e;
+    if (!oq.on || peer >= OQ_PEERS || rssi >= 0)
+        return;
+    e = oq.ema[peer];
+    e = e ? e + ((int32_t)rssi * 16 - e) / 8 : (int32_t)rssi * 16;   /* (a mean over the last ~8 frames) */
+    oq.ema[peer] = (int16_t)(e < -2047 ? -2047 : e > -1 ? -1 : e);
+    oq.t_heard[peer] = own_ms();
+}
+/* (the counters are read once a second by wifi_own_tune.c wt_cnt_poll, while measuring and while the tuning's rate watches) */
+static uint8_t wt_cnt_running(void);
+static void wt_cnt_read(uint32_t now);
+static uint32_t wt_kbps(void);
+static void oq_ask(void)                  /* measuring on (from now: the counters cleared, the ring empty) */
+{
+    uint32_t now = own_ms();
+    oq.t_ask = now;
+    if (oq.on)
+        return;
+    if (wt_cnt_running())
+        wt_cnt_read(now);                 /* (the tuning's rate takes what was counted so far: the ring starts from now) */
+    else
+        oq_clear_counters();
+    memset(&oq, 0, sizeof oq);
+    oq.on = 1;
+    oq.t_ask = oq.t_sec = now;
+}
+static int16_t oq_rssi(uint32_t first, uint32_t last)   /* the strongest of peers first..last heard lately, dBm (0 none) */
+{
+    uint32_t i, now = own_ms();
+    int32_t best = 0;
+    for (i = first; i <= last && i < OQ_PEERS; i++)
+        if (oq.ema[i] && now - oq.t_heard[i] < OQ_STALE_MS && (!best || oq.ema[i] > best))
+            best = oq.ema[i];
+    return (int16_t)(best ? (best - 8) / 16 : 0);     /* (rounded: -1000 / 16ths is -62.5 -> -63) */
+}
+static void oq_fill(struct plat_wifi_quality *q, int ap)
+{
+    uint32_t i, ok = 0, r = 0, f = 0, o = 0;
+    for (i = 0; i < oq.n; i++) {
+        ok += oq.ok[i], r += oq.rty[i], f += oq.fail[i], o += oq.over[i];
+    }
+    q->rssi = ap ? oq_rssi(1, OQ_PEERS - 1u) : oq_rssi(0, 0);
+    q->tx_kbps = (uint16_t)wt_kbps();     /* (the unicast data's rate now: the tuning's (f), else 1 Mb/s) */
+    q->tx = (uint16_t)(ok + r + f > 65535u ? 65535u : ok + r + f);
+    q->retried = (uint16_t)(r > 65535u ? 65535u : r);
+    q->lost = (uint16_t)(f > 65535u ? 65535u : f);
+    q->rx_over = (uint16_t)(o > 65535u ? 65535u : o);
+    q->secs = oq.n;
+}
+
 /* ---- the service once joined: the IP layer and the app's UDP ports */
 #define OWN_SOCKS 4u
 static struct {
@@ -256,7 +338,7 @@ static void wl_send(uint32_t len)                 /* what wifi_txb's frame holds
         return;
     }
 #endif
-    fm1_wifi_tx_prepare(wifi_txb, len, 1u, 1u);   /* (WCID 1, the AP: the MAC encrypts what carries the Protected bit) */
+    wt_prepare(len, 1u, 1u);                      /* (WCID 1, the AP: the MAC encrypts what carries the Protected bit) */
     if (fm1_wifi_tx(wifi_txb) == 0)
         wl.n_tx++;
     else
@@ -297,10 +379,11 @@ static void wl_rx(const uint8_t *f, uint32_t len, int8_t rssi, int64_t now)   /*
     uint32_t tx_len = 0, hl;
     uint8_t *txf = own_frame();
     int r;
-    (void)rssi;
     wl.n_rx++;
     if (len >= 24u && !memcmp(f + 10, wl.sta.bssid, 6)) {   /* the AP: still there; told us to go? */
         wl.t_heard = own_ms();
+        oq_signal(0, rssi);
+        wt_heard(rssi);
         if ((f[0] == 0xC0u || f[0] == 0xA0u) && !memcmp(f + 4, wl.sta.mac, 6))
             wl.lost = 1;
     }
@@ -398,6 +481,10 @@ static struct {
     uint8_t saved_join;                           /* the join in hand uses a saved key (no password was typed) */
     uint8_t joined_slot;                          /* 1 + the saved slot joined (0: none) */
     uint8_t attempt;                              /* the join's attempt (1..WC_ATTEMPTS) */
+    uint8_t jam;                                  /* the join in hand is MODE JAM's: an Optimist access point, its default password */
+    uint8_t jam_bad;                              /* the last JAM join failed (a typed password); jam_bssid / jam_t say which, when */
+    uint8_t jam_bssid[6];
+    uint32_t jam_t;
     uint8_t scan_once;                            /* plat_wifi_scan: one sweep asked */
     uint32_t fails;                               /* failures since the start (plat_wifi_fails) */
     uint32_t t0, t_retry, sweeps;                 /* ms of this state's start / the last failure; scan sweeps done */
@@ -414,7 +501,9 @@ static struct {
     char pass[64];
 } wc_req;
 static struct wn_scan wc_tab;                     /* the APs heard */
+#include "wifi_own_tune.c"                       /* the tuning on the radio (wifi/wifi_tune.h) */
 
+static int wc_auto(void) { return wn_st.mode == WN_MODE_AUTO || wn_st.mode == WN_MODE_JAM; }   /* (saved networks joined by themselves) */
 static int wc_mode_off(void) { return wn_st.mode == WN_MODE_OFF || wn_st.mode == WN_MODE_AP || wn_st.mode == WN_MODE_AP_MAN; }
 static void wc_to(uint32_t st) { wc.st = (uint8_t)st; wc.t0 = own_ms(); }
 static void wc_fail(uint32_t why) { wc.fail = (uint8_t)why; wc.fails++; wc_to(WC_FAIL); wc.t_retry = own_ms(); }
@@ -429,7 +518,9 @@ static void wc_on_scan(const uint8_t *f, uint32_t len, int8_t rssi, int64_t now)
 static void wc_on_join(const uint8_t *f, uint32_t len, int8_t rssi, int64_t now)
 {
     uint32_t tx_len = 0;
-    (void)rssi, (void)now;
+    (void)now;
+    if (len >= 24u && !memcmp(f + 10, wc.ap.bssid, 6))
+        wt_heard(rssi);                           /* (the AP's signal from the handshake on: the tuning's AGC) */
     if (wc.sta.state == WIFI_STA_STATE_CONNECTED)
         return;                                   /* (joined: what follows, the AP's group key frame, is wl_poll's) */
     if (wifi_sta_rx_frame(&wc.sta, f, len, own_frame(), &tx_len) == 1 && tx_len)
@@ -471,6 +562,7 @@ static void wc_join(const struct wn_ap *ap, const uint8_t *pmk, const char *pass
     wc_leave();                                   /* (one AP at a time: the old one told) */
     wifi_sta_clear_hw_keys();                     /* (the MAC as at boot: no key left from the last join) */
     wc.ap = *ap;
+    wc.jam = 0;                                   /* (the caller sets it after: wc_leave above clears the last one's) */
     wc.attempt = 1;
     if (pmk) {
         memcpy(wc.pmk, pmk, 32);
@@ -502,6 +594,12 @@ static void wc_retry_or_fail(uint32_t why)        /* the join again from AUTH (a
         wc.attempt++;
         wc_start_auth();
         return;
+    }
+    if (wc.jam) {                                 /* an Optimist access point that refuses its default password has a typed one:
+                                                   * not tried again for WC_JAM_BAD_MS */
+        wc.jam_bad = 1;
+        memcpy(wc.jam_bssid, wc.ap.bssid, 6);
+        wc.jam_t = own_ms();
     }
     wc_fail(why);
 }
@@ -552,6 +650,40 @@ static int wc_auto_pick(int *slot)                /* AUTO: the strongest AP of t
     }
     return -1;
 }
+/* MODE JAM: an Optimist access point is named FM1- and four capital hex digits (the automatic name of device/wifi_own_ap.c wa_name) */
+static int wc_is_optimist_name(const uint8_t *s, uint32_t n)
+{
+    uint32_t i;
+    if (n != 8u || memcmp(s, "FM1-", 4) != 0)
+        return 0;
+    for (i = 4; i < 8u; i++)
+        if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'A' && s[i] <= 'F')))
+            return 0;
+    return 1;
+}
+static int wc_is_own_name(const uint8_t *s, uint32_t n)   /* never join the FM-1's own network */
+{
+    static const char H[] = "0123456789ABCDEF";
+    uint8_t mac[6];
+    own_mac(mac);
+    return n == 8u && memcmp(s, "FM1-", 4) == 0 && s[4] == (uint8_t)H[mac[4] >> 4] && s[5] == (uint8_t)H[mac[4] & 15u] &&
+           s[6] == (uint8_t)H[mac[5] >> 4] && s[7] == (uint8_t)H[mac[5] & 15u];
+}
+/* the strongest Optimist access point heard (the table is kept strongest first), WPA2-PSK, not our own, not one that refused its
+ * default password in the last WC_JAM_BAD_MS: its table index, or -1 */
+static int wc_jam_pick(void)
+{
+    uint32_t i;
+    for (i = 0; i < wc_tab.n; i++) {
+        const struct wn_ap *a = &wc_tab.ap[i];
+        if (a->sec != WN_SEC_PSK || !wc_is_optimist_name(a->ssid, a->ssid_len) || wc_is_own_name(a->ssid, a->ssid_len))
+            continue;
+        if (wc.jam_bad && !memcmp(wc.jam_bssid, a->bssid, 6) && own_ms() - wc.jam_t < WC_JAM_BAD_MS)
+            continue;
+        return (int)i;
+    }
+    return -1;
+}
 static void wc_scan_step(void)
 {
     uint32_t now = own_ms();
@@ -596,8 +728,17 @@ static void wc_scan_step(void)
         }
         return;
     }
-    if (wn_st.mode == WN_MODE_AUTO && !wl.joined && (a = wc_auto_pick(&slot)) >= 0) {
+    if (wc_auto() && !wl.joined && (a = wc_auto_pick(&slot)) >= 0) {
         wc_join(&wc_tab.ap[a], wn_st.n[slot].pmk, 0);
+        return;
+    }
+    if (wn_st.mode == WN_MODE_JAM && !wl.joined && (a = wc_jam_pick()) >= 0) {   /* no saved network heard: an Optimist access point */
+        char k[WIFI_AP_KEY_LEN + 1u];
+        struct wn_ap ap = wc_tab.ap[a];
+        wifi_ap_default_key(ap.ssid, ap.ssid_len, k);
+        wc_join(&ap, 0, k);
+        wc.jam = 1;
+        memset(k, 0, sizeof k);
         return;
     }
     if (wc.scan_want) {                           /* the app's list is on screen: another sweep, the table kept */
@@ -610,7 +751,13 @@ static void wc_scan_step(void)
 }
 static void wc_poll(void)                         /* once a main-loop pass: one step */
 {
+    static uint8_t mode_seen = 0xFFu;
     uint32_t now = own_ms();
+    if (wn_st.mode != mode_seen) {                /* MODE JAM just chosen: look at once, not after the next retry */
+        mode_seen = wn_st.mode;
+        if (mode_seen == WN_MODE_JAM)
+            wc.t_retry = now - WC_RETRY_MS;
+    }
     if (wc_mode_off() && wc.st != WC_OFF && wc.st != WC_RADIO) {   /* MODE OFF, in any state: everything stops */
         wc_enable(0);
         return;
@@ -647,9 +794,9 @@ static void wc_poll(void)                         /* once a main-loop pass: one 
         }
         if (wc.st == WC_FAIL && wc.fail == WCF_NOCAL)
             break;
-        if (wc.st == WC_FAIL && now - wc.t_retry < WC_RETRY_MS && wn_st.mode == WN_MODE_AUTO && !wc.scan_want && !wc.scan_once)
+        if (wc.st == WC_FAIL && now - wc.t_retry < WC_RETRY_MS && wc_auto() && !wc.scan_want && !wc.scan_once)
             break;
-        if (wc.scan_want || wc.scan_once || (wn_st.mode == WN_MODE_AUTO && wn_count(&wn_st) && now - wc.t_retry >= WC_RETRY_MS))
+        if (wc.scan_want || wc.scan_once || ((wn_st.mode == WN_MODE_JAM || (wn_st.mode == WN_MODE_AUTO && wn_count(&wn_st))) && now - wc.t_retry >= WC_RETRY_MS))
             wc_sweep();
         break;
     case WC_SCAN:
@@ -701,7 +848,7 @@ static void wc_poll(void)                         /* once a main-loop pass: one 
         own_rx(wc_on_join, 24u);
         if (wc.sta.state == WIFI_STA_STATE_CONNECTED) {
             wl_attach(&wc.sta);
-            if (wn_put(&wn_st, wc.ap.ssid, wc.ap.ssid_len, wc.sta.pmk) == 0) {
+            if (!wc.jam && wn_put(&wn_st, wc.ap.ssid, wc.ap.ssid_len, wc.sta.pmk) == 0) {   /* (a JAM join is not saved: it would take a saved network's place) */
                 own_store_changed();
                 wc.joined_slot = (uint8_t)(wn_find(&wn_st, wc.ap.ssid, wc.ap.ssid_len) + 1);
             }
@@ -755,6 +902,7 @@ static void wifi_poll(void)
 #endif
     wl_poll();
     own_rx_second();
+    wt_poll();                                    /* (the tuning; the quality counters' second) */
     own_store_poll();
 }
 
@@ -770,13 +918,21 @@ void plat_wifi_on(int on)                        /* (JieLi's API: on = AUTO unle
 void plat_wifi_mode(int mode)
 {
     own_store_load();
-    if (mode < WIFI_MODE_OFF || mode > (FM1B_WIFI_AP ? WIFI_MODE_AP_MAN : WIFI_MODE_MAN) || wn_st.mode == (uint8_t)mode)
+    if (mode < WIFI_MODE_OFF || (mode > (FM1B_WIFI_AP ? WIFI_MODE_AP_MAN : WIFI_MODE_MAN) && mode != WIFI_MODE_JAM) || wn_st.mode == (uint8_t)mode)
         return;
     wn_st.mode = (uint8_t)mode;
     own_store_changed();
 }
 int plat_wifi_get_mode(void) { own_store_load(); return wn_st.mode; }
 int plat_wifi_step(void) { return wc.st; }
+int plat_wifi_jam(void)
+{
+    if (wn_st.mode != WN_MODE_JAM)
+        return 0;
+    if (wc.jam && wc.st >= WC_PMK && wc.st != WC_FAIL)
+        return 1;
+    return wc.jam_bad && own_ms() - wc.jam_t < WC_JAM_BAD_MS ? 2 : 0;
+}
 int plat_wifi_fail(void) { return wc.fail; }
 uint32_t plat_wifi_fails(void) { return wc.fails; }
 int plat_wifi_state(void)
@@ -908,6 +1064,19 @@ void plat_wifi_rx(uint32_t *frames, int *rssi)
         *rssi = own_rx_rssi;
 }
 int plat_net_task(void (*fn)(void *), void *arg, const char *name) { (void)fn, (void)arg, (void)name; return -1; }
+int plat_wifi_quality(struct plat_wifi_quality *q)
+{
+    int ap = 0;
+    memset(q, 0, sizeof *q);
+#if FM1B_WIFI_AP
+    ap = wl.ap && wl.on;
+#endif
+    if (!ap && wc.st != WC_UP)
+        return 0;
+    oq_ask();
+    oq_fill(q, ap);
+    return 1;
+}
 
 /* UDP for the app (main loop): its ports' datagrams to rx with their arrival (plat_wifi_us), sent from a port */
 int plat_net_udp_open(uint16_t port, void (*rx)(void *ctx, uint32_t src_ip, uint16_t src_port, const uint8_t *p,

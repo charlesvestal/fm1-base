@@ -7,7 +7,11 @@
  * 4-way handshake, its keys at its own WCID), DHCP, ARP, ping and a group datagram through the keys, a stranger told to
  * join again, a second client, group frames sent to each, a client leaving, one starting over, a wrong password (M1
  * repeated, then let go), a channel change, MODE leaving AP, the key forgotten, the automatic name, the radio not
- * starting, AP MAN, and one not kept (plat_wifi_ap_start). Exit status: the number of failed checks. */
+ * starting, AP MAN, and one not kept (plat_wifi_ap_start). With FM1B_WIFI_MEM (fm1.toml wifi_mem = "app": run.sh's
+ * wifi_apd_mem) the access point's block is lent by a stand-in app as Optimist's arena lends it (while a MODE AP is
+ * chosen, or one is starting or up; given back zeroed-then-poisoned once plat_wifi_ap_mem(0) takes it): every test as
+ * before, and then the radio not brought up without it, 50 modes AP / OFF with nothing left behind, and nothing
+ * touching the block once given back (ASan). Exit status: the number of failed checks. */
 #include <stdio.h>
 #include <string.h>
 #include "plat.h"
@@ -57,12 +61,49 @@ static const char *PW = "password1";
 static const uint8_t NAME[7] = {'F', 'M', '1', 'T', 'E', 'S', 'T'};
 static uint8_t AP_MAC[6];
 static int64_t now_us(void) { return own_us(); }
-static void tick(uint32_t n) { uint32_t i; for (i = 0; i < n; i++) { ms++; if (i % 5u == 0u) wifi_poll(); } wifi_poll(); }
+#if FM1B_WIFI_MEM
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define AT_ASAN 1
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+#define AT_ASAN 1
+#endif
+#ifdef AT_ASAN
+#include <sanitizer/asan_interface.h>
+#define AT_POISON(p, n) ASAN_POISON_MEMORY_REGION(p, n)
+#define AT_UNPOISON(p, n) ASAN_UNPOISON_MEMORY_REGION(p, n)
+#else
+#define AT_POISON(p, n) ((void)(p), (void)(n))
+#define AT_UNPOISON(p, n) ((void)(p), (void)(n))
+#endif
+static uint8_t at_block[4096] __attribute__((aligned(4)));   /* (the arena's stand-in block) */
+static int at_lent, at_lends, at_takes, at_hold = 1;   /* (at_hold 0: the app does not lend) */
+static void app_lend(void)              /* each pass, as Optimist's ui/opt_feat.h of_lend_want / set (core/arena_bufs.c) */
+{
+    int m = plat_wifi_get_mode(), st = plat_wifi_ap_state();
+    int want = at_hold && (m == WIFI_MODE_AP || m == WIFI_MODE_AP_MAN || st == WIFI_AP_STARTING || st == WIFI_AP_UP);
+    if (want && !at_lent) {
+        AT_UNPOISON(at_block, sizeof at_block);
+        memset(at_block, 0, sizeof at_block);
+        at_lent = plat_wifi_ap_mem(at_block) == 0;
+        at_lends += at_lent;
+    } else if (!want && at_lent && plat_wifi_ap_mem(0) == 0) {
+        at_lent = 0, at_takes++;
+        AT_POISON(at_block, sizeof at_block);
+    }
+}
+#else
+#define app_lend() ((void)0)
+#endif
+static void tick(uint32_t n) { uint32_t i; for (i = 0; i < n; i++) { ms++; if (i % 5u == 0u) app_lend(), wifi_poll(); } app_lend(), wifi_poll(); }
 static void run_until_up(void)
 {
     uint32_t i;
     for (i = 0; i < 400u && wa.st != WA_UP; i++) {
         ms += 10u;
+        app_lend();
         wifi_poll();
     }
 }
@@ -180,7 +221,7 @@ static void dhcp_ping(const struct client *A)     /* section 6: DHCP, ARP, ping 
     memcpy(o, txlog[mark % TXMAX].f, n);
     (void)wifi_ip_rx_frame(&cip, o, n, now_us(), f, &on);
     check(cip.dhcp_state == WIFI_IP_DHCP_BOUND && cip.ip == 0xC0A80402u && cip.gw == 0xC0A80401u, "the Ack: bound to 192.168.4.2, the AP as the router");
-    check(wa.n.dhcp == 2u, "the server counted two replies");
+    check(wa.m->n.dhcp == 2u, "the server counted two replies");
     {
         uint32_t ip = 0;
         uint8_t m[6];
@@ -211,7 +252,7 @@ static void dhcp_ping(const struct client *A)     /* section 6: DHCP, ARP, ping 
     rx(f, off + 20u + 24u);
     check(ntx == mark + 1u && txlog[mark % TXMAX].wcid == 1u && txlog[mark % TXMAX].f[32 + 20] == 0 && csum(txlog[mark % TXMAX].f + 32 + 20, 24) == 0,
           "a ping from A: an echo reply at WCID 1 with a good checksum");
-    check(wa.n.data > 0u && wl.n_kept > 0u, "the counters saw data from A");
+    check(wa.m->n.data > 0u && wl.n_kept > 0u, "the counters saw data from A");
     check(plat_net_udp_open(20808, on_group, 0) == 0, "the app's port (Link's) opened on the access point");
     plat_net_join(0xE04C4E4Bu);
     off = cl_frame(f, A->mac, 0x0800, 0);         /* a datagram to the group, from A */
@@ -233,10 +274,10 @@ static void dhcp_ping(const struct client *A)     /* section 6: DHCP, ARP, ping 
     check(ntx == mark + 1u && txlog[mark % TXMAX].f[0] == 0xC0 && txlog[mark % TXMAX].f[24] == 7 && txlog[mark % TXMAX].wcid == WA_PLAIN &&
           memcmp(txlog[mark % TXMAX].f + 4, "\x02\x11\x22\x33\x44\xEE", 6) == 0, "data from a station not ours: deauthentication, reason 7, plain");
     rx(f, off + 28u);
-    check(ntx == mark + 1u && wa.n.stray == 1u, "... once a second at most");
+    check(ntx == mark + 1u && wa.m->n.stray == 1u, "... once a second at most");
     ms += 1100u;
     rx(f, off + 28u);
-    check(ntx == mark + 2u && wa.n.stray == 2u, "... and again after a second");
+    check(ntx == mark + 2u && wa.m->n.stray == 2u, "... and again after a second");
 }
 
 int main(void)
@@ -251,13 +292,35 @@ int main(void)
     wc_pmk(PW, NAME, sizeof NAME, pmk);
     wc_pmk("not-the-one", NAME, sizeof NAME, pmk_other);
 
-    /* 1. MODE AP with no key: nothing runs */
+    /* 0. the default password: a function of the name (fixed vectors; the same name, the same key; another name, another) */
+    {
+        char k1[16], k2[16], k3[16];
+        wifi_ap_default_key((const uint8_t *)"FM1-0000", 8, k1);
+        wifi_ap_default_key((const uint8_t *)"FM1-A1B2", 8, k2);
+        wifi_ap_default_key((const uint8_t *)"FM1-A1B3", 8, k3);
+        check(!strcmp(k1, "rxrm2jd2") && !strcmp(k2, "9kd4ctcd") && !strcmp(k3, "9fd3wpch"), "default key: the fixed vectors FM1-0000 / A1B2 / A1B3");
+        check(strcmp(k2, k3) != 0 && strlen(k1) == 8u, "two names, two keys; 8 characters");
+        wifi_ap_default_key((const uint8_t *)"FM1-A1B2", 8, k3);
+        check(!strcmp(k2, k3), "the same name, the same key");
+        wifi_ap_default_key((const uint8_t *)"", 0, k1);
+        check(!strcmp(k1, "7jc84apt") && strpbrk(k1, "01oli") == 0, "an empty name has one too; no 0 1 o l i");
+    }
+
+    /* 1. MODE AP with no typed key: the default password (a function of the name) is made and used, nothing is kept */
     plat_wifi_mode(WIFI_MODE_AP);
     wifi_poll();
-    tick(100);
-    check(wa.st == WA_OFF && plat_wifi_ap_state() == WIFI_AP_NOKEY && ntx == 0 && !fm1_fake_up, "no key: nothing started, state NOKEY");
+    check(wa.st == WA_PMK && plat_wifi_ap_state() == WIFI_AP_STARTING && wn_st.ap.set == 0u && !plat_wifi_ap_has_key(), "no typed key: the default key job starts, nothing kept");
+    run_until_up();
+    {
+        char k[16];
+        uint8_t p[32];
+        wifi_ap_default_key(wa.ssid, wa.ssid_len, k);
+        wc_pmk(k, wa.ssid, wa.ssid_len, p);
+        check(wa.st == WA_UP && memcmp(p, wa.pmk, 32) == 0 && wn_st.ap.set == 0u && plat_wifi_ap_default_key(k) == 1, "... up on the key made from the name's default password, none stored");
+    }
     check(plat_wifi_step() == WIFI_STEP_OFF, "the station's manager rests in MODE AP");
     plat_wifi_mode(WIFI_MODE_OFF);
+    wifi_poll();
     check(plat_wifi_ap_state() == WIFI_AP_OFF, "MODE not AP: state OFF");
     plat_wifi_mode(WIFI_MODE_AP);
 
@@ -281,7 +344,7 @@ int main(void)
         char nm[33];
         check(plat_wifi_ap_name(nm) == 7 && !strcmp(nm, "FM1TEST"), "plat_wifi_ap_name");
     }
-    memcpy(AP_MAC, wa.ap.mac, 6);
+    memcpy(AP_MAC, wa.m->ap.mac, 6);
     check(reg(0x1008) == ((uint32_t)AP_MAC[0] | (uint32_t)AP_MAC[1] << 8 | (uint32_t)AP_MAC[2] << 16 | (uint32_t)AP_MAC[3] << 24),
           "the radio's address is in the MAC");
     check(reg(0x1010) == reg(0x1008), "the BSSID is our address");
@@ -315,8 +378,8 @@ int main(void)
     client_init(&A, 0xA1, pmk, NAME, sizeof NAME);
     client_join(&A);
     check(A.sta.state == WIFI_STA_STATE_CONNECTED, "A: the station reaches CONNECTED over the AP's frames");
-    check(wa.keyed[0] == 1 && plat_wifi_ap_clients() == 1u && wa.n.m2 == 1u && wa.n.m4 == 1u && wa.n.assoc == 1u, "A: M2 and M4 accepted, keyed");
-    check(memcmp(A.sta.gtk, wa.ap.gtk, 16) == 0, "A: the group key arrived");
+    check(wa.m->keyed[0] == 1 && plat_wifi_ap_clients() == 1u && wa.m->n.m2 == 1u && wa.m->n.m4 == 1u && wa.m->n.assoc == 1u, "A: M2 and M4 accepted, keyed");
+    check(memcmp(A.sta.gtk, wa.m->ap.gtk, 16) == 0, "A: the group key arrived");
     check(reg(0x6804) == 9u && reg(0x6008) == 0x20000001u && reg(0x600C) == 0u, "A: WCID 1 attribute CCMP pairwise, IV 0x20000001");
     check(reg(0x1808) == ((uint32_t)A.mac[0] | (uint32_t)A.mac[1] << 8 | (uint32_t)A.mac[2] << 16 | (uint32_t)A.mac[3] << 24) &&
           (reg(0x180C) & 0xFFFFu) == ((uint32_t)A.mac[4] | (uint32_t)A.mac[5] << 8), "A: its address is WCID 1's");
@@ -329,7 +392,7 @@ int main(void)
     }
     check(reg(0x6C00 + 32 * 1) != 0u || reg(0x6C00 + 32 * 1 + 4) != 0u, "the group key is in the shared key table");
     check(reg(0x7000) == (4u << 4), "the shared key mode: CCMP for key id 1");
-    check(wa.t_due[0] == 0u, "A: no handshake send left due");
+    check(wa.m->t_due[0] == 0u, "A: no handshake send left due");
 
     /* 6. A: DHCP, ARP, ping, a group datagram; a stranger */
     dhcp_ping(&A);
@@ -337,7 +400,7 @@ int main(void)
     /* 7. client B at WCID 2; group frames go to each client at its own WCID */
     client_init(&B, 0xB2, pmk, NAME, sizeof NAME);
     client_join(&B);
-    check(B.sta.state == WIFI_STA_STATE_CONNECTED && wa.keyed[1] == 1 && plat_wifi_ap_clients() == 2u, "B: joined at the second slot");
+    check(B.sta.state == WIFI_STA_STATE_CONNECTED && wa.m->keyed[1] == 1 && plat_wifi_ap_clients() == 2u, "B: joined at the second slot");
     check(reg(0x6808) == 9u && reg(0x6010) == 0x20000001u && reg(0x1810) != 0u, "B: WCID 2 attribute, IV, address");
     check(reg(0x4040) != reg(0x4020) || reg(0x4044) != reg(0x4024), "B: its own pairwise key");
     mark = ntx;
@@ -356,8 +419,8 @@ int main(void)
         dea[0] = 0xC0;
         memcpy(dea + 4, AP_MAC, 6), memcpy(dea + 10, A.mac, 6), memcpy(dea + 16, AP_MAC, 6);
         rx(dea, 26);
-        check(wa.keyed[0] == 0 && plat_wifi_ap_clients() == 1u && reg(0x6804) == 0u && reg(0x6008) == 0u && reg(0x4020) == 0u, "A leaves: slot free, WCID 1 cleared");
-        check(wa.keyed[1] == 1 && reg(0x6808) == 9u && plat_wifi_ap_client(0, 0, 0) == 0, "B is untouched");
+        check(wa.m->keyed[0] == 0 && plat_wifi_ap_clients() == 1u && reg(0x6804) == 0u && reg(0x6008) == 0u && reg(0x4020) == 0u, "A leaves: slot free, WCID 1 cleared");
+        check(wa.m->keyed[1] == 1 && reg(0x6808) == 9u && plat_wifi_ap_client(0, 0, 0) == 0, "B is untouched");
     }
 
     /* 9. B starts over (authentication while keyed): its keys dropped, the join from the start */
@@ -365,7 +428,7 @@ int main(void)
         uint8_t f[200];
         B.sta.state = WIFI_STA_STATE_AUTH;
         rx(f, wifi_sta_build_auth(&B.sta, f));
-        check(wa.keyed[1] == 0 && reg(0x6808) == 0u, "B authenticates again: its old keys are dropped");
+        check(wa.m->keyed[1] == 0 && reg(0x6808) == 0u, "B authenticates again: its old keys are dropped");
         B.cur = ntx - 1u;
         pump(&B);
         rx(f, wifi_sta_build_assoc_req(&B.sta, f));
@@ -373,7 +436,7 @@ int main(void)
         tick(WA_M1_DELAY_MS + 5u);
         pump(&B);
         pump(&B);
-        check(B.sta.state == WIFI_STA_STATE_CONNECTED && wa.keyed[1] == 1, "B joins again with fresh keys");
+        check(B.sta.state == WIFI_STA_STATE_CONNECTED && wa.m->keyed[1] == 1, "B joins again with fresh keys");
     }
 
     /* 10. the wrong password: M2 fails its check, M1 repeated, then the client let go (reason 15) */
@@ -388,7 +451,7 @@ int main(void)
         pump(&C);
         tick(WA_M1_DELAY_MS + 5u);
         pump(&C);
-        check(wa.n.bad >= 1u && wa.keyed[wa_slot_of(C.mac)] == 0, "wrong password: M2 refused, not keyed");
+        check(wa.m->n.bad >= 1u && wa.m->keyed[wa_slot_of(C.mac)] == 0, "wrong password: M2 refused, not keyed");
         for (i = 0; i < 5u; i++) {
             tick(WA_HS_RETRY_MS + 20u);
             pump(&C);
@@ -398,7 +461,7 @@ int main(void)
         check(m1s == WA_HS_TRIES, "M1 sent WA_HS_TRIES times in all");
         e = last_sub(0xC0);
         check(e && memcmp(e->f + 4, C.mac, 6) == 0 && e->f[24] == 15 && e->wcid == WA_PLAIN, "then a deauthentication, reason 15, plain");
-        check(wifi_ap_find_client(&wa.ap, C.mac) == 0, "the slot is free again");
+        check(wifi_ap_find_client(&wa.m->ap, C.mac) == 0, "the slot is free again");
     }
 
     /* 11. a channel change: kept at once, the AP restarts on it once it has rested */
@@ -431,16 +494,44 @@ int main(void)
     run_until_up();
     check(wa.st == WA_UP && wa.ch == 11u, "MODE AP again: the network kept comes up with no key job");
 
-    /* 13. the key forgotten: the AP stops; the automatic name */
+    /* 13. the typed key forgotten: the AP starts again on the default password; the automatic name */
+    check(plat_wifi_ap_default_key((char[16]){0}) == 0, "a typed key is kept: it replaces the default one");
     plat_wifi_ap_forget();
     wifi_poll();
-    check(wn_st.ap.set == 0u && wa.st == WA_OFF && plat_wifi_ap_state() == WIFI_AP_NOKEY && wn_st.ap.ch == 11u, "forget: off, NOKEY, the channel kept");
-    tick(200);
-    check(wa.st == WA_OFF, "and it stays off");
+    check(wn_st.ap.set == 0u && wn_st.ap.ch == 11u && plat_wifi_ap_default_key((char[16]){0}) == 1, "forget: no typed key, the channel kept");
+    run_until_up();
+    check(wa.st == WA_UP, "and it is up again on the default password");
     check(plat_wifi_ap_set(0, 0, PW) == 0, "a new password with the automatic name");
     run_until_up();
     check(wa.st == WA_UP && wa.ssid_len == 8u && memcmp(wa.ssid, "FM1-4455", 8) == 0 && wn_st.ap.ssid_len == 0u,
           "the automatic name: FM1- and the last four digits of the address");
+
+    /* 13b. MODE JAM's pick: an Optimist name (FM1- and four capital hex digits), WPA2-PSK, not our own, the strongest first, one that
+     * refused the default password left alone for a while */
+    {
+        struct wn_ap a1, a2, a3, a4;
+        memset(&a1, 0, sizeof a1), memset(&a2, 0, sizeof a2), memset(&a3, 0, sizeof a3), memset(&a4, 0, sizeof a4);
+        wc_tab.n = 0;
+        check(wc_is_optimist_name((const uint8_t *)"FM1-A1B2", 8) && !wc_is_optimist_name((const uint8_t *)"FM1-a1b2", 8) &&
+              !wc_is_optimist_name((const uint8_t *)"FM1-A1B", 7) && !wc_is_optimist_name((const uint8_t *)"HOMEWIFI", 8) &&
+              !wc_is_optimist_name((const uint8_t *)"Optimist", 8), "JAM: the Optimist name is FM1- and four capital hex digits");
+        check(wc_is_own_name((const uint8_t *)"FM1-4455", 8) && !wc_is_own_name((const uint8_t *)"FM1-4456", 8), "JAM: our own name (FM1-4455 here) is never joined");
+        memcpy(a1.ssid, "FM1-4455", 8), a1.ssid_len = 8, a1.sec = WN_SEC_PSK, a1.rssi = -30, a1.bssid[5] = 1;   /* (ours: strongest) */
+        memcpy(a2.ssid, "FM1-A1B2", 8), a2.ssid_len = 8, a2.sec = WN_SEC_OPEN, a2.rssi = -40, a2.bssid[5] = 2;   /* (open: not ours to join) */
+        memcpy(a3.ssid, "FM1-C3D4", 8), a3.ssid_len = 8, a3.sec = WN_SEC_PSK, a3.rssi = -50, a3.bssid[5] = 3;
+        memcpy(a4.ssid, "FM1-E5F6", 8), a4.ssid_len = 8, a4.sec = WN_SEC_PSK, a4.rssi = -60, a4.bssid[5] = 4;
+        wn_scan_add(&wc_tab, &a4);
+        wn_scan_add(&wc_tab, &a3);
+        wn_scan_add(&wc_tab, &a2);
+        wn_scan_add(&wc_tab, &a1);
+        check(wc_jam_pick() >= 0 && !memcmp(wc_tab.ap[wc_jam_pick()].ssid, "FM1-C3D4", 8), "JAM: the strongest usable one: not ours, not open");
+        wc.jam_bad = 1, memcpy(wc.jam_bssid, a3.bssid, 6), wc.jam_t = ms;
+        check(wc_jam_pick() >= 0 && !memcmp(wc_tab.ap[wc_jam_pick()].ssid, "FM1-E5F6", 8), "JAM: one that refused the default password is skipped: the next one");
+        ms += WC_JAM_BAD_MS + 1u;
+        check(wc_jam_pick() >= 0 && !memcmp(wc_tab.ap[wc_jam_pick()].ssid, "FM1-C3D4", 8), "JAM: ... and tried again after two minutes");
+        wc.jam_bad = 0;
+        wc_tab.n = 0;
+    }
 
     /* 14. the radio does not start */
     wa_stop();
@@ -480,7 +571,7 @@ int main(void)
     wifi_poll();
     check(wa.st == WA_OFF && plat_wifi_ap_state() == WIFI_AP_STOPPED, "back in AP MAN: still stopped");
     wn_ap_forget(&wn_st);
-    check(plat_wifi_ap_run(1) == -2 && plat_wifi_ap_state() == WIFI_AP_NOKEY, "no key kept: plat_wifi_ap_run(1) refused (-2), NOKEY");
+    check(plat_wifi_ap_run(1) == 0 && plat_wifi_ap_state() == WIFI_AP_STARTING, "no typed key: plat_wifi_ap_run(1) starts it on the default one");
     check(plat_wifi_ap_set(0, 0, PW) == 0 && wa.user_on == 1, "a typed password in AP MAN starts it");
     run_until_up();
     check(wa.st == WA_UP && wn_st.ap.set == 1u, "... the key made and kept, the AP up");
@@ -514,6 +605,41 @@ int main(void)
     wifi_poll();
     check(wa.st == WA_OFF, "a mode chosen stops it");
 
+#if FM1B_WIFI_MEM
+    /* 18. the block lent (fm1.toml wifi_mem = "app"): the radio not up without it, 50 modes AP / OFF, nothing touched after */
+    check(plat_wifi_ap_mem_bytes() == sizeof(struct wa_mem) && sizeof(struct wa_mem) <= sizeof at_block,
+          "the block's size is the access point's state");
+    plat_wifi_mode(WIFI_MODE_OFF);
+    tick(50);
+    check(!at_lent && !wa.m, "MODE OFF: the block given back");
+    at_hold = 0;
+    plat_wifi_mode(WIFI_MODE_AP);
+    for (i = 0; i < 100u; i++) {
+        ms += 10u;
+        wifi_poll();
+    }
+    check(wa.st != WA_UP && !wa.m, "MODE AP without the block: the key made, the radio not brought up");
+    at_hold = 1;
+    run_until_up();
+    check(wa.st == WA_UP && at_lent && wa.m == (struct wa_mem *)at_block, "... lent: up");
+    mark = (uint32_t)at_lends;
+    for (i = 0; i < 50u; i++) {
+        plat_wifi_mode(WIFI_MODE_OFF);
+        tick(20);
+        if (at_lent || wa.st == WA_UP)
+            break;
+        plat_wifi_mode(WIFI_MODE_AP);
+        run_until_up();
+        if (wa.st != WA_UP)
+            break;
+    }
+    check(i == 50u && at_lends - (int)mark == 50 && at_takes >= 50, "50 modes AP / OFF: up each time, given back each time");
+    plat_wifi_mode(WIFI_MODE_OFF);
+    tick(50);
+    check(!at_lent && !wa.m && plat_wifi_ap_clients() == 0u && plat_wifi_ap_client(0, 0, 0) == 0 &&
+          plat_wifi_ap_state() == WIFI_AP_OFF, "given back: nothing reads it (poisoned under ASan), the state OFF");
+    check(plat_wifi_ap_mem(0) == 0, "taken back again: refused nothing");
+#endif
     printf("wifi_apd: %d / %d checks passed\n", checks - fails, checks);
     return fails;
 }

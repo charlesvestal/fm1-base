@@ -39,6 +39,73 @@ link play 0
 wait 1000
 expect peer_playing 0
 shot session.png
+# how well the link works (plat_wifi_quality): measured only once asked, then over the last 10 s: the AP's signal, the
+# rate, the frames sent, those acknowledged only after a retry and those never (the air: 25 % retried, 10 % lost, of
+# which 5 % both: 20 % / 10 %); stops 15 s after the last ask. The tuning's rate (f) off here, so that the losses do not
+# move the rate (its own part below)
+wifi tune 7
+wifi_air rssi -71
+wifi_air retry 25
+wifi_air lost 10
+expect wifi_q_ok 1
+expect wifi_q_secs 0
+wait 11000
+expect wifi_q_secs 10
+expect wifi_q_rssi -71
+expect wifi_q_kbps 1000
+expect wifi_q_tx >20
+expect wifi_q_retry_pct >14
+expect wifi_q_retry_pct <26
+expect wifi_q_lost_pct >5
+expect wifi_q_lost_pct <15
+expect wifi_q_over 0
+wifi_air retry 0
+wifi_air lost 0
+wifi_air rssi -45
+wait 11000
+expect wifi_q_retry_pct 0
+expect wifi_q_lost_pct 0
+expect wifi_q_rssi -45
+# the tuning (wifi/wifi_tune.h), all four on (the default): associated, the station's RX filter (b) in; the AGC's highest
+# gain (c) from the AP's signal, JieLi's steps (-45 dBm: 51, within 3 dB of the -46 edge; -30: 34; -70: 57); unicast data at
+# 2 Mb/s (f); no VM on the host, so nothing of (a)
+wifi tune 15
+wait 2000
+expect wifi_t_on 15
+expect wifi_t_filt 1
+expect wifi_t_cal 2
+expect wifi_t_cal_in 0
+expect wifi_t_agc 51
+expect wifi_t_kbps 2000
+expect wifi_t_slow 0
+expect wifi_q_kbps 2000
+wifi_air rssi -30
+wait 2000
+expect wifi_t_agc 34
+wifi_air rssi -70
+wait 2000
+expect wifi_t_agc 57
+expect wifi_t_fast >5
+# (f): every frame lost at 2 Mb/s (none at 1): after 3 in a second, 1 Mb/s for 10 s; Link's session keeps going on it
+wifi_air lost_fast 100
+wait 4000
+expect wifi_t_slow 1
+expect wifi_t_falls 1
+expect wifi_t_kbps 1000
+expect link_peers 1
+wifi_air lost_fast 0
+wait 12000
+expect wifi_t_slow 0
+expect wifi_t_kbps 2000
+expect wifi_state 5
+# each off: the filter out, the gain back to 66, 1 Mb/s
+wifi tune 0
+wait 500
+expect wifi_t_filt 0
+expect wifi_t_agc 66
+expect wifi_t_kbps 1000
+wifi tune 15
+wifi_air rssi -45
 # the network gone: after 8 s with nothing heard from it, NETWORK LOST, the address and Link's peers gone (AUTO looks
 # for a network kept again at once: the state is ON, scanning)
 wifi_net off
