@@ -38,6 +38,10 @@ run lock sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/lock_tes
 run shim_lock sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/shim_lock_test tests/shim_lock_test.c && $OUT/shim_lock_test"
 # the packed SRAM (device/app.ld) as tools/build.py reads it: one region, RAM code first, then data, bss, the pool
 run layout "$PY" tests/layout_test.py
+# the cache RAM (felucca-bsp's chip/fm1_cache_ram.h, fm1.toml cache_ram_ways) on a model of the cache's registers, tags and
+# ways: 2, 4 and 7 ways set, tested and zeroed; 0 and 8 nothing; a cache that never idles, masks not taken, a stuck bit
+# in each way: all put back, 0 bytes
+run cache-ram sh -c "$CC -std=c11 -O1 -Wall -Wextra -Werror -Ibsp/chip -o $OUT/cache_ram_test bsp/tests/cache_ram_test.c && $OUT/cache_ram_test"
 run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/storage_test"
 run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts

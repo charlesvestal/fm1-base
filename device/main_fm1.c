@@ -231,7 +231,8 @@ static char *log_dec(char *b, uint32_t v)            /* v in decimal at b; the e
 /* a readout for development over USB-MIDI: F0 7D 4C 47 F7 ("LG") asks; the answer is one frame per line,
  * F0 7D 4C 47 <ASCII> F7: the last crash (count, vector, pc, rets, sp, uptime), the supplies' registers (rails), the
  * power setup's and the clock's as the boot loader left them, then
- * Bluetooth's log, the oldest first (it survives a reset) */
+ * Bluetooth's log, the oldest first (it survives a reset), the cache RAM's test (FM1B_CACHE_RAM) and the app's own
+ * lines (APP_LOG); "end" last */
 static void log_line_send(const char *t)
 {
     uint8_t f[48];
@@ -508,6 +509,52 @@ static int log_frame(const uint8_t *p, uint32_t n)
         bj_gap_min = 0xFFFFu;
         bj_gap_max = bj_gap_zero = bj_ticks = bj_rel_max = 0;
     }
+#endif
+#if FM1B_CACHE_RAM
+    {   /* the cache RAM (plat_cache_ram): "cache ram ways 2 st 1 free 00002000 at 01F28000" (st 1 ready, 2 the cache
+         * never idled, 3 the masks not taken, 4 the test failed: put back, free 0), then the masks after (a set bit: a
+         * way kept as a cache) and the first failing address */
+        const struct plat_cache_ram *c = plat_cache_ram();
+        const char *l;
+        q = b;
+        for (l = "cache ram ways "; *l;)
+            *q++ = *l++;
+        *q++ = (char)('0' + c->ways % 10u);
+        for (l = " st "; *l;)
+            *q++ = *l++;
+        *q++ = (char)('0' + c->status % 10u);
+        for (l = " free "; *l;)
+            *q++ = *l++;
+        hexs(q, c->bytes);
+        q += 8;
+        *q = 0;
+        log_line_send(b);
+        q = b;
+        for (l = "cache at "; *l;)
+            *q++ = *l++;
+        hexs(q, (uint32_t)(uintptr_t)c->base);
+        q += 8;
+        for (l = " bad "; *l;)
+            *q++ = *l++;
+        hexs(q, c->bad_at);
+        q += 8;
+        *q = 0;
+        log_line_send(b);
+        q = b;
+        for (l = "cache dway "; *l;)
+            *q++ = *l++;
+        hexs(q, c->dway);
+        q += 8;
+        for (l = " iway "; *l;)
+            *q++ = *l++;
+        hexs(q, c->iway);
+        q += 8;
+        *q = 0;
+        log_line_send(b);
+    }
+#endif
+#ifdef APP_LOG
+    app_log(log_line_send);                          /* (the app's own lines) */
 #endif
     log_line_send("end");
     return 1;
@@ -1155,6 +1202,11 @@ void fm1_cstart(void)
     }
     for (d = _pool_start; d < _pool_end; d++)
         *d = 0;
+#if FM1B_CACHE_RAM
+    fm1_cache_ram_init(FM1B_CACHE_RAM);             /* data-cache ways as RAM (felucca-bsp's fm1_cache_ram.h): its RAM
+                                                     * code is in place now, the interrupts still off, the second core
+                                                     * held; tested before anything uses it (plat_cache_ram) */
+#endif
     fm1_mailbox_clear();
     fm1_guard_enable(FM1_GUARD_STACK | FM1_GUARD_WRITE | FM1_GUARD_BUS | FM1_GUARD_PC);
     safe_mode = (uint8_t)(p3 >> 8);
