@@ -47,6 +47,8 @@ run midi-stamp sh -c "$CC -std=c11 -O2 -Wall -Wextra -Werror -Wno-unused-functio
 run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/storage_test"
 run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts
+# plat_headphones' debounce (device/plat_hp.c) over a simulated jack: a plug's bounce gives one change, 100 ms on
+run hp sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/hp_test tests/hp_test.c && $OUT/hp_test"
 run fastmath sh -c "$CC -O2 -w -o $OUT/fastmath_test tests/fastmath_test.c -lm && $OUT/fastmath_test"
 run flash-ok sh -c "$CC -std=c99 -Wall -Wextra -Werror -o $OUT/flash_ok_test tests/flash_ok_test.c && $OUT/flash_ok_test"   # device/fm1_flash_ok.h: the flash parts the storage may use
 run midi-rel sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -o $OUT/midi_rel_test tests/midi_rel_test.c && $OUT/midi_rel_test"   # include/midi_rel.h
@@ -156,6 +158,8 @@ run template template/build/host/template_host template/tests/basic.txt template
 run bta sh -c "$PY tools/build.py tests/bta_app --host && tests/bta_app/build/host/bta_test_host tests/bta_app/tests/bta.txt tests/bta_app/build/host"
 # the same with the buffers lent by the app (fm1.toml bt_audio_mem = "app", plat_bta_mem): on only with the block lent, refused back while on
 run bta-mem sh -c "$PY tools/build.py tests/bta_mem_app --host && tests/bta_mem_app/build/host/bta_mem_test_host tests/bta_mem_app/tests/bta.txt tests/bta_mem_app/build/host"
+# the headphone jack: the script's jack in / out in the simulator (tests/hp.txt)
+run headphones template/build/host/template_host tests/hp.txt template/build/host
 # the own Bluetooth stack (bt/, Optimist's: ble_stack = "own"): its link layer, host, pairing, BLE-MIDI, central, the
 # radio driver against a fake engine, FM-1 to FM-1, and BR/EDR (A2DP) pieces; UBSan, and ASan where its runtime runs
 if sh tests/bt/run.sh; then :; else FAIL=1; fi

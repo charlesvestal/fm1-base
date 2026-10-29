@@ -172,7 +172,8 @@ static void own_bta_attach(void)
 }
 
 /* ---- the render's output (main_fm1.c render_block, the audio interrupt): 24-bit in int32 -> 16-bit for the SBC
- * encoder, a block of REND_FRAMES in pieces. 1: it streams (the FM-1's own output is muted then) */
+ * encoder, a block of REND_FRAMES in pieces (o 0: silence, the app's app_bt_frames). 1: it streams (the FM-1's own
+ * output is muted then) */
 static int own_bta_feed(const int32_t *o, uint32_t n)
 {
     int32_t q[2u * 32u];
@@ -181,7 +182,7 @@ static int own_bta_feed(const int32_t *o, uint32_t n)
     for (k = 0; k < n; k += m) {
         m = n - k > 32u ? 32u : n - k;
         for (i = 0; i < 2u * m; i++)
-            q[i] = (o[2u * k + i] + 128) >> 8;
+            q[i] = o ? (o[2u * k + i] + 128) >> 8 : 0;
         on = bt_audio_feed(q, m);
         if (!on)
             break;
