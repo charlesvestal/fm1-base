@@ -67,6 +67,10 @@ int32_t plat_battery_raw(void);        /* the reading plat_battery's bars come f
                                         * the main loop's slow average, in the converter's counts (the bars' thresholds
                                         * 531 / 561 / 591); 0 = not read yet. Whether USB powers the FM-1 or not. For an
                                         * app that shows the volts itself; built for an app with APP_BATTERY_RAW (below) */
+int plat_headphones(void);             /* the headphone jack's switch (PB5: 0 with a plug in), read by the main loop every
+                                        * pass and debounced (a state counts once the pin held it 100 ms: the contact
+                                        * bounces ~150 ms a plug): 1 headphones in, 0 nothing plugged; -1 not read yet (the
+                                        * host: its script's "jack"). The speaker mutes itself in hardware on a plug */
 
 /* lights: bright buttons and keys, and dim ones (a short pulse each scan frame; a bright bit wins); glow 0 the dim
  * ones off, 1 low, 2 high. Bit NB in buttons / dim_buttons is PLAY's second, green LED */
@@ -292,6 +296,8 @@ int32_t plat_bta_latency_us(void);     /* what the stream adds on the FM-1's sid
 #endif
 uint32_t plat_bta_mem_bytes(void);
 int plat_bta_mem(void *p);
+int plat_bta_streams(void);            /* 1: the last render went to Bluetooth (the FM-1's own output muted for it); for the
+                                        * render (the audio interrupt) to plan its block by. 0 without Bluetooth audio */
 
 /* WiFi (fm1.toml wifi = true: FM1B_WIFI 1): a station on JieLi's WiFi libraries and the SDK's lwIP, on the same shim.
  * Off until the app turns it on; then it joins the networks it joined before (kept in the app's store object OBJ_WIFI,
@@ -628,6 +634,10 @@ const struct plat_cache_ram *plat_cache_ram(void);
  *   APP_CSTART      void app_cstart(void)         first thing at a start, before the RAM is cleared and with nothing
  *                   set up (registers only, no RAM): an app's own second core that a reset left running, held
  *                   (fm1-base's own, cpu2 = true, needs none of these)
+ *   APP_BT_FRAMES   const int32_t *app_bt_frames(const int32_t *lr, uint32_t n)   the frames Bluetooth audio takes from
+ *                   the render just made (lr, n frames, 24-bit; 0 = silence): for an app whose own output differs from
+ *                   what Bluetooth should get. Audio interrupt, after each render (Bluetooth audio built). Without it
+ *                   Bluetooth takes the output
  *   APP_FAULT       void app_fault(const fm1_crash_t *c)   a crash, before the crash screen (c: the record): an app's
  *                   own second core given up; or the crash is on that core (c->sp on its stacks): it stops there
  *   APP_LOG         void app_log(void (*line)(const char *t))   the development readout over USB-MIDI (F0 7D 4C 47 F7,

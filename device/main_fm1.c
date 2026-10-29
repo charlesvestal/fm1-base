@@ -42,6 +42,12 @@ static int dev_frame(const uint8_t *p, uint32_t n);   /* bt_own_central.c */
 #endif
 #include "uac_mix.h"                                /* the USB recording, the computer's audio, in that order */
 #include "fm1_flash_ok.h"                          /* the flash parts the storage may use (FM1B_FLASH_JEDEC_OK) */
+#if FM1B_BT_AUDIO
+static volatile uint8_t bta_streamed;               /* the last render went to Bluetooth (plat_bta_streams) */
+int plat_bta_streams(void) { return bta_streamed; }
+#else
+int plat_bta_streams(void) { return 0; }
+#endif
 static void render_block(int32_t *o)                /* ALNK0: one half, measured */
 {
     uint32_t t0 = fm1_ticks(), us, budget = HALF_FRAMES * 1000000u / FS;
@@ -77,7 +83,13 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
             uac_mix(o + 2u * k, REND_FRAMES, gain, master_pos, full, usb_play_q12);   /* the USB
                                                      * recording, then the computer's audio, then MASTER if full */
 #if FM1B_BT_AUDIO
-            if (own_bta_feed(o + 2u * k, REND_FRAMES)) {   /* Bluetooth audio streams: the FM-1's own output muted */
+#ifdef APP_BT_FRAMES
+            bta_streamed = (uint8_t)own_bta_feed(app_bt_frames(o + 2u * k, REND_FRAMES), REND_FRAMES);   /* (the app's
+                                                     * frames for Bluetooth: 0 silence) */
+#else
+            bta_streamed = (uint8_t)own_bta_feed(o + 2u * k, REND_FRAMES);
+#endif
+            if (bta_streamed) {                     /* Bluetooth audio streams: the FM-1's own output muted */
                 uint32_t i;
                 for (i = 0; i < 2u * REND_FRAMES; i++)
                     o[2u * k + i] = 0;
@@ -1079,6 +1091,7 @@ static void fm1_main(void)
     app_ui_init();
 
     for (;;) {
+        plat_hp_read();                             /* the headphone jack, every pass (plat_headphones) */
         fm1_wdt_feed();
 #if FELUCCA_USB_HOST
         usb_host_task(fm1_ms);                      /* the host's mode change and connecting (plat_usb_host) */

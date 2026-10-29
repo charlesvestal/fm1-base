@@ -22,6 +22,7 @@
  *   ble connect | ble link | ble disconnect   a central listening, or linked and not yet listening (FM1B_BLE: the
  *                                stand-in stack is ready a second after the start)
  *   bta add NAME | bta drop NAME a Bluetooth audio device around, or gone (FM1B_BT_AUDIO: a link to it is lost)
+ *   jack in | jack out           headphones into the jack, or out (plat_headphones; nothing plugged at the start)
  *   wav FILE | wavstop           start / stop recording the output
  *   peakreset                    restart the output peak (expect peak_db_min / peak_db_max)
  *   shot FILE.png                save the screen
@@ -235,6 +236,8 @@ void plat_dim_ns(uint32_t ns)           /* clamped as the FM-1's scan takes it: 
 /* the pulse the dim ones have now (ns): the app's, else the glow's (1,600 or 3,200), 0 with no glow */
 static uint32_t dim_pulse(void) { return dim_ns_app ? dim_ns_app : dim_glow == 1 ? 1600u : dim_glow ? 3200u : 0u; }
 #endif
+static int host_hp;                                /* the headphone jack: a script's "jack in" / "jack out" (0: none) */
+int plat_headphones(void) { return host_hp; }   /* (debounced on the device: here the script's state at once) */
 /* the lights ("leds"): bright, and dim (glow 0: none); PLAY's green counts as PLAY */
 void plat_lights(uint32_t b, uint32_t k, uint32_t db, uint32_t dk, int glow)
 {
@@ -1995,6 +1998,8 @@ static int expect(const char *what, const char *val)
 #endif
     else if (!strcmp(what, "midi_in_usb"))          /* plat_midi_count: messages in from USB */
         got = (int)plat_midi_count(PORT_USB, 0);
+    else if (!strcmp(what, "headphones"))           /* plat_headphones: the script's jack (1 in, 0 out) */
+        got = plat_headphones();
     else if (!strcmp(what, "peak_db_max") || !strcmp(what, "peak_db_min")) {
         double db = 20.0 * log10(peak_out > 1e-9f ? peak_out : 1e-9f);
         int bad = what[8] == 'm' && what[9] == 'a' ? db > atof(val) : db < atof(val);
@@ -2368,6 +2373,9 @@ int main(int argc, char **argv)
             plat_host_exact = 1;
             run_ms(1);
             plat_host_exact = 0;
+        } else if (!strcmp(cmd, "jack")) {          /* jack in | jack out: the headphone jack (plat_headphones) */
+            host_hp = !strcmp(a, "in");
+            run_ms(2);
         } else if (!strcmp(cmd, "master")) {
             master = (uint32_t)atoi(a);
             run_ms(40);                         /* as the device's smoothing settles */
