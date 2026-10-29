@@ -54,6 +54,8 @@ run ports "$PY" tests/ports_test.py
 run gen-words "$PY" tests/gen_words_test.py
 # the build's check that a function is in the RAM code run, _rt_start.._rt_end wherever app.ld puts it (tools/ram_run.py)
 run ram-run "$PY" tests/ram_run_test.py
+# the check that nothing calls the chip ROM or uses its addresses (tools/romref.py): a constant kept as a number passes
+run romref "$PY" tests/romref_test.py
 # the web installer's m-bootloader step (web/fm1ota.js installBoot) against a simulated FM-1, and finding the FM-1 by
 # its port (unusual names, the loader under a new name, M-VAVE's Open firmware, resume's check, package checksums),
 # and writing the resource region after it

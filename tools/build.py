@@ -820,20 +820,9 @@ def check(img, syms, dis, rt):
         errors.append(f".ram_text contains calls: {rt_calls[:3]}")
     else:
         notes.append(f".ram_text: {len([ln for ln in rt.splitlines() if LINE.match(ln)])} insns, no calls")
-    skip_fns, fn = set(CONF.get("rom_check_skip", [])), ""
-    for ln in dis.splitlines():     # nothing may call or load an address in the chip ROM
-        mm = LINE.match(ln)
-        if not mm:
-            m2 = re.match(r"^([A-Za-z_.$][\w.$]*):$", ln.strip())
-            if m2:
-                fn = m2.group(1)
-            continue
-        if fn in skip_fns:          # (a vendored function whose constant only looks like a ROM address)
-            continue
-        for v in re.findall(r"= (-?\d+) <|call -?\d+ <[^:>]*: ([0-9a-f]+) >", mm.group(3)):
-            val = (int(v[0]) & 0xFFFFFFFF) if v[0] else int(v[1], 16) & 0xFFFFFFFF
-            if 0xFFC00000 <= val < 0xFFD00000:
-                errors.append(f"reference to ROM address {val:#010x}")
+    import romref                                 # nothing may call the chip ROM or use its addresses (tools/romref.py;
+    for val in romref.rom_refs(dis, set(CONF.get("rom_check_skip", []))):   # rom_check_skip: a vendored function whose
+        errors.append(f"reference to ROM address {val:#010x}")              # constant only looks like a ROM address)
     mul64 = mul64_near_loads(dis)       # the CPU fault of bsp docs/CPU.md: a note, the code may be fine
     if mul64:
         notes.append(f"64-bit multiplies inlined beside loads (felucca-bsp docs/CPU.md: may corrupt a "
