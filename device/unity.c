@@ -131,6 +131,9 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
                                    * plat_midi_in_t24); 0: when the app read it */
 #endif
 #define FELUCCA_MIDI_STAMP FM1B_MIDI_STAMP
+#if defined APP_USB_HOST_NAME && FM1B_USB_HOST
+#define FELUCCA_USB_HOST_NAME 1      /* the device's product string (plat_usb_host_name) */
+#endif
 #define SXQ 128u                  /* the SysEx send ring, in packets: a whole screen-reader SAY (ANN_MAX + 9 bytes) */
 #ifdef APP_SYSEX_BYTE
 #define FELUCCA_SYSEX_BYTE(b) app_sysex_byte(b)   /* the app's, every SysEx byte from USB (plat.h APP_SYSEX_BYTE) */

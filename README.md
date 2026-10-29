@@ -41,6 +41,7 @@ parts it has.
 | Screen mirroring: the screen and panel live on a computer (web/mirror, a PNG with `tools/fm1_mirror.py`), the panel played from it | `mirror = true` | nothing; `APP_REDRAW` (what a slow link dropped, drawn again), `APP_MIRROR_TEST` (a test session from the remote) |
 | Backup and restore of the app's saved objects over USB, all or nothing (web/backup, `tools/fm1_backup.py`) | `backup = true` | app.h: `APP_BACKUP_OBJS`, `APP_BACKUP_MAGIC`, `APP_BACKUP_VERSION`, `APP_BACKUP_WHAT`; `app_backup_playing`, `_flush`, `_hold`, `_restored` |
 | The app's own commands over USB, in the update's framing, data pulled from the host | `#define APP_USB_CMD` in app.h | `app_usb_cmd`; `plat_host_read`, `plat_host_patience` |
+| The USB host's device by name (its product string), for the app's own page | `#define APP_USB_HOST_NAME` in app.h, with `usb_host` | `plat_usb_host_name` |
 | Lower case in the big fonts | `font_full = ["L"]` | the fonts as ever |
 | The firmware as an `.rfm1` for host apps (RemoteFM1 for iOS), below | `tools/build.py APP_DIR --rfm1` | nothing |
 
