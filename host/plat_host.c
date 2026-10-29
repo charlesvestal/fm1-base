@@ -774,6 +774,34 @@ uint32_t plat_cpu2_stack(void) { return 0; }
 uint32_t plat_core(void) { return 0; }   /* (one core) */
 #endif
 
+/* the cache RAM (plat.h, fm1.toml cache_ram_ways): a buffer of the ways' size stands in, ready from the start, its masks
+ * as the device's would read; FM1B_CACHE_RAM_FAIL=1 in the environment: its test failed (0 bytes, the masks put back) */
+#ifndef FM1B_CACHE_RAM
+#define FM1B_CACHE_RAM 0
+#endif
+const struct plat_cache_ram *plat_cache_ram(void)
+{
+    static struct plat_cache_ram r;
+#if FM1B_CACHE_RAM
+    static uint8_t ways[FM1B_CACHE_RAM * 4096u] __attribute__((aligned(8)));
+    static int set;
+    if (!set) {
+        const char *f = getenv("FM1B_CACHE_RAM_FAIL");
+        uint32_t keep = (0xFFu << FM1B_CACHE_RAM) & 0xFFu;
+        int ok = !(f && f[0] == '1');
+        set = 1;
+        r.ways = FM1B_CACHE_RAM;
+        r.status = ok ? PLAT_CR_OK : PLAT_CR_BAD;
+        r.dway = ok ? keep | keep << 8 | keep << 16 : 0x00FFFFFFu;
+        r.iway = 0xFFFFu;
+        r.bad_at = ok ? 0u : 0x01F28000u;
+        r.bytes = ok ? (uint32_t)sizeof ways : 0u;
+        r.base = ok ? ways : 0;
+    }
+#endif
+    return &r;
+}
+
 /* -------------------------------------------------------------- app --- */
 #define ANN_NAME APP_NAME " " APP_VERSION
 #include "ann_words.h"                                  /* the words file's link (tools/gen_words.py) */

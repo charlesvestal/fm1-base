@@ -386,6 +386,24 @@ uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B; fm1.toml c
  * through a pointer, as any flash function. Device: the core's number register (felucca-bsp's fm1_cnum); host: 1
  * while the simulated second core runs a job (an app with APP_HOST_CPU2 has its own) */
 uint32_t plat_core(void);
+/* Cache RAM (fm1.toml cache_ram_ways = 2, 4 or 7: FM1B_CACHE_RAM; felucca-bsp's chip/fm1_cache_ram.h): that many of the
+ * data cache's 8 ways of 4 KiB used as RAM at 0x01F28000, set and tested at the start before anything else runs; a
+ * failed test puts the cache back and gives 0 bytes. Objects the app places there itself (section .cache_ram, NOLOAD:
+ * zeroed by the test, never RAM after a failure) come first; base is what is left after them, for the app's own use
+ * (main loop memory: whether the second core and DMA read these ways has not been measured, so nothing they read goes
+ * there). The flash's data goes through the ways kept as a cache: fewer of them make big reads from the flash slower
+ * (Optimist's FM-1, 7 ways as RAM: reads over 16 KiB 57x slower; 2 ways in daily use for days). Host: a buffer of the
+ * same size stands in; FM1B_CACHE_RAM_FAIL=1 in the environment: its test failed */
+enum { PLAT_CR_OFF, PLAT_CR_OK, PLAT_CR_BUSY, PLAT_CR_REG, PLAT_CR_BAD };   /* not built / ready / the cache never idled /
+                                                                          * the masks not taken / the test failed */
+struct plat_cache_ram {
+    uint8_t *base;                     /* the free part's start, 0: none */
+    uint32_t bytes;                    /* its bytes (the ways less the .cache_ram objects), 0: none */
+    uint32_t ways, status;             /* the ways asked for (fm1.toml), PLAT_CR_* */
+    uint32_t dway, iway, bad_at;       /* the data and instruction way masks after, the first failing address */
+};
+const struct plat_cache_ram *plat_cache_ram(void);
+
 
 /* the app's optional hooks (app.h defines the macro when it has the function):
  *   APP_TICK        void app_tick(void)           1 kHz, in the timer interrupt (a clock, a sequencer)
@@ -416,6 +434,9 @@ uint32_t plat_core(void);
  *                   (fm1-base's own, cpu2 = true, needs none of these)
  *   APP_FAULT       void app_fault(const fm1_crash_t *c)   a crash, before the crash screen (c: the record): an app's
  *                   own second core given up; or the crash is on that core (c->sp on its stacks): it stops there
+ *   APP_LOG         void app_log(void (*line)(const char *t))   the development readout over USB-MIDI (F0 7D 4C 47 F7,
+ *                   "LG"): the app's own lines, each through line (ASCII, 40 characters at most), before its "end".
+ *                   Main loop
  *
  * Screen mirroring (fm1.toml mirror = true: FM1B_MIRROR 1, device/mirror.c): the screen and the panel live on a
  * computer (base/web/mirror/, tools/fm1_mirror.py), and the panel played from it. Nothing for the app to call; an app
