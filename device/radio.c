@@ -782,6 +782,13 @@ static uint8_t ble_off;                           /* switched off by the player 
 int plat_ble_state(void) { return ble_off ? BLE_OFF : ble_state; }
 int plat_ble_connected(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_connected(); }
 int plat_ble_linked(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_linked(); }
+int plat_ble_stream(const struct plat_ble_stream *s) { (void)s; return 0; }   /* (send by plat_midi_send) */
+void plat_ble_link_info(uint32_t v[7])
+{
+    int i;
+    for (i = 0; i < 7; i++)
+        v[i] = 0;
+}
 void plat_ble_enable(int on)
 {
     ble_off = (uint8_t)!on;

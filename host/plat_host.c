@@ -340,6 +340,13 @@ int plat_ble_state(void) { return ble_state; }
 static int ble_link;                            /* "ble link": a computer linked, not listening yet */
 int plat_ble_connected(void) { return ble_conn; }
 int plat_ble_linked(void) { return ble_conn || ble_link; }
+int plat_ble_stream(const struct plat_ble_stream *s) { (void)s; return 0; }   /* (send by plat_midi_send) */
+void plat_ble_link_info(uint32_t v[7])
+{
+    int i;
+    for (i = 0; i < 7; i++)
+        v[i] = 0;
+}
 void plat_ble_start(void)
 {
     if (ble_state != BLE_OFF || !FM1B_BLE)
