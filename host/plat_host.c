@@ -27,7 +27,7 @@
  *   shot FILE.png                save the screen
  *   leds                         print the lit buttons and keys (keys: # bright, + dim)
  *   out                          print the MIDI sent since the last "out" (and forget it; clocks not shown)
- *   expect_out PORT B0 B1 B2     check that this message went out to PORT since the last "out" (USB, BLE, BLE-DEV)
+ *   expect_out PORT B0 B1 B2     check that this message went out to PORT since the last "out" (USB, BLE, BLE-DEV, USBH)
  *   expect_no_out PORT B0 B1 B2  check that it did not
  *   expect WHAT VALUE            check state: exit 1 on mismatch; VALUE "<N" / ">N" is a bound (WHAT: store_writes,
  *                                store_tries, clocks_out, midi_out, usb_play_gain, usb_audio_full, ... below; data.ADDR: the
@@ -49,6 +49,12 @@
  *   fbdump FILE                  the screen's pixels raw (240 x 240 RGB565, high byte first) into FILE
  *   flash_fail 0|1               every store save fails (1) or works (0); expect store_tries counts the attempts
  *   clock N [MS]                 N MIDI clocks in (F8) over USB, MS apart (default 21: 119 bpm)
+ *   usbh plug NAME [in|out|nomidi] | usbh unplug   (usb_host) a USB-MIDI device on the port while it is a host
+ *                                (plat_usb_host): both ways, input or output only, or none; _ in NAME is a space (its
+ *                                product string, plat_usb_host_name); connected 150 ms after it is plugged in
+ *   usbh midi B0 B1 B2 | usbh clock N [MS]   its MIDI in (PORT_USB), its clocks. While the port is a host there is no
+ *                                computer: "midi USB" and "clock" are dropped, nothing goes out to it; what goes to
+ *                                the device: expect_out USBH ..., expect usbh_out, usbh_clocks (expect usbh: USBH_*)
  *   said_none                    nothing was said since the last "said" (or "listen"): else a failure
  *   mirror FILE|off|refresh|nokeep|unplug   (FM1B_MIRROR) the screen and panel mirrored over USB (device/mirror.c)
  *                                as a viewer asks for it, the device's SysEx into FILE at USB's pace; nokeep: the
@@ -292,13 +298,155 @@ static uint32_t ble_listening(void)            /* the Bluetooth links listening,
 {
     return (ble_conn ? TO_BLE_HOST : 0u) | (bdev_state == BLE_DEV_READY ? TO_BLE_DEV : 0u);
 }
+static uint32_t usbh_to_usb(void);             /* TO_USB while someone listens there: a computer, or the host's device */
+static int usbh_port(void);
+static void usbh_sent(uint32_t pkt);
 /* the host's MIDI out is logged at once and never fills: the device's whole ring free, for whoever listens */
 uint32_t plat_midi_out_room(uint32_t to)
 {
-    return to & (TO_USB | ble_listening()) ? 64u : 0u;
+    return to & (usbh_to_usb() | ble_listening()) ? 64u : 0u;
 }
 static uint32_t usb_links;                      /* plat_midi_out_link: one USB connection, all run long */
 uint32_t plat_midi_out_link(void) { return usb_links; }
+/* the USB MIDI host (plat_usb_host): a device on the port, as the script plugs it ("usbh plug NAME [in|out|nomidi]",
+ * "usbh unplug"), its MIDI in ("usbh midi B0 B1 B2"), what the FM-1 sends it (expect_out USBH; expect usbh_out,
+ * usbh_clocks). As felucca-bsp's host: boot is a device; the mode changes at the platform's next look; a device
+ * plugged in connects USBH_CONNECT_MS later (its enumeration; one without MIDI never: NO MIDI said once); the port's
+ * MIDI is PORT_USB / TO_USB both ways and there is no computer meanwhile (the script's "midi USB" is dropped, nothing
+ * goes to a computer); each session's end (the mode changed, the device lost) gives plat_usb_lost once, each connection
+ * a new plat_midi_out_link. expect usbh: USBH_*; usbh_in. Without FM1B_USB_HOST the port stays a device (USBH_OFF) */
+#ifndef FM1B_USB_HOST
+#define FM1B_USB_HOST 0
+#endif
+#define USBH_CONNECT_MS 150u
+#define TO_USBH_SIM (1u << 5)                  /* (the out log's tag: sent to the host's device, not to a computer) */
+static struct {
+    uint8_t want, on, plugged, midi_in, midi_out, conn, msg, lost, said;
+    uint32_t t_plug, in, out, clocks;
+    char name[32];
+} uhs;
+static void usbh_step(void)                     /* the mode and the connection, as the host's task moves them */
+{
+    if (uhs.want != uhs.on) {
+        uhs.on = uhs.want;
+        uhs.conn = 0;
+        uhs.lost = 1;                           /* (the session before: the computer's, or the device's) */
+        uhs.msg = uhs.on ? USBH_MSG_ON : USBH_MSG_OFF;
+        uhs.t_plug = now_ms;
+        uhs.said = 0;
+        if (!uhs.on)
+            usb_links++;                        /* (a computer again) */
+    }
+    if (uhs.on && uhs.plugged && !uhs.conn && !uhs.said && now_ms - uhs.t_plug >= USBH_CONNECT_MS) {
+        uhs.said = 1;
+        if (uhs.midi_in || uhs.midi_out) {
+            uhs.conn = 1;
+            uhs.msg = USBH_MSG_MIDI;
+            usb_links++;
+        } else {
+            uhs.msg = USBH_MSG_NOMIDI;
+        }
+    }
+}
+static void usbh_reboot(void)                   /* the script's reboot: the port a device again, what is plugged in stays */
+{
+    uhs.want = uhs.on = uhs.conn = uhs.lost = uhs.said = 0;
+    uhs.msg = USBH_MSG_NONE;
+    uhs.t_plug = now_ms;
+}
+static int usbh_port(void)                      /* the port is a host */
+{
+    usbh_step();
+    return uhs.on;
+}
+static uint32_t usbh_to_usb(void) { return !usbh_port() || (uhs.conn && uhs.midi_out) ? TO_USB : 0u; }
+void plat_usb_host(int on) { uhs.want = (uint8_t)(FM1B_USB_HOST && on); }
+int plat_usb_host_state(void)
+{
+    usbh_step();
+    return !uhs.on ? USBH_OFF : uhs.conn ? USBH_CONNECTED : USBH_LOOKING;
+}
+int plat_usb_host_msg(void)
+{
+    int m;
+    usbh_step();
+    m = uhs.msg;
+    uhs.msg = USBH_MSG_NONE;
+    return m;
+}
+int plat_usb_lost(void)
+{
+    usbh_step();
+    if (!uhs.lost)
+        return 0;
+    uhs.lost = 0;
+    return 1;
+}
+const char *plat_usb_host_name(void)
+{
+    usbh_step();
+    return uhs.conn ? uhs.name : "";
+}
+static uint32_t mk_pkt(const char *a, const char *b, const char *c);
+/* the script's usbh: plug NAME [in|out|nomidi] (both ways by default; _ in NAME a space), unplug, midi B0 B1 B2 (from the device) */
+static int usbh_cmd(const char *a, const char *b, const char *c, const char *d)
+{
+    usbh_step();
+    if (!strcmp(a, "plug") && b[0]) {
+        snprintf(uhs.name, sizeof uhs.name, "%s", b);
+        for (char *p = uhs.name; *p; p++)
+            if (*p == '_')
+                *p = ' ';                       /* (the script's words: "Launchkey_Mini" is "Launchkey Mini") */
+        uhs.plugged = 1;
+        uhs.midi_in = (uint8_t)(strcmp(c, "out") && strcmp(c, "nomidi"));
+        uhs.midi_out = (uint8_t)(strcmp(c, "in") && strcmp(c, "nomidi"));
+        uhs.t_plug = now_ms;
+        uhs.said = 0;
+        return 0;
+    }
+    if (!strcmp(a, "unplug")) {
+        if (uhs.conn) {
+            uhs.lost = 1;
+            uhs.msg = USBH_MSG_LOST;
+        }
+        uhs.plugged = uhs.conn = 0;
+        return 0;
+    }
+    if (!strcmp(a, "midi")) {
+        if (!uhs.conn || !uhs.midi_in) {
+            printf("  usbh midi: no device connected that sends: dropped\n");
+            return 0;
+        }
+        min_q[mi_w % MQ] = mk_pkt(b, c, d) & ~0xF0u;     /* (cable 0: the host drops the cable number) */
+        min_port[mi_w++ % MQ] = PORT_USB;
+        uhs.in++;
+        return 0;
+    }
+    printf("FAIL usbh %s: plug NAME [in|out|nomidi], unplug, midi B0 B1 B2\n", a);
+    return 1;
+}
+static void usbh_sent(uint32_t pkt)             /* plat_midi_send's TO_USB while the port is a host */
+{
+    if (((pkt >> 8) & 0xFFu) == 0xF8u)
+        uhs.clocks++;
+    else
+        uhs.out++;
+}
+static int usbh_expect(const char *what, int *got)    /* the model's state for expect: 1 = one of its */
+{
+    usbh_step();
+    if (!strcmp(what, "usbh"))
+        *got = plat_usb_host_state();
+    else if (!strcmp(what, "usbh_in"))         /* messages in from the device (real-time too) */
+        *got = (int)uhs.in;
+    else if (!strcmp(what, "usbh_out"))        /* messages out to it, clocks left out */
+        *got = (int)uhs.out;
+    else if (!strcmp(what, "usbh_clocks"))     /* F8s out to it */
+        *got = (int)uhs.clocks;
+    else
+        return 0;
+    return 1;
+}
 uint32_t plat_midi_ago(int port, int out)
 {
     return port < 0 || port >= NPORTS || !midi_t[port][!!out] ? 0xFFFFFFFFu : plat_ms() - midi_t[port][!!out];
@@ -324,9 +472,14 @@ int plat_midi_in(uint32_t *pkt, int *port)       /* the script's "midi" (BLE-DEV
 }
 void plat_midi_send(uint32_t pkt, uint32_t to)
 {
-    to &= TO_USB | ble_listening();               /* as the device: nothing queues for a link not there */
+    to &= usbh_to_usb() | ble_listening();        /* as the device: nothing queues for a link not there */
     if (!to)
         return;
+    if ((to & TO_USB) && usbh_port()) {         /* (the host's device, no computer: tagged in the out log) */
+        usbh_sent(pkt);
+        to = (to & ~TO_USB) | TO_USBH_SIM;
+        midi_counted(PORT_USB, 1, pkt);
+    }
     if (to & TO_USB)
         midi_counted(PORT_USB, 1, pkt);
     if (to & TO_BLE)
@@ -342,15 +495,9 @@ void plat_midi_send(uint32_t pkt, uint32_t to)
     }
     if (midi_log)
         fprintf(midi_log, "%u ms: %02X %02X %02X ->%s%s%s\n", now_ms, (pkt >> 8) & 0xFF, (pkt >> 16) & 0xFF,
-                (pkt >> 24) & 0xFF, to & TO_USB ? " USB" : "", to & TO_BLE_HOST ? " BLE" : "",
+                (pkt >> 24) & 0xFF, to & TO_USB ? " USB" : to & TO_USBH_SIM ? " USBH" : "", to & TO_BLE_HOST ? " BLE" : "",
                 to & TO_BLE_DEV ? " BLE-DEV" : "");
 }
-
-/* the USB MIDI host: the simulator has no USB port */
-void plat_usb_host(int on) { (void)on; }
-int plat_usb_host_state(void) { return USBH_OFF; }
-int plat_usb_host_msg(void) { return USBH_MSG_NONE; }
-int plat_usb_lost(void) { return 0; }
 
 /* Bluetooth (FM1B_BLE): a stand-in for the stack, ready a second after the start, and its log */
 static uint32_t ble_t0;
@@ -1769,7 +1916,7 @@ static const char *const PORT_N[NPORTS] = {"USB", "BLE", "TRS"};
 static int expect_out(const char *port, uint32_t pkt, int sent)
 {
     int p = find_name(PORT_N, NPORTS, port);
-    uint32_t to = !strcmp(port, "BLE-DEV") ? TO_BLE_DEV : p >= 0 ? 1u << p : 0u, i;
+    uint32_t to = !strcmp(port, "BLE-DEV") ? TO_BLE_DEV : !strcmp(port, "USBH") ? TO_USBH_SIM : p >= 0 ? 1u << p : 0u, i;
     for (i = 0; i < n_out; i++)
         if (((out_pkt[i] ^ pkt) & 0xFFFFFF00u) == 0 && (out_to[i] & to))
             break;
@@ -1791,6 +1938,9 @@ static int expect(const char *what, const char *val)
         ;
     else
 #endif
+    if (usbh_expect(what, &got))                /* the USB host's device (usbh, usbh_in, usbh_out, usbh_clocks) */
+        ;
+    else
     if (!strcmp(what, "store_writes"))
         got = (int)store_writes;
     else if (!strcmp(what, "restarts"))            /* plat_restart's since the start */
@@ -2223,8 +2373,21 @@ int main(int argc, char **argv)
             run_ms(40);                         /* as the device's smoothing settles */
         } else if (!strcmp(cmd, "midi")) {
             int dev = !strcmp(a, "BLE-DEV"), p = dev ? PORT_BLE : find_name(PORT_N, NPORTS, a);
-            min_q[mi_w % MQ] = p < 0 ? mk_pkt(a, b, c) : mk_pkt(b, c, d) | (dev ? 0x10u : 0u);   /* cable 1 */
-            min_port[mi_w++ % MQ] = p < 0 ? PORT_USB : (uint32_t)p;
+            if ((p < 0 || p == PORT_USB) && !dev && usbh_port()) {   /* (the port is a host: no computer to send it) */
+                printf("  midi USB: the port is a USB host, no computer: dropped\n");
+            } else {
+                min_q[mi_w % MQ] = p < 0 ? mk_pkt(a, b, c) : mk_pkt(b, c, d) | (dev ? 0x10u : 0u);   /* cable 1 */
+                min_port[mi_w++ % MQ] = p < 0 ? PORT_USB : (uint32_t)p;
+            }
+            run_ms(2);
+        } else if (!strcmp(cmd, "usbh") && !strcmp(a, "clock")) {   /* usbh clock N [MS]: N clocks from the device */
+            int n = atoi(b), gap = c[0] ? atoi(c) : 21;
+            for (; n > 0; n--) {
+                fails += usbh_cmd("midi", "F8", "", "");
+                run_ms((uint32_t)gap);
+            }
+        } else if (!strcmp(cmd, "usbh")) {
+            fails += usbh_cmd(a, b, c, d);
             run_ms(2);
         } else if (!strcmp(cmd, "ble")) {
             if (!strcmp(a, "connect") && ble_state == BLE_READY) {
@@ -2251,7 +2414,7 @@ int main(int argc, char **argv)
             for (i = 0; i < n_out; i++)
                 if (((out_pkt[i] >> 8) & 0xFF) != 0xF8)
                     printf("  out %02X %02X %02X ->%s%s%s\n", (out_pkt[i] >> 8) & 0xFF, (out_pkt[i] >> 16) & 0xFF,
-                           out_pkt[i] >> 24, out_to[i] & TO_USB ? " USB" : "", out_to[i] & TO_BLE_HOST ? " BLE" : "",
+                           out_pkt[i] >> 24, out_to[i] & TO_USB ? " USB" : out_to[i] & TO_USBH_SIM ? " USBH" : "", out_to[i] & TO_BLE_HOST ? " BLE" : "",
                            out_to[i] & TO_BLE_DEV ? " BLE-DEV" : "");
             n_out = 0;
         } else if (!strcmp(cmd, "expect_out") || !strcmp(cmd, "expect_no_out")) {
@@ -2327,6 +2490,7 @@ int main(int argc, char **argv)
 #ifdef APP_HOST_REBOOT
             app_host_reboot();                  /* the app forgets what RAM would (app.h) */
 #endif
+            usbh_reboot();                      /* (every boot is a device: plat_usb_host) */
             boot();
         } else if (!strcmp(cmd, "listen")) {
             static const uint8_t HELLO[] = {ANN_H0, ANN_H1, ANN_H2, ANN_HELLO, ANN_VER};
@@ -2385,6 +2549,10 @@ int main(int argc, char **argv)
         } else if (!strcmp(cmd, "clock")) {           /* clock N [MS]: N MIDI clocks in (F8), MS apart (default 21) */
             int n = atoi(a), gap = b[0] ? atoi(b) : 21;
             for (; n > 0; n--) {
+                if (usbh_port()) {                  /* (the port is a host: no computer) */
+                    run_ms((uint32_t)gap);
+                    continue;
+                }
                 min_port[mi_w % MQ] = PORT_USB;
                 min_q[mi_w++ % MQ] = 0x0Fu | 0xF8u << 8;
                 run_ms((uint32_t)gap);

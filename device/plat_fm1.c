@@ -396,6 +396,13 @@ int plat_usb_lost(void)
     midi_usb_lost = 0;
     return 1;
 }
+#ifdef APP_USB_HOST_NAME                        /* (built for an app that shows it: another's image stays as it was) */
+#if FELUCCA_USB_HOST
+const char *plat_usb_host_name(void) { return usb_host_name(); }
+#else
+const char *plat_usb_host_name(void) { return ""; }
+#endif
+#endif
 
 /* the keys' velocity and pressure (APP_KEY_SENSE): felucca-bsp's analog rows, as fm1-ctl and fm1-monk read them (the
  * converter's clock, a held key driven, the top row probed). Off, the converter is the main loop's (MASTER). */

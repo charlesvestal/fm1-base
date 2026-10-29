@@ -42,6 +42,7 @@ parts it has.
 | Backup and restore of the app's saved objects over USB, all or nothing (web/backup, `tools/fm1_backup.py`) | `backup = true` | app.h: `APP_BACKUP_OBJS`, `APP_BACKUP_MAGIC`, `APP_BACKUP_VERSION`, `APP_BACKUP_WHAT`; `app_backup_playing`, `_flush`, `_hold`, `_restored` |
 | The companion services over USB: what the firmware is and has, the app's files and parameters, for a generic page or tool (docs/COMPANION.md, `tools/fm1_companion.py`) | `companion = true` | app.h: `APP_COMPANION_EXTRAS` (optional); files: `APP_FILES`, `app_file`, `app_file_read`, `_begin`, `_write`, `_commit`, `_delete`, `_busy` (`plat_file_*`: a file kept in the data area, A / B); parameters: `APP_PARAMS`, `app_param`, `app_param_group`, `app_param_get`, `_set` |
 | The app's own commands over USB, in the update's framing, data pulled from the host | `#define APP_USB_CMD` in app.h | `app_usb_cmd`; `plat_host_read`, `plat_host_patience` |
+| The USB host's device by name (its product string), for the app's own page | `#define APP_USB_HOST_NAME` in app.h, with `usb_host` | `plat_usb_host_name` |
 | Lower case in the big fonts | `font_full = ["L"]` | the fonts as ever |
 | The firmware as an `.rfm1` for host apps (RemoteFM1 for iOS), below | `tools/build.py APP_DIR --rfm1` | nothing |
 | The browser emulator's own parts (`tools/build.py --web`): web/emu/parts, each file saying what it does; without any, the page and app.wasm are as before | `emu = ["name", ...]` (or `FM1B_EMU="name ..."` for one build) | nothing, unless a part says so |
