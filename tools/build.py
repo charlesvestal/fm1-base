@@ -9,6 +9,9 @@
   tools/build.py APP_DIR --web         the browser emulator instead: APP_DIR/build/emu/ (emcc); the page is the
                                        simulator alone (panel, screen, sound, screen reader), for a site to link or frame;
                                        an app may bring its own (APP_DIR/web/emu/index.html, worklet.js)
+  tools/build.py APP_DIR --rfm1        the app as an .rfm1 instead: APP_DIR/build/rfm1/ID-VERSION.rfm1 (emcc), the
+                                       host simulator in WebAssembly for host apps (RemoteFM1 for iOS: RemoteFM1IOS's
+                                       docs/RFM1-FORMAT.md); host/rfm1.c, tools/rfm1_pack.py
 
 APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   name = "TEMPLATE"          the build's file names (lower case)
@@ -29,6 +32,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   vendored = ["third_party/"]   other people's libraries, compiled for the FM-1 with their machine-specific code off
                              by flags: the register check skips them entirely (it reads the text: x86 asm behind
                              an #if would fail it)
+  rfm1_memory_mib = 8        the .rfm1's fixed memory (MiB, 1..32; default 8)
+  authors = ["Name"]         the .rfm1 manifest's authors (default: the app repository's first commit's author)
   words = "words.tsv"        the screen reader's words (fm1-reader), relative to APP_DIR
   font_full = ["L"]          font roles with lower case too (by default M and L have capitals and digits only)
   ble_stack_kb = 6           the Bluetooth tasks' stacks, KB each (default 8: three of them, in the pool; radio.c
@@ -946,6 +951,109 @@ def build_web():
     return 0
 
 
+def git(*args, cwd=None):
+    r = subprocess.run(["git", *args], cwd=cwd or APP, capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def c_str(s):
+    """a C string literal (split by line, so a long text stays readable in the header)"""
+    def esc(t):
+        return t.replace("\\", "\\\\").replace('"', '\\"').replace("\t", "\\t").replace("?", "\\?")
+    lines = s.split("\n")
+    return " \\\n".join('"' + esc(ln) + ("\\n" if i < len(lines) - 1 else "") + '"' for i, ln in enumerate(lines))
+
+
+def build_rfm1():
+    """the host simulator in WebAssembly with host/rfm1.c's exports, packed as an .rfm1 (tools/rfm1_pack.py): the
+    manifest from fm1.toml, app.h and git; the credits and licence texts of the app, fm1-base, felucca-bsp and
+    Emscripten's runtime"""
+    out = OUT / "rfm1"
+    out.mkdir(parents=True, exist_ok=True)
+    repo = Path(git("rev-parse", "--show-toplevel") or APP.parent)
+    head = git("rev-parse", "HEAD")
+    if git("status", "--porcelain", "--untracked-files=no"):
+        print("rfm1: the app's repository has changes not committed: source_url names HEAD, which is not what was built")
+    app_name = next((m[1] for h in sorted(APP.glob("*.h"))
+                     for m in [re.search(r'^#define APP_NAME "([^"]*)"', h.read_text(errors="ignore"), re.M)] if m),
+                    CONF.get("name", NAME))
+    rid = re.sub(r"[^a-z0-9_]", "_", NAME)[:31]
+    version = VERSION or "dev+" + (head[:7] or "local")
+    url = CONF.get("repo") or re.sub(r"^git@github\.com:", "https://github.com/", git("remote", "get-url", "origin"))
+    url = re.sub(r"\.git$", "", url)
+    source_url = f"{url}@{head}" if head else url
+    base_head = git("rev-parse", "HEAD", cwd=SRC)
+    emver = subprocess.run(["emcc", "--version"], capture_output=True, text=True).stdout.splitlines()[0]
+    emver = re.search(r"\) ([0-9][^ ]*)", emver)[1] if re.search(r"\) ([0-9][^ ]*)", emver) else emver
+    authors = CONF.get("authors") or [a for a in [git("log", "--reverse", "--format=%an", cwd=repo).split("\n")[0]] if a]
+    mem = int(CONF.get("rfm1_memory_mib", 8))
+    if not 1 <= mem <= 32:
+        raise SystemExit(f"fm1.toml rfm1_memory_mib {mem}: 1 .. 32")
+    # credits: the app's (CREDITS.md, or fm1.toml credits), then fm1-base's
+    credits = []
+    if (repo / "CREDITS.md").exists():
+        credits.append((repo / "CREDITS.md").read_text().strip())
+    elif CONF.get("credits"):
+        credits.append(f"{app_name}: {CONF['credits']}")
+    credits.append((SRC / "CREDITS.md").read_text().strip())
+    credits = "\n\n".join(credits) + "\n"
+    (out / "credits.txt").write_text(credits)
+    licence = CONF.get("licence", "MPL-2.0")
+    (GEN / "rfm1_info.h").write_text(
+        "/* tools/build.py --rfm1: the descriptor's strings (the manifest's) */\n"
+        f"#define RFM1_ID {c_str(rid)}\n#define RFM1_NAME {c_str(app_name)}\n#define RFM1_VERSION {c_str(version)}\n"
+        f"#define RFM1_SOURCE_URL {c_str(source_url)}\n#define RFM1_LICENSE {c_str(licence)}\n"
+        f"#define RFM1_CREDITS \\\n{c_str(credits)}\n")
+    # the licence texts: the app's, fm1-base's, felucca-bsp's, Emscripten's (its runtime and musl are compiled in)
+    lic = []
+    for f in [repo / "LICENSE", repo / "COPYING", *sorted((repo / "LICENSES").glob("*")), repo / "LICENSING.md"]:
+        if f.is_file():
+            lic.append((f"{app_name}: {f.relative_to(repo)}", f))
+    lic += [("fm1-base: LICENSE (MPL-2.0)", SRC / "LICENSE"), ("felucca-bsp: LICENSE", BSP / "LICENSE")]
+    em_root = subprocess.run(["em-config", "EMSCRIPTEN_ROOT"], capture_output=True, text=True).stdout.strip()
+    em_lic = next((d / "LICENSE" for d in (Path(em_root), Path(em_root).parent) if em_root and (d / "LICENSE").exists()), None)
+    if em_lic:
+        lic.append(("Emscripten (its runtime, compiled in): LICENSE", em_lic))
+        musl = Path(em_root) / "system" / "lib" / "libc" / "musl" / "COPYRIGHT"
+        if musl.exists():
+            lic.append(("musl libc (in Emscripten's runtime): COPYRIGHT", musl))
+    else:
+        print("rfm1: Emscripten's LICENSE not found (em-config EMSCRIPTEN_ROOT): the file goes without it")
+    lic = [(n, f) for n, f in lic if f.is_file()]
+    feats = ["-mcpu=mvp", "-msign-ext", "-mnontrapping-fptoint", "-mbulk-memory", "-mmutable-globals"]   # wasm3 0.5.0's
+    inc = [f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))]
+    defs = ["-DPLAT_HOST", "-DPLAT_WEB", "-DPLAT_RFM1", *opt_flags(), *["-DFM1B_BLE=1"] * BLE,
+            *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI,
+            *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION)]
+    o2_objs = o2_objects("emcc", [*feats, "-O2", "-ffp-contract=off", "-std=gnu99", "-w", *defs, *inc], out / "o2")
+    wasm = out / "app.wasm"
+    cmd = ["emcc", *feats, "-O2", "-ffp-contract=off", "-std=gnu99", "-Wall", "-Wno-unused-function",
+           "-Wno-unused-parameter", "-Wno-unused-variable", *defs, *inc,
+           "--no-entry", "-sSTANDALONE_WASM", "-sFILESYSTEM=0", "-sSTACK_SIZE=1048576",
+           f"-sINITIAL_MEMORY={mem << 20}", "-sALLOW_MEMORY_GROWTH=0",
+           "-o", str(wasm), str(SRC / "host" / "rfm1.c"), *o2_objs]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    sys.stderr.write(r.stderr)
+    if r.returncode:
+        raise SystemExit("build: the .rfm1 did not compile (emcc: Emscripten; rfm1_memory_mib if the data does not fit)")
+    manifest = {"rfm1": 1, "abi": 6, "id": rid, "name": app_name, "version": version, "license": licence,
+                "source_url": source_url, "authors": authors,
+                "glue_url": f"https://github.com/charlesvestal/fm1-base/tree/{base_head}" if base_head else None,
+                "built_by": f"fm1-base {base_head[:7]} tools/build.py --rfm1, emcc {emver}", "memory_mib": mem}
+    manifest = {k: v for k, v in manifest.items() if v}
+    import json
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
+    dst = out / f"{rid}-{version}.rfm1"
+    r = subprocess.run([sys.executable, str(SRC / "tools" / "rfm1_pack.py"), str(wasm), str(dst),
+                        "--manifest", str(out / "manifest.json"), "--credits", str(out / "credits.txt"),
+                        *[a for n, f in lic for a in ("--license", f"{n}={f}")]], capture_output=True, text=True)
+    sys.stdout.write(r.stdout)
+    sys.stderr.write(r.stderr)
+    if r.returncode:
+        raise SystemExit("build: the .rfm1 is not to the format (tools/rfm1_pack.py)")
+    return 0
+
+
 def main():
     global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, OWN, WIFI, CPU2, STEM
     ap = argparse.ArgumentParser()
@@ -955,6 +1063,7 @@ def main():
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
     ap.add_argument("--host", action="store_true", help="build the host simulator instead of the firmware")
     ap.add_argument("--web", action="store_true", help="build the browser emulator instead of the firmware")
+    ap.add_argument("--rfm1", action="store_true", help="build an .rfm1 (host apps) instead of the firmware")
     a = ap.parse_args()
     APP = a.app.resolve()
     CONF = read_conf(APP / "fm1.toml")
@@ -985,9 +1094,9 @@ def main():
         PRODUCT = prefix + "%02d%02d%02d" % (int(m[1]), int(m[2]), int(m[3] or 0))
         VERSION = a.release.upper()
         name = f"{STEM}-{a.release}.fwsc"
-    if a.host or a.web:
+    if a.host or a.web or a.rfm1:
         generate()
-        return build_host() if a.host else build_web()
+        return build_host() if a.host else build_web() if a.web else build_rfm1()
     fm1pkg_make.SDK = a.sdk
     for rel, sha in SDK_SHA256.items():          # fail early without the SDK
         if hashlib.sha256(fm1pkg_make.sdk_file(rel)).hexdigest() != sha:

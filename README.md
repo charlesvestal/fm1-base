@@ -40,6 +40,7 @@ parts it has.
 | Backup and restore of the app's saved objects over USB, all or nothing (web/backup, `tools/fm1_backup.py`) | `backup = true` | app.h: `APP_BACKUP_OBJS`, `APP_BACKUP_MAGIC`, `APP_BACKUP_VERSION`, `APP_BACKUP_WHAT`; `app_backup_playing`, `_flush`, `_hold`, `_restored` |
 | The app's own commands over USB, in the update's framing, data pulled from the host | `#define APP_USB_CMD` in app.h | `app_usb_cmd`; `plat_host_read`, `plat_host_patience` |
 | Lower case in the big fonts | `font_full = ["L"]` | the fonts as ever |
+| The firmware as an `.rfm1` for host apps (RemoteFM1 for iOS), below | `tools/build.py APP_DIR --rfm1` | nothing |
 
 Every firmware also counts each port's MIDI messages, in and out: `plat_midi_count(PORT_*, out)` for counters,
 `plat_midi_ago` for activity lights.
@@ -172,6 +173,26 @@ For example, `tools/fm1_remote.py listen tap REC wait 3000 screen log`.
 The site's installer page (`tools/make_site.py`, from `web/installer.html`) reads the same crash record and log in
 Chrome or Edge: "Report a problem" shows them, ready to copy, so a player can send them without Python. The record
 survives a restart, not switching off.
+
+## .rfm1: your firmware in host apps
+
+An `.rfm1` file is your firmware built to run inside an app instead of on the FM-1: RemoteFM1 for iOS first, as
+an instrument or an AUv3. It is the host simulator compiled to WebAssembly, the same app as on the FM-1, with a
+manifest (name, version, licence, the source at its commit), your credits and the licence texts. Users download it
+from your release and put it in the app's firmware folder. The format is RemoteFM1IOS's
+[docs/RFM1-FORMAT.md](https://github.com/Quixotic7/RemoteFM1IOS/blob/main/docs/RFM1-FORMAT.md).
+
+    tools/build.py APP_DIR --rfm1 [--release X.Y]    # APP_DIR/build/rfm1/ID-VERSION.rfm1 (emcc, as --web)
+
+The ID is fm1.toml's `name` in lower case. Without `--release` the version is `dev+` and the app repository's commit.
+The manifest's `source_url` is fm1.toml's `repo` at that commit, so commit (and push) what you build. Its `license`
+is fm1.toml's `licence`, and its authors are `authors = ["..."]` or the repository's first author. The memory is fixed
+at 8 MiB (`rfm1_memory_mib`, at most 32). The build checks the module against the format before it writes the file.
+
+In the app, the panel, screen, LEDs, sound, MIDI both ways, velocity and pressure (`APP_TOUCH`) and the screen
+reader (over SysEx) work as in the browser emulator. Saved objects and the data area are kept by the app with its
+state. There is no radio, no USB host and no environment (`getenv` returns nothing). `tests/rfm1_test.mjs FILE`
+drives a file as a host app does.
 
 ## Moving a Felucca-based firmware here
 

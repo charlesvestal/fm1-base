@@ -74,5 +74,13 @@ run template template/build/host/template_host template/tests/basic.txt template
 # the own Bluetooth stack (bt/, Optimist's: ble_stack = "own"): its link layer, host, pairing, BLE-MIDI, central, the
 # radio driver against a fake engine, FM-1 to FM-1, and BR/EDR (A2DP) pieces; UBSan, and ASan where its runtime runs
 if sh tests/bt/run.sh; then :; else FAIL=1; fi
+# the template as an .rfm1 (tools/build.py --rfm1: the host simulator in WebAssembly for host apps), driven as a host
+# app drives it: the descriptor, the screen, a chord, the reader over SysEx, the flash image booted from again
+if command -v emcc >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+    rm -f template/build/rfm1/*.rfm1
+    run rfm1 sh -c "$PY tools/build.py template --rfm1 && node tests/rfm1_test.mjs template/build/rfm1/*.rfm1"
+else
+    echo "  skip rfm1 (no emcc or node)"
+fi
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL
