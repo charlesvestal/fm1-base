@@ -88,7 +88,12 @@
 #define __attribute__(x)
 
 /* ------------------------------------------------------------ screen --- */
+#ifdef PLAT_FB
+static uint16_t *const fb = PLAT_FB;    /* the embedder's own (host/rfm1.c: the panel's LCD) */
+#else
 static uint16_t fb[240 * 240];          /* RGB565, byte-swapped as the panel takes it (gfx.c) */
+#endif
+static uint32_t lcd_changes;            /* every fill and blit (host/rfm1.c: the panel's lcd_writes) */
 static void lcd_sync(void) {}
 #if FM1B_MIRROR
 /* screen mirroring over USB (device/mirror.c), as lcd.c copies each blit and fill to it */
@@ -104,6 +109,7 @@ static void lcd_fill(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t c)
     if (mirror_on && w && h && x < 240u && y < 240u)
         mirror_fill(x, y, x + w > 240u ? 240u - x : w, y + h > 240u ? 240u - y : h, c);
 #endif
+    lcd_changes++;
     for (j = y; j < y + h && j < 240u; j++)
         for (i = x; i < x + w && i < 240u; i++)
             fb[j * 240u + i] = sc;
@@ -113,6 +119,7 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
 {
     uint32_t i, j;
     blits++;
+    lcd_changes++;
     for (j = 0; j < h; j++)
         for (i = 0; i < w; i++)
             if (x + i < 240u && y + j < 240u)
@@ -155,6 +162,8 @@ static void mirror_leds(uint32_t buttons, uint32_t keys) { (void)buttons, (void)
 static uint32_t now_ms, held_btn, held_keys, master = 2048;
 static int32_t enc_acc[NE];
 static uint32_t lit_btn, lit_keys, dim_btn, dim_keys;
+static uint32_t lights_b, lights_db;    /* plat_lights' buttons as given (PLAY's green apart), and its glow */
+static int lights_glow;
 
 uint32_t plat_ms(void) { return now_ms; }
 uint32_t plat_buttons(void) { return held_btn | mirror_in_buttons(); }   /* (+ the host's: the mirror's remote) */
@@ -173,6 +182,7 @@ int plat_battery(void) { return 3; }   /* (the host and the emulator: full) */
 /* the lights ("leds"): bright, and dim (glow 0: none); PLAY's green counts as PLAY */
 void plat_lights(uint32_t b, uint32_t k, uint32_t db, uint32_t dk, int glow)
 {
+    lights_b = b, lights_db = db, lights_glow = glow;
     lit_btn = (b & ((1u << NB) - 1u)) | (b & LED_PLAY_GREEN ? 1u << B_PLAY : 0u);
     lit_keys = k;
     db = (db & ((1u << NB) - 1u)) | (db & LED_PLAY_GREEN ? 1u << B_PLAY : 0u);
@@ -469,12 +479,17 @@ void plat_log(const char *line) { ble_say(line); }
 /* the data area and its two more windows (plat.h): a simulated flash from the first window to the last (the gap
  * between, the update's staging, refused as on the device), erased at the start, kept across a simulated reboot */
 #define DATA_BASE PLAT_XDATA0_LO
+#ifdef PLAT_DATA_AREA
+static uint8_t *const data_area = PLAT_DATA_AREA;   /* the embedder's own (host/rfm1.c: in its flash image) */
+#else
 static uint8_t data_area[PLAT_XDATA1_HI - DATA_BASE];
+#endif
 static uint8_t data_ready;
+static uint32_t data_writes;            /* every erase and write */
 static void data_init(void)
 {
     if (!data_ready) {
-        memset(data_area, 0xFF, sizeof data_area);
+        memset(data_area, 0xFF, PLAT_XDATA1_HI - DATA_BASE);
         data_ready = 1;
     }
 }
@@ -489,6 +504,7 @@ int plat_data_erase(uint32_t off)
     if ((off & 0xFFFu) || !PLAT_DATA_OK(off, 0x1000u))
         return -1;
     memset(&data_area[off - DATA_BASE], 0xFF, 0x1000u);
+    data_writes++;
     return 0;
 }
 int plat_data_write(uint32_t off, const void *src, uint32_t n)
@@ -499,6 +515,7 @@ int plat_data_write(uint32_t off, const void *src, uint32_t n)
         return -1;
     for (i = 0; i < n; i++)                       /* as flash: bits only go from 1 to 0 */
         data_area[off - DATA_BASE + i] &= ((const uint8_t *)src)[i];
+    data_writes++;
     return 0;
 }
 void plat_sysex_send(const uint8_t *frame, uint32_t n) { (void)frame, (void)n; }
@@ -941,41 +958,74 @@ static void boot(void)
     app_ui_init();
 }
 
+/* one millisecond of the device, in three steps (run_ms; host/rfm1.c calls them on its host's clock): the clock and
+ * what runs before the render (sim_ms_begin), the APP_BLOCK-frame renders that have fallen due (sim_render, each),
+ * then the UI (sim_ms_end: a frame every 16 ms, else the input only) */
+static void sim_ms_begin(uint32_t ms)
+{
+    now_ms = ms;
+    ble_tick();
+#if FM1B_WIFI
+    wifi_tick();
+#endif
+#if defined APP_KEY_SENSE
+    if (sense_on)
+        app_host_tick();                        /* the keys' readings, as the scan hands them over */
+#endif
+#ifdef APP_TICK
+    app_tick();                                 /* 1 kHz, as the device's timer runs it */
+#endif
+#ifdef APP_LOOP
+    app_loop();
+#endif
+}
+
+static void sim_render(int32_t *blk)            /* one APP_BLOCK-frame block, as the device renders it */
+{
+    double t0 = now_ns(), dt;
+    uint32_t k;
+    app_render(blk, APP_BLOCK, uac_full ? 4096u : APP_GAIN(master));
+    if (uac_full) {                             /* (the USB audio input took it at full level) the speaker: MASTER */
+        const float g = (float)APP_GAIN(master) * (1.0f / 4096.0f);
+        for (k = 0; k < 2u * APP_BLOCK; k++)
+            blk[k] = (int32_t)((float)blk[k] * g);
+    }
+    dt = now_ns() - t0;
+    render_ns_total += dt;
+    render_budget_ns_total += APP_BLOCK * 1e9 / 44100.0;
+    cpu_pct = (uint32_t)(100.0 * dt / (APP_BLOCK * 1e9 / 44100.0));
+}
+
+static void sim_ms_end(int frame)
+{
+    if (sim_listen && now_ms % 2000u == 0) {        /* the reader's HELLO, as it sends it */
+        static const uint8_t HELLO[] = {ANN_H0, ANN_H1, ANN_H2, ANN_HELLO, ANN_VER};
+        ann_frame(HELLO, sizeof HELLO, now_ms);
+    }
+    if (frame)
+        app_frame();
+    else
+        app_input_only();
+#if FM1B_MIRROR
+    mirror_step();
+    host_mirror_ms();
+#endif
+#ifdef APP_HOST_MS
+    app_host_ms();
+#endif
+}
+
 static void run_ms(uint32_t ms)
 {
     static int32_t blk[2 * APP_BLOCK];
     uint32_t i, k;
     for (i = 0; i < ms; i++) {
-        now_ms++;
-        ble_tick();
-#if FM1B_WIFI
-        wifi_tick();
-#endif
-#if defined APP_KEY_SENSE
-        if (sense_on)
-            app_host_tick();                        /* the keys' readings, as the scan hands them over */
-#endif
-#ifdef APP_TICK
-        app_tick();                                 /* 1 kHz, as the device's timer runs it */
-#endif
-#ifdef APP_LOOP
-        app_loop();
-#endif
+        sim_ms_begin(now_ms + 1u);
         while (audio_due_ms <= (double)now_ms) {      /* APP_BLOCK-frame blocks, as the device renders them */
-            double t0 = now_ns(), dt;
-            app_render(blk, APP_BLOCK, uac_full ? 4096u : APP_GAIN(master));
-            if (uac_full) {                         /* (the USB audio input took it at full level) the speaker: MASTER */
-                const float g = (float)APP_GAIN(master) * (1.0f / 4096.0f);
-                for (k = 0; k < 2u * APP_BLOCK; k++)
-                    blk[k] = (int32_t)((float)blk[k] * g);
-            }
+            sim_render(blk);
 #ifdef PLAT_WEB
             web_audio(blk, APP_BLOCK);
 #endif
-            dt = now_ns() - t0;
-            render_ns_total += dt;
-            render_budget_ns_total += APP_BLOCK * 1e9 / 44100.0;
-            cpu_pct = (uint32_t)(100.0 * dt / (APP_BLOCK * 1e9 / 44100.0));
             for (k = 0; k < APP_BLOCK; k++) {
                 float l = (float)blk[2 * k] / 8388608.0f, r = (float)blk[2 * k + 1] / 8388608.0f;
                 int16_t s[2];
@@ -992,23 +1042,12 @@ static void run_ms(uint32_t ms)
             }
             audio_due_ms += APP_BLOCK * 1000.0 / 44100.0;
         }
-        if (sim_listen && now_ms % 2000u == 0) {        /* the reader's HELLO, as it sends it */
-            static const uint8_t HELLO[] = {ANN_H0, ANN_H1, ANN_H2, ANN_HELLO, ANN_VER};
-            ann_frame(HELLO, sizeof HELLO, now_ms);
-        }
         if (now_ms >= ui_due) {
             ui_due = now_ms + 16;
-            app_frame();
+            sim_ms_end(1);
         } else {
-            app_input_only();
+            sim_ms_end(0);
         }
-#if FM1B_MIRROR
-        mirror_step();
-        host_mirror_ms();
-#endif
-#ifdef APP_HOST_MS
-        app_host_ms();
-#endif
     }
 }
 

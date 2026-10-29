@@ -71,5 +71,13 @@ else
 fi
 run mirror-png "$PY" tools/fm1_mirror.py $OUT/mirror.png --from $OUT/mirror/stream.syx
 run template template/build/host/template_host template/tests/basic.txt template/build/host
+# the template as an .rfm1 (tools/build.py --rfm1: the host simulator in WebAssembly for host apps), driven as a host
+# app drives it: the descriptor, the screen, a chord, the reader over SysEx, the flash image booted from again
+if command -v emcc >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+    rm -f template/build/rfm1/*.rfm1
+    run rfm1 sh -c "$PY tools/build.py template --rfm1 && node tests/rfm1_test.mjs template/build/rfm1/*.rfm1"
+else
+    echo "  skip rfm1 (no emcc or node)"
+fi
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL
