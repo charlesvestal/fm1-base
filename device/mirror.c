@@ -289,8 +289,10 @@ static void mirror_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const ui
                 ch = (uint32_t)mr_span(px + r * w, y + r, full, sh, &s0, &s1);
                 have = 1;
             }
-            if (rows && (!ch || (full && (s0 < m0 || s1 > m1))))
-                break;                                /* unchanged, or changed elsewhere: the next frame's */
+            if (rows && (mr.pos - 11u > MR_CAP || !ch || (full && (s0 < m0 || s1 > m1))))
+                break;                                /* full (the first row alone can pass MR_CAP: mr_msg has room
+                                                       * for MR_CAP and one row more, not two rows), unchanged, or
+                                                       * changed elsewhere: the next frame's */
             mr_code_row(px + r * w + (full ? fx : 0u), fw);
             if (rows && mr.pos - 11u > MR_CAP) {
                 mr.pos = at;                          /* (it starts the next frame) */
