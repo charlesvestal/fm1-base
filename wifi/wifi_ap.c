@@ -417,3 +417,5 @@ uint32_t wifi_ap_encap_eapol(struct wifi_ap *ap, const uint8_t da[6], const uint
     memcpy(tx_buf + 32, eapol, eapol_len);
     return 32u + eapol_len;
 }
+
+#include "wifi_ap_key.c"                     /* the default password (MODE JAM uses it without MODE AP too) */

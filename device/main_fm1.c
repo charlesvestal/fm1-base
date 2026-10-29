@@ -905,6 +905,48 @@ static int wifi_frame(const uint8_t *p, uint32_t n)
         q = wifi_cat(q, " ", e);
         wifi_cat(q, plat_wifi_why(), e);
         wifi_line(b);
+#if FM1B_WIFI_OWN
+        {   /* joined: how well the link works (plat_wifi_quality), a second line: the first ask starts the measuring, so
+             * a status 10 s later has the whole window ("10s") */
+            struct plat_wifi_quality wq;
+            static const char *const W[] = {"q ", " dBm ", "k tx ", " retried ", " lost ", " rxover ", " in ", "s"};
+            if (plat_wifi_quality(&wq)) {
+                const int32_t v[7] = {wq.rssi, wq.tx_kbps, wq.tx, wq.retried, wq.lost, wq.rx_over, wq.secs};
+                q = b;
+                for (i = 0; i < 7; i++) {
+                    q = wifi_cat(q, W[i], e);
+                    q = wifi_num(q, v[i], e);
+                }
+                wifi_cat(q, W[7], e);
+                wifi_line(b);
+            }
+        }
+        {   /* the tuning (wifi/wifi_tune.h), a third line: "tune a:on b:on c:on f:on | cal 187 in | filt sta | agc 51 | 2000k
+             * falls 0": which switches are on, then what each does now */
+            struct plat_wifi_tune t;
+            static const char *const CAL[] = {"not read", "187 ", "no 187"};
+            static const char L[4] = {'a', 'b', 'c', 'f'};
+            int up = plat_wifi_tune_info(&t);
+            q = wifi_cat(b, "tune", e);
+            for (i = 0; i < 4; i++) {
+                char k[4] = {' ', L[i], ':', 0};
+                q = wifi_cat(q, k, e);
+                q = wifi_cat(q, t.on >> i & 1u ? "on" : "off", e);
+            }
+            q = wifi_cat(q, " | cal ", e);
+            q = wifi_cat(q, CAL[t.cal < 3u ? t.cal : 0], e);
+            if (t.cal == 1u)
+                q = wifi_cat(q, t.cal_in ? "in" : "out", e);
+            q = wifi_cat(q, t.filt_sta ? " | filt sta | agc " : " | filt all | agc ", e);
+            q = wifi_num(q, t.agc_gain, e);
+            q = wifi_cat(q, " | ", e);
+            q = wifi_num(q, t.tx_kbps, e);
+            q = wifi_cat(q, "k falls ", e);
+            q = wifi_num(q, (int32_t)t.falls, e);
+            wifi_cat(q, up ? "" : " (radio not up)", e);
+            wifi_line(b);
+        }
+#endif
         break;
     }
     case 5:
@@ -950,6 +992,12 @@ static int wifi_frame(const uint8_t *p, uint32_t n)
             wifi_line(b);
         }
         break;
+#if FM1B_WIFI_OWN
+    case 9:                                      /* the tuning's switches: 1 a, 2 b, 4 c, 8 f (wifi/wifi_tune.h) */
+        if (n >= 5u)
+            plat_wifi_tune_set(p[4] & 15u);
+        break;
+#endif
     default:
         break;
     }

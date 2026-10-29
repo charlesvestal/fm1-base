@@ -16,12 +16,14 @@
 #define WN_MARK 0xA7u                    /* a valid store */
 #define WN_VER 2u                        /* 1: the saved networks only (a record of 268 octets, read as the first part of this) */
 #define WN_STORE_SIZE 336u               /* header 4 + 4 entries x 66 + the access point's 68 */
-enum { WN_MODE_OFF = 0, WN_MODE_AUTO = 1, WN_MODE_MAN = 2, WN_MODE_AP = 3, WN_MODE_AP_MAN = 4 };   /* as the Bluetooth pages: OFF the radio stays off;
+enum { WN_MODE_OFF = 0, WN_MODE_AUTO = 1, WN_MODE_MAN = 2, WN_MODE_AP = 3, WN_MODE_AP_MAN = 4, WN_MODE_JAM = 5 };   /* as the Bluetooth pages: OFF the radio stays off;
                                                                   * MAN it joins when told (the page's SAVE); AUTO the best saved network
                                                                   * heard, at start-up and when none is joined; AP the FM-1 is the
                                                                   * access point (wifi/wifi_apd.c), at power-on and
                                                                   * kept up ("AP AUTO"); AP_MAN the same, but only started
-                                                                  * by SAVE on the page (or the web editor) and off at power-on */
+                                                                  * by SAVE on the page (or the web editor) and off at power-on;
+                                                                  * JAM is AUTO that also joins an Optimist access point (its name FM1-xxxx, its
+                                                                  * password wifi_ap_default_key's) when no saved network is heard, and keeps Link on */
 
 struct wn_net {                          /* 66 octets */
     uint8_t used, ssid_len;
@@ -37,7 +39,7 @@ struct wn_apcfg {                        /* MODE AP's network: the name, the cha
     uint8_t pmk[32];
 };
 struct wn_store {
-    uint8_t mark, ver, mode, rsv;
+    uint8_t mark, ver, mode, rsv;        /* rsv: the own stack's tuning (wifi_tune.h: WT_KEPT | its switches; 0 the default) */
     struct wn_net n[WN_SLOTS];
     struct wn_apcfg ap;
 };

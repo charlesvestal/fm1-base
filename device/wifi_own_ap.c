@@ -21,7 +21,9 @@
  *   - a ping to the access point is answered (wifi_ip.c, as an access point only).
  * The access point is 192.168.4.1, its clients 192.168.4.2 to .5. Its network (the name, the channel, the WPA2 key made
  * from the password, never the password) is the record's (wifi_nets.h struct wn_apcfg), kept with the networks:
- *   MODE AP      (WIFI_MODE_AP, "AP AUTO") runs whenever a key is kept, from power-on
+ * The password is the typed one (the record keeps its key), else the default one, a function of the name alone
+ * (wifi_ap_default_key: another Optimist that hears the name knows it); forgetting the typed one gives the default back.
+ *   MODE AP      (WIFI_MODE_AP, "AP AUTO") runs from power-on
  *   MODE AP_MAN  (WIFI_MODE_AP_MAN, "AP MAN") the same, but started by plat_wifi_ap_run(1) or a password set, and off at
  *                power-on
  * plat_wifi_ap_start runs one that is not kept, with MODE OFF. The station's manager rests in either AP mode. */
@@ -37,37 +39,53 @@
 enum { WA_OFF, WA_PMK, WA_RADIO, WA_UP, WA_FAIL };
 _Static_assert(WIFI_AP_CLIENTS < WA_PLAIN, "the clients' WCIDs 1..4 below WA_PLAIN");
 
-static struct {
-    uint8_t st, ch, ssid_len;
-    uint8_t ssid[WN_SSID_MAX];
-    uint8_t pmk[32];
-    uint8_t user_on;                                    /* AP MAN: started (plat_wifi_ap_run, a password set); never kept */
-    uint8_t by_mode;                                    /* started by the mode (the record's network), else plat_wifi_ap_start */
-    uint8_t save_key;                                   /* the key job in hand is a new password: kept when done */
+/* what runs the access point (its clients, their handshakes, the leases): with fm1.toml wifi_mem = "app" (FM1B_WIFI_MEM,
+ * plat.h plat_wifi_ap_mem) a block the app lends while a MODE AP is chosen or one is starting or up, else static.
+ * Never WA_UP without it: the radio is brought up only once it is lent (wa_poll), and it is taken back only once the
+ * access point is not up (plat_wifi_ap_mem); the key job (a password's) needs none of it */
+struct wa_mem {
     uint8_t keyed[WIFI_AP_CLIENTS];                     /* the client's keys are in the MAC */
     uint8_t tries[WIFI_AP_CLIENTS];                     /* handshake sends */
     uint32_t t_due[WIFI_AP_CLIENTS];                    /* ms of the next handshake send (0: none due) */
-    uint32_t t_restart, t_beacon, t_stray;
-    char pass[64];                                      /* until the key job has it */
-    struct wc_pmk_job job;
     struct wifi_ap ap;                                  /* the network: the association table, the group key */
     struct wifi_ap hs[WIFI_AP_CLIENTS];                 /* each client's handshake: ANonce, PTK, replay counter */
     struct wifi_ap_dhcp dhcp;
     struct { uint32_t beacon, assoc, m2, m4, bad, data, dhcp, stray, tx, tx_err; } n;
+};
+static struct {
+    uint8_t st, ch, ssid_len;
+    uint8_t ssid[WN_SSID_MAX];
+    uint8_t user_on;                                    /* AP MAN: started (plat_wifi_ap_run, a password set); never kept */
+    uint8_t by_mode;                                    /* started by the mode (the record's network), else plat_wifi_ap_start */
+    uint8_t save_key;                                   /* the key job in hand is a new password: kept when done */
+    uint32_t t_restart, t_beacon, t_stray;
+    uint8_t pmk[32];
+    char pass[64];                                      /* until the key job has it */
+    struct wc_pmk_job job;                              /* (the key: made without the access point running) */
+#if FM1B_WIFI_MEM
+    struct wa_mem *m;                                   /* (lent: plat_wifi_ap_mem) */
+#else
+    struct wa_mem m[1];
+#endif
 } wa PLAT_POOL;                                         /* (the CPU's only: the frames are built in wifi_txb) */
+#if FM1B_WIFI_MEM
+#define WA_MEM() (wa.m != 0)
+#else
+#define WA_MEM() 1
+#endif
 
 static void wa_tx(uint32_t len, uint32_t wcid, uint32_t ack)   /* wifi_txb's frame out at that WCID */
 {
-    fm1_wifi_tx_prepare(wifi_txb, len, wcid, ack);
+    wt_prepare(len, wcid, ack);                         /* (the tuning's rate: client data at (f)'s, the rest at 1 Mb/s) */
     if (fm1_wifi_tx(wifi_txb) == 0)
-        wa.n.tx++;
+        wa.m->n.tx++;
     else
-        wa.n.tx_err++;
+        wa.m->n.tx_err++;
 }
 static int wa_slot_of(const uint8_t mac[6])             /* the client's table slot, or -1 */
 {
-    const struct wifi_ap_client *cl = wifi_ap_find_client(&wa.ap, mac);
-    return cl ? (int)(cl - wa.ap.clients) : -1;
+    const struct wifi_ap_client *cl = wifi_ap_find_client(&wa.m->ap, mac);
+    return cl ? (int)(cl - wa.m->ap.clients) : -1;
 }
 
 /* a frame wifi_txb holds (the IP layer's, the handshake's, Link's), out at the right WCID */
@@ -82,15 +100,15 @@ static void wa_send(uint32_t len)
     }
     if (f[4] & 1u) {                                    /* group-addressed: a copy to each keyed client */
         for (i = 0; i < WIFI_AP_CLIENTS; i++) {
-            if (!wa.keyed[i])
+            if (!wa.m->keyed[i])
                 continue;
-            memcpy(f + 4, wa.ap.clients[i].mac, 6);
+            memcpy(f + 4, wa.m->ap.clients[i].mac, 6);
             wa_tx(len, i + 1u, 1u);
         }
         return;
     }
     s = wa_slot_of(f + 4);
-    if (s >= 0 && wa.keyed[s])
+    if (s >= 0 && wa.m->keyed[s])
         wa_tx(len, (uint32_t)s + 1u, 1u);
 }
 
@@ -114,20 +132,20 @@ static void wa_key_install(uint32_t w, const uint8_t mac[6], const uint8_t tk[16
 }
 static void wa_group_install(void)                      /* the group key in the shared table, BSS 0 */
 {
-    uint32_t id = wa.ap.gtk_id & 3u;
-    fm1_wifi_key_wr(FM1_WIFI_SKEY(id), wa.ap.gtk);
+    uint32_t id = wa.m->ap.gtk_id & 3u;
+    fm1_wifi_key_wr(FM1_WIFI_SKEY(id), wa.m->ap.gtk);
     fm1_wifi_mac_wr(FM1_WIFI_SKEY_MODE, FM1_WIFI_CIPHER_CCMP << (id * 4u));
 }
 static void wa_client_drop(uint32_t i)                  /* its keys out of the MAC, its handshake over */
 {
-    wa.keyed[i] = 0;
-    wa.t_due[i] = 0;
-    wa.tries[i] = 0;
+    wa.m->keyed[i] = 0;
+    wa.m->t_due[i] = 0;
+    wa.m->tries[i] = 0;
     wa_key_clear(i + 1u);
 }
 static void wa_deauth(const uint8_t mac[6], uint16_t reason)
 {
-    wa_tx(wifi_ap_build_deauth(&wa.ap, mac, reason, own_frame()), WA_PLAIN, 1u);
+    wa_tx(wifi_ap_build_deauth(&wa.m->ap, mac, reason, own_frame()), WA_PLAIN, 1u);
 }
 
 /* ---- DHCP: the datagram the IP layer hands over (port 67); the reply to the client's own address */
@@ -136,10 +154,10 @@ static uint32_t wa_udp_srv(struct wifi_ip *wip, const uint8_t *src_mac, const ui
     uint8_t rep[WIFI_AP_DHCP_MSG_MAX];
     uint32_t rl, yi;
     (void)src_mac;
-    rl = wifi_ap_dhcp_reply(&wa.dhcp, msg, n, rep);
+    rl = wifi_ap_dhcp_reply(&wa.m->dhcp, msg, n, rep);
     if (!rl)
         return 0;
-    wa.n.dhcp++;
+    wa.m->n.dhcp++;
     yi = (uint32_t)rep[16] << 24 | (uint32_t)rep[17] << 16 | (uint32_t)rep[18] << 8 | rep[19];
     if (yi)
         wifi_ip_arp_learn(wip, yi, rep + 28);           /* (chaddr: where unicast to that address goes) */
@@ -149,61 +167,61 @@ static uint32_t wa_udp_srv(struct wifi_ip *wip, const uint8_t *src_mac, const ui
 /* ---- the handshake, one record per client */
 static void wa_start_hs(uint32_t i, const uint8_t mac[6])   /* the association was answered: M1 soon */
 {
-    if (wa.keyed[i])
+    if (wa.m->keyed[i])
         wa_client_drop(i);
-    wa.hs[i] = wa.ap;                                   /* (the shared record: the key, the group key, the name) */
-    wifi_ap_start_client(&wa.hs[i], mac);
-    wa.tries[i] = 0;
-    wa.t_due[i] = own_ms() + WA_M1_DELAY_MS;
-    if (!wa.t_due[i])
-        wa.t_due[i] = 1u;
+    wa.m->hs[i] = wa.m->ap;                                   /* (the shared record: the key, the group key, the name) */
+    wifi_ap_start_client(&wa.m->hs[i], mac);
+    wa.m->tries[i] = 0;
+    wa.m->t_due[i] = own_ms() + WA_M1_DELAY_MS;
+    if (!wa.m->t_due[i])
+        wa.m->t_due[i] = 1u;
 }
 static void wa_send_eapol(uint32_t i, const uint8_t *eapol, uint32_t n)
 {
-    wa_send(wifi_ap_encap_eapol(&wa.ap, wa.ap.clients[i].mac, eapol, n, own_frame()));
+    wa_send(wifi_ap_encap_eapol(&wa.m->ap, wa.m->ap.clients[i].mac, eapol, n, own_frame()));
 }
 static void wa_hs_step(uint32_t i, uint32_t now)        /* M1 / M3 due: sent, or the client given up */
 {
     uint8_t eb[WIFI_AP_FRAME_MAX];
-    struct wifi_ap *h = &wa.hs[i];
-    if (!wa.t_due[i] || (int32_t)(now - wa.t_due[i]) < 0)
+    struct wifi_ap *h = &wa.m->hs[i];
+    if (!wa.m->t_due[i] || (int32_t)(now - wa.m->t_due[i]) < 0)
         return;
-    if (wa.keyed[i] || wa.ap.clients[i].state != WIFI_AP_CL_ASSOC) {
-        wa.t_due[i] = 0;
+    if (wa.m->keyed[i] || wa.m->ap.clients[i].state != WIFI_AP_CL_ASSOC) {
+        wa.m->t_due[i] = 0;
         return;
     }
-    if (++wa.tries[i] > WA_HS_TRIES) {                  /* the 4-way timed out: reason 15 */
-        wa_deauth(wa.ap.clients[i].mac, 15u);
-        memset(&wa.ap.clients[i], 0, sizeof wa.ap.clients[i]);
+    if (++wa.m->tries[i] > WA_HS_TRIES) {                  /* the 4-way timed out: reason 15 */
+        wa_deauth(wa.m->ap.clients[i].mac, 15u);
+        memset(&wa.m->ap.clients[i], 0, sizeof wa.m->ap.clients[i]);
         wa_client_drop(i);
         return;
     }
     wa_send_eapol(i, eb, (h->state == WIFI_AP_STATE_WAIT_M4 || h->state == WIFI_AP_STATE_PTK) ? wifi_ap_build_m3(h, eb)
                                                                                                : wifi_ap_build_m1(h, eb));
-    wa.t_due[i] = now + WA_HS_RETRY_MS;
+    wa.m->t_due[i] = now + WA_HS_RETRY_MS;
 }
 static void wa_on_eapol(uint32_t i, const uint8_t *pkt, uint32_t n)
 {
     uint8_t eb[WIFI_AP_FRAME_MAX];
-    struct wifi_ap *h = &wa.hs[i];
+    struct wifi_ap *h = &wa.m->hs[i];
     if (h->state == WIFI_AP_STATE_WAIT_M2) {
         if (wifi_ap_rx_m2(h, pkt, n) != 0) {
-            wa.n.bad++;
+            wa.m->n.bad++;
             return;
         }
-        wa.n.m2++;
+        wa.m->n.m2++;
         wa_send_eapol(i, eb, wifi_ap_build_m3(h, eb));
-        wa.tries[i] = 1;
-        wa.t_due[i] = own_ms() + WA_HS_RETRY_MS;
+        wa.m->tries[i] = 1;
+        wa.m->t_due[i] = own_ms() + WA_HS_RETRY_MS;
     } else if (h->state == WIFI_AP_STATE_WAIT_M4) {
         if (wifi_ap_rx_m4(h, pkt, n) != 0) {
-            wa.n.bad++;
+            wa.m->n.bad++;
             return;
         }
-        wa.n.m4++;
-        wa_key_install(i + 1u, wa.ap.clients[i].mac, h->ptk.tk);
-        wa.keyed[i] = 1;
-        wa.t_due[i] = 0;
+        wa.m->n.m4++;
+        wa_key_install(i + 1u, wa.m->ap.clients[i].mac, h->ptk.tk);
+        wa.m->keyed[i] = 1;
+        wa.m->t_due[i] = 0;
     }
 }
 
@@ -215,9 +233,9 @@ static void wa_rx_mgmt(const uint8_t *f, uint32_t len, int64_t now)
     if (sub == 0x80u || sub == 0x50u)                   /* beacons, probe answers: the neighbours' */
         return;
     s = wa_slot_of(f + 10);
-    if (s >= 0 && wa.keyed[s] && (sub == 0xB0u || sub == 0x00u))
+    if (s >= 0 && wa.m->keyed[s] && (sub == 0xB0u || sub == 0x00u))
         wa_client_drop((uint32_t)s);                    /* it starts over: the keys it held are gone */
-    r = wifi_ap_rx_mgmt(&wa.ap, f, len, (uint64_t)now, txf, &tx_len);
+    r = wifi_ap_rx_mgmt(&wa.m->ap, f, len, (uint64_t)now, txf, &tx_len);
     if (sub == 0xA0u || sub == 0xC0u) {                 /* it left */
         if (s >= 0)
             wa_client_drop((uint32_t)s);
@@ -229,7 +247,7 @@ static void wa_rx_mgmt(const uint8_t *f, uint32_t len, int64_t now)
     if (sub == 0x00u && txf[0] == 0x10u && txf[26] == 0 && txf[27] == 0) {   /* association accepted */
         s = wa_slot_of(f + 10);
         if (s >= 0) {
-            wa.n.assoc++;
+            wa.m->n.assoc++;
             wa_start_hs((uint32_t)s, f + 10);
         }
     }
@@ -241,7 +259,6 @@ static void wa_rx(const uint8_t *f, uint32_t len, int8_t rssi, int64_t now)
     uint32_t tx_len = 0, hl, el;
     const uint8_t *e;
     int s;
-    (void)rssi;
     wl.n_rx++;
     if (len < 24u)
         return;
@@ -249,12 +266,14 @@ static void wa_rx(const uint8_t *f, uint32_t len, int8_t rssi, int64_t now)
         wa_rx_mgmt(f, len, now);
         return;
     }
-    if ((f[0] & 0x0Cu) != 0x08u || (f[1] & 0x03u) != 0x01u || memcmp(f + 4, wa.ap.mac, 6) != 0)
+    if ((f[0] & 0x0Cu) != 0x08u || (f[1] & 0x03u) != 0x01u || memcmp(f + 4, wa.m->ap.mac, 6) != 0)
         return;                                         /* (data frames to us from a station only) */
-    wa.n.data++;
+    wa.m->n.data++;
     hl = (f[0] & 0x80u) ? 26u : 24u;
     s = wa_slot_of(f + 10);
-    e = wifi_ap_unwrap_eapol(&wa.ap, f, len, &el);
+    if (s >= 0)
+        oq_signal((uint32_t)s + 1u, rssi);        /* (a client's signal, while measured) */
+    e = wifi_ap_unwrap_eapol(&wa.m->ap, f, len, &el);
     if (e) {
         if (s >= 0)
             wa_on_eapol((uint32_t)s, e, el);
@@ -263,12 +282,12 @@ static void wa_rx(const uint8_t *f, uint32_t len, int8_t rssi, int64_t now)
     if (s < 0) {                                        /* a station we do not know (associated before a restart): told */
         if (own_ms() - wa.t_stray >= WA_STRAY_MS && !(f[10] & 1u)) {
             wa.t_stray = own_ms();
-            wa.n.stray++;
+            wa.m->n.stray++;
             wa_deauth(f + 10, 7u);
         }
         return;
     }
-    if (!wa.keyed[s] || len < hl + 8u || !wifi_ip_early_filter(&wl.ip, f, len))
+    if (!wa.m->keyed[s] || len < hl + 8u || !wifi_ip_early_filter(&wl.ip, f, len))
         return;                                         /* (only a client whose keys are in) */
     wl.n_kept++;
     if (f[hl + 6u] == 0x08u && f[hl + 7u] == 0x00u && len >= hl + 8u + 20u) {   /* IPv4: where its source is */
@@ -291,12 +310,12 @@ static void wa_bring_up(void)
     for (i = 1; i <= WIFI_AP_CLIENTS; i++)
         wa_key_clear(i);
     wa_key_clear(WA_PLAIN);
-    wifi_ap_init(&wa.ap, mac, wa.pmk, own_rand);
-    wifi_ap_set_net(&wa.ap, wa.ssid, wa.ssid_len, wa.ch);
+    wifi_ap_init(&wa.m->ap, mac, wa.pmk, own_rand);
+    wifi_ap_set_net(&wa.m->ap, wa.ssid, wa.ssid_len, wa.ch);
     wa_group_install();
-    wifi_ap_dhcp_init(&wa.dhcp, SRV);
+    wifi_ap_dhcp_init(&wa.m->dhcp, SRV);
     for (i = 0; i < WIFI_AP_CLIENTS; i++)
-        wa.keyed[i] = wa.tries[i] = 0, wa.t_due[i] = 0;
+        wa.m->keyed[i] = wa.m->tries[i] = 0, wa.m->t_due[i] = 0;
     wl_start_ap(mac, WA_IP);
     wa.t_beacon = own_ms();
     wa.st = WA_UP;
@@ -306,11 +325,11 @@ static void wa_stop(void)                               /* everyone told, the ke
     uint32_t i;
     if (wa.st == WA_UP) {
         for (i = 0; i < WIFI_AP_CLIENTS; i++)
-            if (wa.ap.clients[i].state != WIFI_AP_CL_NONE) {
+            if (wa.m->ap.clients[i].state != WIFI_AP_CL_NONE) {
                 wa_key_clear(i + 1u);                   /* (cleared first: the goodbye goes out plain) */
-                wa_deauth(wa.ap.clients[i].mac, 3u);
+                wa_deauth(wa.m->ap.clients[i].mac, 3u);
             }
-        memset(wa.keyed, 0, sizeof wa.keyed);
+        memset(wa.m->keyed, 0, sizeof wa.m->keyed);
         wifi_sta_clear_hw_keys();
         wl.ap = 0;
         wl_stop();
@@ -339,14 +358,24 @@ static uint32_t wa_channel(void) { return wn_st.ap.ch ? wn_st.ap.ch : WA_CH_DEFA
                                                                                           * still be on the one before) */
 static int wa_mode_ap(void) { return wn_st.mode == WN_MODE_AP || wn_st.mode == WN_MODE_AP_MAN; }
 static int wa_wanted(void) { return wn_st.mode == WN_MODE_AP || (wn_st.mode == WN_MODE_AP_MAN && wa.user_on); }
+static void wa_pmk_start(const char *pass, uint32_t pl);
 static void wa_begin_mode(void)                         /* the record's network: no key job, the radio next */
 {
     wa.by_mode = 1;
     wa.save_key = 0;
     wa.ssid_len = (uint8_t)wa_name(wa.ssid);
     wa.ch = (uint8_t)wa_channel();
-    memcpy(wa.pmk, wn_st.ap.pmk, 32);
-    wa.st = WA_RADIO;
+    if (wn_st.ap.set == 1u) {                           /* a typed password: its key is kept */
+        memcpy(wa.pmk, wn_st.ap.pmk, 32);
+        wa.st = WA_RADIO;
+        return;
+    }
+    {                                                   /* none typed: the default one, a function of the name (not kept) */
+        char k[WIFI_AP_KEY_LEN + 1u];
+        wifi_ap_default_key(wa.ssid, wa.ssid_len, k);
+        wa_pmk_start(k, WIFI_AP_KEY_LEN);
+        memset(k, 0, sizeof k);
+    }
 }
 static void wa_pmk_start(const char *pass, uint32_t pl)   /* the key from the password, a slice a pass */
 {
@@ -373,6 +402,7 @@ static void wa_poll(void)                               /* once a main-loop pass
     uint32_t now = own_ms(), i;
     if (wn_st.mode != WN_MODE_AP_MAN)
         wa.user_on = 0;                                 /* (AP MAN's own switch is off once another mode is chosen) */
+
     if (wa.by_mode && !wa_wanted() && wa.st != WA_OFF && !(wa.st == WA_PMK && wa.save_key)) {   /* MODE left AP, or AP MAN
                                                                                                 * was stopped (a new key is
                                                                                                 * still made and kept) */
@@ -393,7 +423,7 @@ static void wa_poll(void)                               /* once a main-loop pass
     }
     switch (wa.st) {
     case WA_OFF:
-        if (wa_wanted() && wn_st.ap.set == 1u)
+        if (wa_wanted())
             wa_begin_mode();
         break;
     case WA_PMK:
@@ -409,8 +439,9 @@ static void wa_poll(void)                               /* once a main-loop pass
         break;
     case WA_RADIO: {
         int r;
-        if (now < WC_RADIO_MS)
-            break;                                      /* (the start-up's own work first, as the manager waits) */
+        if (now < WC_RADIO_MS || !WA_MEM())
+            break;                                      /* (the start-up's own work first, as the manager waits; the block
+                                                         * lent first: plat_wifi_ap_mem) */
         r = own_radio_up();
         if (r < 0)
             wa.st = WA_FAIL;
@@ -423,8 +454,8 @@ static void wa_poll(void)                               /* once a main-loop pass
             wa.t_beacon += WA_BEACON_MS;
             if (now - wa.t_beacon >= 4u * WA_BEACON_MS)
                 wa.t_beacon = now;                      /* (the main loop stalled: no burst of beacons to catch up) */
-            wa_tx(wifi_ap_build_beacon(&wa.ap, (uint64_t)own_us(), own_frame()), WA_PLAIN, 0u);
-            wa.n.beacon++;
+            wa_tx(wifi_ap_build_beacon(&wa.m->ap, (uint64_t)own_us(), own_frame()), WA_PLAIN, 0u);
+            wa.m->n.beacon++;
         }
         for (i = 0; i < WIFI_AP_CLIENTS; i++)
             wa_hs_step(i, now);
@@ -435,6 +466,18 @@ static void wa_poll(void)                               /* once a main-loop pass
 }
 
 /* ---- plat.h */
+uint32_t plat_wifi_ap_mem_bytes(void) { return FM1B_WIFI_MEM ? (uint32_t)(sizeof(struct wa_mem) + 3u) / 4u * 4u : 0u; }
+int plat_wifi_ap_mem(void *p)                           /* (the main loop) */
+{
+#if FM1B_WIFI_MEM
+    if ((!p && wa.st == WA_UP) || ((uintptr_t)p & 3u))
+        return -1;                                      /* (up: off first, as the mode leaves AP) */
+    wa.m = (struct wa_mem *)p;
+    return 0;
+#else
+    return p ? -1 : 0;
+#endif
+}
 int plat_wifi_ap_state(void)
 {
     own_store_load();
@@ -446,8 +489,6 @@ int plat_wifi_ap_state(void)
         return WIFI_AP_STARTING;
     if (!wa_mode_ap())
         return WIFI_AP_OFF;
-    if (wa.st == WA_OFF && wn_st.ap.set != 1u)
-        return WIFI_AP_NOKEY;
     if (wa.st == WA_OFF && !wa_wanted())
         return WIFI_AP_STOPPED;
     return WIFI_AP_STARTING;
@@ -499,6 +540,15 @@ int plat_wifi_ap_name(char *name)
     return (int)n;
 }
 int plat_wifi_ap_has_key(void) { own_store_load(); return wn_st.ap.set == 1u; }
+int plat_wifi_ap_default_key(char *out)
+{
+    uint8_t b[WN_SSID_MAX];
+    uint32_t n;
+    own_store_load();
+    n = wa.st != WA_OFF && !wa.by_mode ? wa.ssid_len : wa_name(b);
+    wifi_ap_default_key(wa.st != WA_OFF && !wa.by_mode ? wa.ssid : b, n, out);
+    return wn_st.ap.set != 1u;
+}
 void plat_wifi_ap_forget(void)
 {
     own_store_load();
@@ -512,8 +562,6 @@ int plat_wifi_ap_run(int on)
     own_store_load();
     if (wn_st.mode != WN_MODE_AP_MAN)
         return -1;
-    if (on && wn_st.ap.set != 1u)
-        return -2;
     wa.user_on = (uint8_t)(on != 0);
     return 0;
 }
@@ -529,7 +577,8 @@ int plat_wifi_ap_start(const uint8_t *ssid, uint32_t len, const char *pass, int 
     wa.ssid_len = (uint8_t)len;
     wa.ch = (uint8_t)ch;
     wa.by_mode = wa.save_key = 0;
-    memset(&wa.n, 0, sizeof wa.n);
+    if (WA_MEM())
+        memset(&wa.m->n, 0, sizeof wa.m->n);           /* (lent later: zeroed by the app) */
     wa_pmk_start(pass, pl);
     return 0;
 }
@@ -541,21 +590,23 @@ void plat_wifi_ap_stop(void)
 uint32_t plat_wifi_ap_clients(void)
 {
     uint32_t i, n = 0;
+    if (wa.st != WA_UP)
+        return 0;
     for (i = 0; i < WIFI_AP_CLIENTS; i++)
-        n += wa.keyed[i];
+        n += wa.m->keyed[i];
     return wa.st == WA_UP ? n : 0u;
 }
 int plat_wifi_ap_client(int i, uint8_t mac[6], uint32_t *ip)
 {
     uint32_t k;
-    if (wa.st != WA_UP || i < 0 || i >= (int)WIFI_AP_CLIENTS || !wa.keyed[i])
+    if (wa.st != WA_UP || i < 0 || i >= (int)WIFI_AP_CLIENTS || !wa.m->keyed[i])
         return 0;
     if (mac)
-        memcpy(mac, wa.ap.clients[i].mac, 6);
+        memcpy(mac, wa.m->ap.clients[i].mac, 6);
     if (ip) {
         *ip = 0;
         for (k = 0; k < WIFI_AP_DHCP_LEASES; k++)
-            if (wa.dhcp.leases[k].used && !memcmp(wa.dhcp.leases[k].mac, wa.ap.clients[i].mac, 6))
+            if (wa.m->dhcp.leases[k].used && !memcmp(wa.m->dhcp.leases[k].mac, wa.m->ap.clients[i].mac, 6))
                 *ip = (WA_IP & 0xFFFFFF00u) | (k + 2u);
     }
     return 1;
