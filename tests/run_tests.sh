@@ -266,5 +266,14 @@ run crashlog sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 
     $OUT/crashlog_test"
 run host-crashlog sh -c "mkdir -p $OUT/crashlog && $H/template_host tests/crashlog.txt $OUT/crashlog && \
     $PY tests/crashlog_host_test.py $H/template_host $OUT/crashlog"
+# the debug stats in flash (device/dbgstats.c): the ring against a simulated NOR (the switch, the 5-minute snapshots,
+# the wrap's erase and write-back, a power cut at every program and inside the erase and the write-back, a staged update
+# refused, the quiet moment and the forced write, the crash's snapshot, the frames, the clear; nothing written outside
+# 0xE4000..0xE4EFF); then in the template's simulator (26 simulated minutes, a restart, a crash, a power-off, a staged
+# update, a power-on with the dumped flash) read through tools/fm1_remote.py's parser
+run dbgstats sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -o $OUT/dbgstats_test tests/dbgstats_test.c && \
+    $OUT/dbgstats_test"
+run host-dbgstats sh -c "mkdir -p $OUT/dbgstats && $H/template_host tests/dbgstats.txt $OUT/dbgstats && \
+    $PY tests/dbgstats_host_test.py $H/template_host $OUT/dbgstats"
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL

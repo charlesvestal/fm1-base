@@ -603,6 +603,33 @@ struct plat_cache_ram {
 const struct plat_cache_ram *plat_cache_ram(void);
 
 
+/* Debug stats (device/dbgstats.c): a 64-byte snapshot of the platform's counters (the audio's halves, late ones and
+ * longest render, the timer's gaps, the longest interrupts-off and main-loop pass, the second core's and the radios'
+ * state, starts and crashes) and the app's own PLAT_STATS_APP bytes, kept in flash every 5 minutes of uptime while
+ * on, and one with every crash whatever the switch; the last 60 (5 hours) read over USB-MIDI (F0 7D 4C 53 F7,
+ * tools/fm1_remote.py stats). Off at every start: an app with a setting for it turns it on after loading it. The
+ * flash is the update's staging's last sector: every install starts the stats again. The app's side (app.h):
+ *   APP_STATS        void app_stats(uint8_t out[PLAT_STATS_APP])   its bytes, once a second (main loop; zeroed before)
+ *   APP_STATS_LAYOUT "name width ..."   what they are, for the readout: each field a name and its width in bytes (1,
+ *                    2 or 4, little-endian), in order ("c10 1 drops 2"); without it the bytes are printed raw
+ *   APP_STATS_QUIET  int app_stats_quiet(void)   1: a flash write now disturbs nothing (the transport stopped). A
+ *                    snapshot waits for it up to 4 minutes, then is written anyway (one 64-byte page); without it a
+ *                    snapshot is written at once
+ * The host simulator keeps them too (its flash dump has the sector) */
+#define PLAT_STATS_APP 7u
+/* The stacks' room (device/stacks.c): CPU0's main and interrupt stacks are painted at every start, the second core's
+ * marked by felucca-bsp; the bytes never used. plat_stack_left: since this start (-1: not measured, the second core
+ * off or not built). plat_stack_least_ever: the least ever seen, across restarts (.noinit) and power-offs (the debug
+ * stats' newest record in flash, and the crash records' room at each crash); -1 not known yet. Main loop. Each crash
+ * record keeps every stack's room at the crash (F0 7D 4C 48 F7's "stk" line) */
+enum { PLAT_STK_MAIN, PLAT_STK_IRQ, PLAT_STK_C1 };
+int32_t plat_stack_left(int k);
+int32_t plat_stack_least_ever(int k);
+void plat_stats_enable(int on);        /* the snapshots every 5 minutes on (1) or off (0) */
+int plat_stats_on(void);
+void app_stats(uint8_t out[PLAT_STATS_APP]);
+int app_stats_quiet(void);
+
 /* the app's optional hooks (app.h defines the macro when it has the function):
  *   APP_TICK        void app_tick(void)           1 kHz, in the timer interrupt (a clock, a sequencer)
  *   APP_BOOT        void app_boot(void)           once, after the platform is up, before app_ui_init (a radio)

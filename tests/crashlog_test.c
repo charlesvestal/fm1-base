@@ -239,6 +239,29 @@ int main(void)
     check("LH with other bytes: nothing sent", nsent == 0);
     check("... nothing erased", listed(&first) == 3);
 
+    /* the stacks' room at the crash (main_fm1.c fm1_fault: stacks.c pst_at_crash), 32-byte units in flags; guard from
+     * EMU_MSG bit 3 or DBG_MSG bit 13 */
+    {
+        const int32_t left[3] = {1500, 6000, -1}, big[3] = {40000, 0, 31};
+        cl_clear();
+        r = rec(1);
+        r.flags = CL_CTX | cl_stk_pack(left);
+        r.emu = 1u << 3;
+        cl_append(&r);
+        request("");
+        check("a crash with its stacks' room: crash, regs, stk, end", nsent == 4 && !strcmp(sent[3], "end 1"));
+        check("... the stk line (bytes, rounded down to 32; -1 not known; guard: EMU_MSG bit 3)",
+              !strcmp(sent[2], "stk 1/1 main 1472 irq 5984 c1 -1 guard 1"));
+        r = rec(2);
+        r.flags = CL_CTX | cl_stk_pack(big);
+        r.dbg = 1u << 13;
+        cl_append(&r);
+        request("");
+        check("... the most kept (32,704), 0 and under 32 as 0; guard: DBG_MSG bit 13",
+              nsent == 7 && !strcmp(sent[5], "stk 2/2 main 32704 irq 0 c1 0 guard 1"));
+        check("... a record without them (flags CL_CTX only): no stk line", cl_stk_left(CL_CTX, 0) == -1);
+    }
+
     printf(bad ? "FAIL: %d\n" : "all ok\n", bad);
     return bad != 0;
 }
