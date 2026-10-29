@@ -21,8 +21,12 @@
  * come in through midi_in and its words go out through midi_out_take, as on the FM-1's USB. */
 #define PLAT_WEB 1                      /* plat_host.c as the browser's: no script, no main; the reader's words here */
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include "rfm1_info.h"                  /* (tools/build.py --rfm1) RFM1_ID, RFM1_NAME, RFM1_VERSION, .. */
+static char *rf_getenv(const char *name) { (void)name; return 0; }
+#define getenv rf_getenv                /* no environment in a host app (the format imports none): a host build's
+                                         * settings from it (LOOM-8's LOOM_*) stay at their defaults */
 
 #define RF_LCD_W 240
 #define RF_LCD_H 240
