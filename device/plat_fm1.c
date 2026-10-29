@@ -329,35 +329,34 @@ uint32_t plat_midi_out_room(uint32_t to)
 uint32_t plat_midi_out_link(void) { return midi_out_link(); }
 static uint32_t midi_in_from;                     /* plat_midi_in_from: the last one's link, as an out */
 uint32_t plat_midi_in_from(void) { return midi_in_from; }
-#if FM1B_BLE_MIDI_TIME
-static uint8_t midi_in_timed;                     /* the last one is Bluetooth's: ble_in_t_last is its time sent */
-#endif
-uint32_t plat_midi_in_t24(void)
-{
-#if FM1B_BLE_MIDI_TIME
-    if (midi_in_timed)
-        return ble_in_t_last;
-#endif
-    return fm1_ticks();
-}
+static uint32_t midi_in_t_last;                   /* plat_midi_in_t24: the last one's landing time (FM1B_MIDI_STAMP) */
+uint32_t plat_midi_in_t24(void) { return midi_in_t_last; }
 int plat_midi_in(uint32_t *pkt, int *port)
 {
     int from;
     if (mi_r != mi_w) {
         uint32_t p = midi_in_q[mi_r % MQ];
+#if FM1B_MIDI_STAMP
+        midi_in_t_last = midi_in_t24[mi_r % MQ];
+#else
+        midi_in_t_last = fm1_ticks();
+#endif
         RING_PUBLISH();
         mi_r++;
         from = (p >> 4 & 0xFu) == 1u ? PORT_TRS : PORT_USB;
         midi_in_from = from == PORT_USB ? TO_USB : 0u;
         *pkt = p & ~0xF0u;
     }
-    else if (ble_midi_in(pkt, &midi_in_from))
+    else if (ble_midi_in(pkt, &midi_in_from)) {
         from = PORT_BLE;
-    else
-        return 0;
 #if FM1B_BLE_MIDI_TIME
-    midi_in_timed = (uint8_t)(from == PORT_BLE);
+        midi_in_t_last = ble_in_t_last;           /* the sender's own time (fm1.toml ble_midi_time) */
+#else
+        midi_in_t_last = fm1_ticks();
 #endif
+    } else {
+        return 0;
+    }
     if (port)
         *port = from;
     midi_counted(from, 0, *pkt);

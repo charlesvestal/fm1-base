@@ -48,6 +48,10 @@ run stack_depth "$PY" tests/stack_depth_test.py
 run console sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/console_test tests/console_test.c && \
     $OUT/console_test && $CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -DFM1B_CDC=0 -o $OUT/console_test0 \
     tests/console_test.c && $OUT/console_test0"
+run trs-stamp sh -c "$CC -O2 -w -DFELUCCA_MIDI_STAMP=1 -Ibsp/chip -Ibsp/boards/fm1 -Idevice -o $OUT/trs_test_stamp tests/trs_test.c && $OUT/trs_test_stamp"
+# the MIDI-in stamps (FELUCCA_MIDI_STAMP): USB and the jack against a model of their registers on the TIMER5 schedule,
+# each stamp against its message's landing (within +-0.05 ms; the poll's and the read's stamps beside it)
+run midi-stamp sh -c "$CC -std=c11 -O2 -Wall -Wextra -Werror -Wno-unused-function -Ibsp/chip -Ibsp/boards/fm1 -Idevice -o $OUT/midi_stamp_test tests/midi_stamp_test.c && $OUT/midi_stamp_test"
 run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/storage_test"
 run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts
