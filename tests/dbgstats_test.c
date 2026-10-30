@@ -13,7 +13,8 @@
 #include <string.h>
 #include "../include/plat.h"
 
-#define FM1B_BUILD 0xABCD1234u
+static uint32_t test_build = 0xABCD1234u;      /* (a variable: a test installs another build) */
+#define FM1B_BUILD test_build
 #define DS_NOINIT
 #define DS_LAYOUT ds_layout
 static const char *ds_layout = "c10 1 c60 1 drops 2 sram 4";
@@ -380,6 +381,34 @@ int main(void)
     check("the clear answers \"cleared\"", nsent == 1 && !strcmp(sent[0], "cleared") && ds_ni.nq == 0);
     request("");
     check("... then \"end 0\"", nsent == 1 && !strcmp(sent[0], "end 0"));
+    check("the clear empties the least ever too (.noinit: a restart would keep the erased records')",
+          ds_ni.ever[0] == -1 && ds_ni.ever[1] == -1 && ds_ni.ever[2] == -1);
+    restart();
+    check("... and a restart after it knows no least ever", ds_boot(0, 0) == 0 && ds_ni.ever[0] == -1 &&
+          ds_ni.ever[1] == -1 && ds_ni.ever[2] == -1);
+
+    /* the least ever of a record is this build's alone: an install of another build starts it again */
+    {
+        ds_rec_t r;
+        uint8_t at[DS_SLOTS];
+        uint32_t m;
+        ds_enable(1);
+        tstk[0] = 4000, tstk[2] = 1100;
+        run_to(now_ms + 1500u);
+        tstk[0] = 20000, tstk[2] = 1800;
+        run_to_due();
+        m = ds_list(at);
+        check("a record of this build carries its least ever", m && ds_slot(at[m - 1u], &r) == 1 && r.build == test_build &&
+              r.ever[0] == 4000 && r.ever[2] == 1100);
+        power();
+        check("... a power-on of the same build takes it", ds_boot(0, 0) == 0 && ds_least_ever(PLAT_STK_MAIN) == 4000 &&
+              ds_least_ever(PLAT_STK_C1) == 1100);
+        test_build = 0x5A5A0001u;              /* (another build's install: the stacks may be sized otherwise) */
+        power();
+        check("... a power-on of another build does not: the room now", ds_boot(0, 0) == 0 && ds_ni.ever[0] == -1 &&
+              ds_ni.ever[2] == -1 && ds_least_ever(PLAT_STK_MAIN) == 20000);
+        test_build = 0xABCD1234u;
+    }
     check("the update's record and the crash history never touched", nor[0xE4F00] == 0xFF && nor[0xE2000] == 0xFF);
 
     printf(bad ? "FAIL: %d\n" : "all ok\n", bad);
