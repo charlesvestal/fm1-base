@@ -54,7 +54,8 @@
  * pass_us and prog_us are since the record before.
  *
  * The least room ever (ds_ni.ever): each stack's room read once a second (ds_stack: plat_stack_left), the least kept in
- * the queue's .noinit (a restart keeps it); at a power-on taken from the newest record in the flash, then lowered by
+ * the queue's .noinit (a restart keeps it, a clear of the records empties it); at a power-on taken from the newest
+ * record in the flash if this build wrote it (another build's stacks are not these), then lowered by
  * the crash's room (crash_keep's, the crash record's CL_STK); written into every record as it goes to the flash.
  *
  * Hooks from the platform (device/main_fm1.c, host/plat_host.c, tests/dbgstats_test.c):
@@ -286,8 +287,8 @@ static void ds_ever_boot(const int32_t *crash_left)   /* the least ever: the new
     int32_t ev[3] = {-1, -1, -1};
     for (i = 0; i < DS_SLOTS; i++)
         if (ds_slot(i, &r) == 1 && r.seq > seq)
-            for (seq = r.seq, k = 0; k < 3u; k++)
-                ev[k] = r.ever[k] == DS_STK_NONE ? -1 : (int32_t)r.ever[k];
+            for (seq = r.seq, k = 0; k < 3u; k++)       /* (the room of another build's stacks says nothing about this one's) */
+                ev[k] = r.ever[k] == DS_STK_NONE || r.build != FM1B_BUILD ? -1 : (int32_t)r.ever[k];
     for (k = 0; k < 3u; k++) {
         ds_ever_note(k, ev[k]);                     /* (after a power-on the flash's; after a restart no higher) */
         if (crash_left)
@@ -389,6 +390,7 @@ static int ds_clear(void)                           /* the sector erased, the qu
     if (ds_staged() || ds_erase(DS_LO))
         return -1;
     ds_ni.nq = 0;
+    ds_ni.ever[0] = ds_ni.ever[1] = ds_ni.ever[2] = -1;   /* (the least ever was the erased records': .noinit keeps it) */
     return 0;
 }
 

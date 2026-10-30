@@ -273,6 +273,9 @@ run host-crashlog sh -c "mkdir -p $OUT/crashlog && $H/template_host tests/crashl
 # update, a power-on with the dumped flash) read through tools/fm1_remote.py's parser
 run dbgstats sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -o $OUT/dbgstats_test tests/dbgstats_test.c && \
     $OUT/dbgstats_test"
+# the second core's stack room (plat_stack_left(PLAT_STK_C1)) on a host model of felucca-bsp's fm1_cpu1.h: -1 when CPU1 never started
+run stack-c1 sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -Itests/stack_c1 -o $OUT/stack_c1_test tests/stack_c1_test.c && \
+    $OUT/stack_c1_test"
 run host-dbgstats sh -c "mkdir -p $OUT/dbgstats && $H/template_host tests/dbgstats.txt $OUT/dbgstats && \
     $PY tests/dbgstats_host_test.py $H/template_host $OUT/dbgstats"
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
