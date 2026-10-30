@@ -104,6 +104,16 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              kept are the flash's data cache: fewer of them make big flash reads slower (7 as RAM: 57x
                              over 16 KiB on an FM-1; 2 in daily use there). The host: a buffer of that size stands in.
                              An app's own objects in section .cache_ram come first (the build checks they fit)
+  main_stack = 9216          the main loop's stack (crt0's sp), bytes above its 256-byte guard band, a multiple of 256,
+  irq_stack = 6400           2048..24320 (default 24320); the interrupts' (ssp), the same, 2048..7936 (default 7936):
+                             device/app.ld's SRAM ends that much lower or higher (its free RAM, an app's arena), the
+                             reset-kept record and the stacks' tops stay. Not with wifi_stack = "jieli" (app_wifi.ld)
+  stack_check = true         the stacks' static worst (tools/stack_depth.py: the deepest call path's frames, the
+                             interrupts nested at their worst, the fault path on top) checked against those: a stack
+                             whose worst is over its size fails the build; one within it but under its margin (25 % or
+                             1 KiB, the larger) is said. Each unit's optimised IR is written beside its code
+                             (OUT/*.opt.ll: the indirect calls' targets, stack_ir.py). stack_bounds: an app's
+                             function that calls itself at most N levels deep (its source's own bound): ["f=N", ..]
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
 app.h); the build prints what it has.
   boot_pack = true           .ram_text and .data stored LZMA-packed (tools/boot_pack.py, Melodee's; device/boot_lzma.h): the
@@ -756,9 +766,13 @@ def build_app():
         for f, o in o2_units:
             ir_pass(o.with_suffix(".ll"), o.with_suffix(".pass.ll"), str(f.relative_to(APP)))
         opt = [f for f in flags if not f.startswith(("-I", "-D", "-W"))]
-        tc_all(("cc", *opt, "-c", OUT / "unity.pass.ll", "-o", OUT / "unity.o"),
-               *[("cc", *[f if f not in ("-Os", "-Oz") else "-O2" for f in opt], "-c", o.with_suffix(".pass.ll"), "-o", o)
-                 for _, o in o2_units])
+        cg = [("cc", *opt, "-c", OUT / "unity.pass.ll", "-o", OUT / "unity.o"),
+              *[("cc", *[f if f not in ("-Os", "-Oz") else "-O2" for f in opt], "-c", o.with_suffix(".pass.ll"), "-o", o)
+                for _, o in o2_units]]
+        if os.environ.get("FM1B_OPT_IR") == "1" or CONF.get("stack_check"):   # each unit's IR as its code is made from it (the optimiser's
+            # output, the backend's input: tools/stack_depth.py resolves the indirect calls on it)
+            cg += [(*c[:-4], "-S", "-emit-llvm", c[-3], "-o", Path(str(c[-1])).with_suffix(".opt.ll")) for c in cg]
+        tc_all(*cg)
     elf = OUT / (NAME + ".elf")
     # unreferenced functions (each in its own section: -ffunction-sections) are dropped: the DSP keeps
     # mono reference paths for the host tests that the firmware no longer calls. The BT libraries are LTO
@@ -767,6 +781,8 @@ def build_app():
            f"--plugin-opt=mcpu={CPU}", "--plugin-opt=-pi32v2-large-program=true"] if jieli else []
     global LAYOUT
     ld = SRC / "device" / ("app_wifi.ld" if WIFI else "app.ld")
+    if not WIFI and stacks() != STACKS:          # (other stack sizes: the SRAM's end and the bands moved)
+        ld = stack_script(ld)
     LAYOUT = memory_regions(ld.read_text())
     tc("pi32v2/bin/ld", *lto, "--gc-sections", "-e", "_start", "-T", ld, *objs, *b_objs,
        *b_libs, "-o", elf)
@@ -810,6 +826,70 @@ def build_app():
     img += b"\xff" * (-len(img) % 4)
     (OUT / (NAME + ".bin")).write_bytes(img)
     return bytes(img), syms, dis, rt
+
+
+STACKS = (24320, 7936)          # device/app.ld's main and interrupt stacks, each above a 256-byte guard band
+STACK_TOP = 0x01C7C000          # (the interrupts' top: the reset-kept record, NOINIT, is above it)
+
+
+def stacks():
+    """fm1.toml main_stack / irq_stack -> (main, irq) bytes"""
+    out = []
+    for key, dflt, lo in (("main_stack", STACKS[0], 2048), ("irq_stack", STACKS[1], 2048)):
+        n = CONF.get(key, dflt)
+        if not isinstance(n, int) or n % 256 or not lo <= n <= dflt:
+            raise SystemExit(f"build: fm1.toml {key} = {n}: a multiple of 256, {lo}..{dflt}")
+        out.append(n)
+    if WIFI and tuple(out) != STACKS:
+        raise SystemExit("build: fm1.toml main_stack / irq_stack: not with JieLi's Wi-Fi (app_wifi.ld's fixed map)")
+    return tuple(out)
+
+
+def stack_script(ld):
+    """-> OUT/app.ld with the stacks of fm1.toml (stacks()): each above its guard band, under the interrupts' top
+    (STACK_TOP); SRAM up to the first band (the ASSERT keeps them together)"""
+    main, irq = stacks()
+    g1 = STACK_TOP - irq - 256
+    g0 = g1 - main - 256
+    text = ld.read_text()
+    text, n1 = re.subn(r"(SRAM\s*\(rwx\)\s*:\s*ORIGIN = 0x01C00000, LENGTH = )0x74000", rf"\g<1>{g0 - 0x01C00000:#x}", text)
+    text, n2 = re.subn(r"_guard0 = 0x01C74000; _ustack_lo = 0x01C74100; _ustack_top = 0x01C7A000;",
+                       f"_guard0 = {g0:#010x}; _ustack_lo = {g0 + 256:#010x}; _ustack_top = {g1:#010x};", text)
+    text, n3 = re.subn(r"_guard1 = 0x01C7A000; _sstack_lo = 0x01C7A100; _sstack_top = 0x01C7C000;",
+                       f"_guard1 = {g1:#010x}; _sstack_lo = {g1 + 256:#010x}; _sstack_top = {STACK_TOP:#010x};", text)
+    if (n1, n2, n3) != (1, 1, 1):
+        raise SystemExit(f"build: {ld.name}: the stacks' lines not found (main_stack / irq_stack)")
+    out = OUT / ld.name
+    out.write_text(text)
+    return out
+
+
+def stack_check(dis):
+    """fm1.toml stack_check: (errors, notes) of the stacks' static worst (tools/stack_depth.py) against their sizes"""
+    import stack_depth
+    irs = [p.read_text(errors="replace") for p in sorted(OUT.rglob("*.opt.ll"))]
+    if not irs:
+        return ["stack_check: no optimised IR (OUT/*.opt.ll)"], []
+    words = stack_depth.elf_words(OUT / (NAME + ".elf"))
+    bounds = {k: int(v) for k, v in (b.split("=") for b in CONF.get("stack_bounds", []))}
+    r = stack_depth.analyse(dis, words, irs, bounds)
+    errors, notes = [], []
+    bad = {k: v for k, v in r["notes"].items() if v and k in ("recursion", "var", "indirect, all taken")}
+    if stack_depth.STRADDLE:
+        bad["tables' ends"] = stack_depth.STRADDLE[:8]
+    for k, v in bad.items():
+        errors.append(f"stack_check: {k}: {', '.join(v[:8])} (not bounded: tools/stack_depth.py)")
+    main, irq = stacks()
+    for what, d, path, size in (("main", r["main"][0], r["main"][1], main),
+                                ("interrupt", r["irq_total"], [p[2][-1] for p in r["irq"] if p[2]], irq)):
+        line = f"{what} stack: {d:,} B at most (static) of {size:,} ({' > '.join(path[-4:])})"
+        if d > size:
+            errors.append(f"{line}: over (fm1.toml {'main' if what == 'main' else 'irq'}_stack)")
+        elif stack_depth.need(d) > size:
+            notes.append(f"{line}: under its margin, {stack_depth.need(d):,} B wanted")
+        else:
+            notes.append(line)
+    return errors, notes
 
 
 def memory_regions(script):
@@ -885,6 +965,10 @@ def check(img, syms, dis, rt):
     else:
         insns = [ln for ln in rt.splitlines() if LINE.match(ln) and not in_ar(ln)]
         notes.append(f".ram_text: {len(insns)} insns, no calls")
+    if CONF.get("stack_check"):
+        st_errors, st_notes = stack_check(dis)
+        errors += st_errors
+        notes += st_notes
     ar_errors, ar_notes = ramcode.check(syms, dis, CONF.get("ram_code_allow", []))
     errors += ar_errors
     notes += ar_notes
