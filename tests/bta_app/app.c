@@ -7,6 +7,7 @@
 #include <string.h>
 
 static uint32_t held, phase;
+static uint32_t mem_block[18432u / 4u];            /* (lent when the build asks for one: fm1.toml bt_audio_mem = "app") */
 static int lost_seen;                             /* the last plat_bta_lost answer that was not NONE */
 
 void app_init(void) {}
@@ -22,7 +23,13 @@ void app_render(int32_t *lr, uint32_t n, uint32_t master_q12)
     }
 }
 void app_panic(void) {}
-void app_ui_init(void) { plat_bta_on(1); }
+void app_ui_init(void)
+{
+    uint32_t n = plat_bta_mem_bytes();
+    if (n && n <= sizeof mem_block)
+        (void)plat_bta_mem(mem_block);            /* (before plat_bta_on(1), which does nothing without it) */
+    plat_bta_on(1);
+}
 void app_say(const char *a, const char *b) { (void)a, (void)b; }
 static void input(void)
 {
@@ -56,6 +63,10 @@ int app_expect(const char *what, int *got)
         *got = plat_bta_out_device();
     else if (!strcmp(what, "latency_ms"))
         *got = plat_bta_latency_us() < 0 ? -1 : plat_bta_latency_us() / 1000;
+    else if (!strcmp(what, "mem_bytes"))          /* the block the build wants (0: static buffers) */
+        *got = (int)plat_bta_mem_bytes();
+    else if (!strcmp(what, "mem_take"))           /* taking it back: 0 done or none lent, -1 still in use */
+        *got = plat_bta_mem(0);
     else if (!strcmp(what, "found"))
         *got = plat_bta_found(0, nm) + plat_bta_found(1, nm);
     else if (!strcmp(what, "last_is_b"))          /* remembered device 0 is "B" */

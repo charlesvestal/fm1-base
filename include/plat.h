@@ -273,6 +273,19 @@ int plat_bta_timed_out(void);          /* PLAT_BTA_REFUSED because the set-up ti
 int32_t plat_bta_latency_us(void);     /* what the stream adds on the FM-1's side (its queue), us; -1: not streaming.
                                         * An app that follows a clock may play that much earlier (the device's own
                                         * buffer comes on top and is not known) */
+/* Bluetooth audio's big buffers in the app's memory (fm1.toml bt_audio_mem = "app": FM1B_BTA_MEM 1): the audio packets'
+ * queue and the receptions' ring, which only a run of the Classic radio uses (a scan, a page, a link), are a block the
+ * app lends while an AUDIO mode is on, instead of static RAM: an app that switches Bluetooth audio off has that RAM
+ * back. Without it (FM1B_BTA_MEM 0) they are static and these say so (bytes 0, the block refused).
+ *   plat_bta_mem_bytes()  the block's size (4-aligned), 0: static buffers
+ *   plat_bta_mem(p)       p: the block lent (before plat_bta_on(1), which does nothing without one) -> 0;
+ *                         0: taken back -> 0 done (the radio's code and interrupts no longer read it), -1 still in use
+ *                         (an AUDIO mode on, or its run not over yet: plat_bta_on(0) first, then again later) */
+#ifndef FM1B_BTA_MEM
+#define FM1B_BTA_MEM 0
+#endif
+uint32_t plat_bta_mem_bytes(void);
+int plat_bta_mem(void *p);
 
 /* WiFi (fm1.toml wifi = true: FM1B_WIFI 1): a station on JieLi's WiFi libraries and the SDK's lwIP, on the same shim.
  * Off until the app turns it on; then it joins the networks it joined before (kept in the app's store object OBJ_WIFI,

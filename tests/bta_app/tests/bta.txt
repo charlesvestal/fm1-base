@@ -2,6 +2,8 @@
 wait 1200
 expect bta 3
 expect latency_ms -1
+expect mem_bytes 0
+expect mem_take 0
 bta add A
 bta add B
 tap PLAY
