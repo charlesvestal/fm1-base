@@ -537,8 +537,27 @@ static void bta_boot(void)                        /* a boot (the simulator's reb
     bth_loaded = 0;
 #endif
 }
+/* fm1.toml bt_audio_mem = "app" (FM1B_BTA_MEM): the block as the device's stack takes it (the same size: bt_page.c
+ * BP_MEM_BYTES, 40 x 332 + 40 x 2 queued packets and 12 receptions of 364 B), written while on (as the device's queue
+ * is: a block taken back too early, or one too short, fails under ASan) */
+#define BTH_MEM_BYTES (13360u + 12u * 364u)
+static uint8_t *bth_mem_p;
+uint32_t plat_bta_mem_bytes(void) { return FM1B_BTA_MEM ? BTH_MEM_BYTES : 0u; }
+int plat_bta_mem(void *p)
+{
+    if (!FM1B_BTA_MEM)
+        return p ? -1 : 0;
+    if (!p && bth_st != PLAT_BTA_OFF)
+        return -1;
+    if (p)
+        memset(p, 0x5A, BTH_MEM_BYTES);
+    bth_mem_p = (uint8_t *)p;
+    return 0;
+}
 static void bta_tick(void)
 {
+    if (bth_mem_p && bth_st != PLAT_BTA_OFF)
+        bth_mem_p[(now_ms * 7u) % BTH_MEM_BYTES]++;   /* (the radio's queue at work: a block gone is written to) */
     if (bth_st == PLAT_BTA_SCANNING && now_ms - bth_t >= 1000u) {
         uint32_t i;
         for (i = 0, bth_nfound = 0; i < bth_nnear; i++)
@@ -553,6 +572,8 @@ static void bta_tick(void)
 }
 void plat_bta_on(int on)
 {
+    if (FM1B_BTA_MEM && on && !bth_mem_p)
+        return;
     if (on && bth_st == PLAT_BTA_OFF) {
         if (ble_state == BLE_OFF)
             plat_ble_start();

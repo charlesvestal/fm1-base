@@ -77,22 +77,49 @@ static struct {
 #define BP_AFH_AHEAD 320u                          /* the switch this many slots (200 ms) after its announcement */
 /* the audio packets (bt_acl.c ba_media_send, from the audio interrupt): whole L2CAP frames, each one DH5 (or DH3 / DH1
  * when shorter), never cut; the main loop's bp_tx_service sends them after the LMP and L2CAP signalling */
+#if FM1B_BTA_MEM
+/* the packets in the app's block (plat_bta_mem), lent with bt_inq.c's ring while an AUDIO mode is on; the indexes stay
+ * here (an empty queue reads them alone). bp_mem lends and takes back: the interrupts off, so neither the audio's
+ * (ba_media_send) nor the radio's (bp_tx_media, bti_push) sees a block half lent or half gone */
+struct bp_mq_mem {
+    uint8_t d[BP_MQ][BP_MQB];
+    uint16_t n[BP_MQ];
+};
+static struct bp_mq_mem *bp_mqp;
+static struct {
+    volatile uint32_t w, r;
+} bp_mq;
+#define BP_MQ_D(k) bp_mqp->d[k]
+#define BP_MQ_N(k) bp_mqp->n[k]
+#define BP_MEM_BYTES (((uint32_t)sizeof(struct bp_mq_mem) + 3u) / 4u * 4u + BTI_RING * (uint32_t)sizeof(struct bti_rx))
+static void bp_mem_set(void *p)                    /* (the interrupts off: bp_mem) */
+{
+    bp_mqp = (struct bp_mq_mem *)p;
+    bti_ringp = p ? (struct bti_rx *)((uint8_t *)p + ((sizeof(struct bp_mq_mem) + 3u) / 4u * 4u)) : 0;
+    bp_mq.r = bp_mq.w;                             /* (nothing queued from before) */
+    bti_rr = bti_rw;
+}
+#else
 static struct {
     uint8_t d[BP_MQ][BP_MQB];
     uint16_t n[BP_MQ];
     volatile uint32_t w, r;
 } bp_mq BP_MQ_ATTR;
+#define BP_MQ_D(k) bp_mq.d[k]
+#define BP_MQ_N(k) bp_mq.n[k]
+#endif
 static int bp_media_queue(const uint8_t *frame, uint32_t len)   /* 1 queued; 0 dropped whole (full, too long, no 5 slots) */
 {
     uint32_t i, k;
-    if ((bp.slots5 != 2u && bp.slots5 != 4u) || len > (bp.slots5 == 2u ? BP_MQB : 183u) || bp_mq.w - bp_mq.r >= BP_MQ) {
+    if ((bp.slots5 != 2u && bp.slots5 != 4u) || len > (bp.slots5 == 2u ? BP_MQB : 183u) || bp_mq.w - bp_mq.r >= BP_MQ ||
+        !BTI_MEM_HAVE) {
         bp.mq_drop++;
         return 0;
     }
     k = bp_mq.w % BP_MQ;
     for (i = 0; i < len; i++)
-        bp_mq.d[k][i] = frame[i];
-    bp_mq.n[k] = (uint16_t)len;
+        BP_MQ_D(k)[i] = frame[i];
+    BP_MQ_N(k) = (uint16_t)len;
     bp_mq.w++;
     if (bp_mq.w - bp_mq.r > bp.mq_hi)
         bp.mq_hi = bp_mq.w - bp_mq.r;
@@ -345,7 +372,7 @@ static void bp_conn_rx(void)                       /* a packet in the connection
             else if (len && llid) {
                 bp.acl++;
                 bp_event(BTI_K_ACL, llid, stat, bti_tab + (i ? BP_OFF_RX1 : BP_OFF_RX0),
-                         len > sizeof bti_ring[0].data ? (uint32_t)sizeof bti_ring[0].data : len);
+                         len > sizeof ((struct bti_rx *)0)->data ? (uint32_t)sizeof ((struct bti_rx *)0)->data : len);
             }
         } else {
             bp.bad++;
@@ -448,7 +475,7 @@ static void bp_queue_w(const uint8_t *pdu, uint32_t len, const char *why)
 static void bp_tx_media(struct fm1_br_frame *f)
 {
     uint32_t i, k, n, pass;
-    for (pass = 0; pass < 2u && bp_mq.r != bp_mq.w && bp.txr == bp.txw; pass++) {
+    for (pass = 0; pass < 2u && BTI_MEM_HAVE && bp_mq.r != bp_mq.w && bp.txr == bp.txw; pass++) {
         i = f->txtog & 1u;
         if (!(f->txbufcntl[i] & 1u))
             i ^= 1u;
@@ -458,9 +485,9 @@ static void bp_tx_media(struct fm1_br_frame *f)
         }
         {
             uint32_t q = bp_mq.r % BP_MQ, t;
-            n = bp_mq.n[q];
+            n = BP_MQ_N(q);
             for (k = 0; k < n; k++)
-                bti_tab[(i ? BP_OFF_TXB1 : BP_OFF_TXB0) + k] = bp_mq.d[q][k];
+                bti_tab[(i ? BP_OFF_TXB1 : BP_OFF_TXB0) + k] = BP_MQ_D(q)[k];
             t = n > 183u ? 15u : n > 27u ? 11u : 4u;   /* DH5, DH3, DH1 (BR §5.2) */
             f->txptr[i] = (uint16_t)(i ? BP_OFF_TXB1 : BP_OFF_TXB0);
             f->txphdr[i] = (uint16_t)(n << 3 | 1u << 2 | 2u);   /* LLID 2: an L2CAP start, whole; FLOW 1 */

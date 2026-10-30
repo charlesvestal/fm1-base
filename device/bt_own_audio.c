@@ -190,8 +190,36 @@ static int own_bta_feed(const int32_t *o, uint32_t n)
 }
 
 /* ---- plat.h */
+uint32_t plat_bta_mem_bytes(void)
+{
+#if FM1B_BTA_MEM
+    return BP_MEM_BYTES;
+#else
+    return 0;
+#endif
+}
+int plat_bta_mem(void *p)                         /* (the main loop) */
+{
+#if FM1B_BTA_MEM
+    uint32_t f;
+    if (!p && (bta.mode != BTA_OFF || bti_busy()))
+        return -1;                                /* (still read: the mode on, or the run being let go, bta_stop) */
+    if ((uintptr_t)p & 3u)
+        return -1;
+    f = irq_save();                               /* (neither the audio's interrupt nor the radio's mid-way) */
+    bp_mem_set(p);
+    irq_restore(f);
+    return 0;
+#else
+    return p ? -1 : 0;
+#endif
+}
 void plat_bta_on(int on)
 {
+#if FM1B_BTA_MEM
+    if (on && !BTI_MEM_HAVE)
+        return;                                   /* (no block lent: off, as asked for without one) */
+#endif
     if (on) {
         if (ble_state == BLE_OFF)
             ble_start();                          /* (the radio's start-up and calibration are BLE's: rf_share.h) */
