@@ -14,7 +14,9 @@ the FM-1 restarts and the installed identity is checked.
   fm1_install.py --info [--port NAME]
 
 If the FM-1 is still in update mode (an earlier install was cut off), the
-install finishes the write. Needs mido with python-rtmidi.
+install finishes the write. The FM-1 is found by its port's name (--port: only
+that one), or else by its answer to the screen reader's HELLO, which every
+fm1-base firmware gives (tools/fm1ports.py). Needs mido with python-rtmidi.
 
 Exit codes: 0 done, 1 cancelled or other error, 2 bad arguments or package,
 3 FM-1 not found, 4 connection lost or the device stopped, 5 timeout (no
@@ -28,18 +30,20 @@ import re
 import sys
 import time
 
+import fm1ports
+from fm1ports import PORT_RE, pair_output  # noqa: F401 (the usual port names; an input's output: fm1ports.py)
+
 HS_QUERY = bytes([0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7])
 UPGRADE = bytes([0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7])
 FINISH_CHECK, FINISH_WRITE = 0xE0000000, 0xF0000000
 MAXDATA = 512
 BLOCKS, BLK, KEEP = 20, 0x30, 0x2F
 LOADER_MARK = b"FELUCCA-LOADER-1"
-PORT_RE = re.compile(r"fm-?1|felucca|ota|composite|sinco|usb-midi", re.I)   # never probe other gear
 
 # seconds; the tests shorten them
 DELAY = {"open": 0.3, "start": 2.0, "reply": 0.01, "loader": 3.0, "reboot": 3.0, "retry": 1.0,
          "poll": 1.0, "hs": 1.0, "idle_check": 8.0, "idle_write": 180.0,
-         "wait_loader": 30.0, "wait_reboot": 40.0}
+         "wait_loader": 30.0, "wait_reboot": 40.0, "hello": fm1ports.TIMEOUT}
 
 # M-VAVE's FM1 Open firmware (V10, 2026-10): its updater takes only a package it has been told about
 # first (cmd 49 reads its state, cmd 50 arms it with the image length and the package's SHA-256); then
@@ -221,15 +225,9 @@ class MidoBackend:
     def open(self, in_name, out_name):
         return MidoLink(self, in_name, out_name)
 
-
-def pair_output(name, outs):
-    if name in outs:
-        return name
-    base = re.sub(r"\s+\d+$", "", name)     # Windows numbers each port
-    same = [o for o in outs if re.sub(r"\s+\d+$", "", o) == base]
-    if len(same) == 1:
-        return same[0]
-    return outs[0] if len(outs) == 1 else None
+    def hello(self, skip, asking):
+        """the input names that answer the screen reader's HELLO (fm1ports.ask: one round), but skip(name)'s"""
+        return [f.input for f in fm1ports.ask(self.mido, skip=skip, tries=1, timeout=DELAY["hello"], asking=asking)]
 
 
 # --------------------------------------------------------------- updater ---
@@ -283,6 +281,11 @@ class Updater:
     def __init__(self, backend, port=None):
         self.backend = backend
         self.port = port
+        self.answered = set()               # ports that answered the screen reader's HELLO: asked as usual ones
+        self.asking = fm1ports.Asking()     # each other port sent a HELLO at most three times
+
+    def usual(self, name):
+        return bool(PORT_RE.search(name)) or name in self.answered
 
     def candidates(self, only_port):
         names = self.backend.input_names()
@@ -290,11 +293,29 @@ class Updater:
             mine = [n for n in names if self.port.lower() in n.lower()]
             if only_port:
                 return mine
-            return mine + [n for n in names if n not in mine and PORT_RE.search(n)]
-        return [n for n in names if PORT_RE.search(n)]
+            return mine + [n for n in names if n not in mine and self.usual(n)]
+        return [n for n in names if self.usual(n)]
+
+    def answering(self):
+        """the other ports asked for the screen reader's HELLO (every fm1-base firmware answers it, whatever its port
+        is called; M-VAVE's firmware and the loaders don't) -> the names that answered, asked from then on"""
+        hello = getattr(self.backend, "hello", None)
+        if hello is None:
+            return []
+        got = [n for n in hello(lambda n: self.usual(n) or bool(self.port and self.port.lower() in n.lower()),
+                                self.asking) if n not in self.answered]
+        self.answered.update(got)
+        return got
 
     def find(self, want=None, only_port=True):
-        """the first matching port that answers the handshake (and want(identity))"""
+        """the first matching port that answers the handshake (and want(identity)); when none does, again after
+        asking the other ports for a HELLO (not with only the port asked for)"""
+        dev = self.find_named(want, only_port)
+        if dev or (self.port and only_port) or not self.answering():
+            return dev
+        return self.find_named(want, only_port)
+
+    def find_named(self, want=None, only_port=True):
         outs = self.backend.output_names()
         for name in self.candidates(only_port):
             out = pair_output(name, outs)

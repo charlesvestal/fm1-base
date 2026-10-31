@@ -169,6 +169,9 @@ The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss`
 MASTER, and reads back what the screen says (the screen reader's channel), the last crash and the radio's log; with
 WiFi, it turns it on and off, joins networks and reads its state (`wifi ...`).
 For example, `tools/fm1_remote.py listen tap REC wait 3000 screen log`.
+It finds the FM-1 as the web pages do (`tools/fm1ports.py`, the same rules as `web/fm1ports.js`): a port with an
+FM-1's usual name, or else one that answers the screen reader's HELLO, whatever it is called; `--port NAME` picks one.
+`tools/fm1_install.py`, `fm1_backup.py`, `fm1_mirror.py` and `fm1_debug.py` find it the same way.
 
 The site's installer page (`tools/make_site.py`, from `web/installer.html`) reads the same crash record and log in
 Chrome or Edge: "Report a problem" shows them, ready to copy, so a player can send them without Python. The record

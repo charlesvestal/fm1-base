@@ -36,6 +36,8 @@ run boot-pack sh tests/boot_pack_test.sh               # the boot's LZMA load im
 run announce sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/announce_test tests/announce_test.c && \
     $OUT/announce_test"
 run installer "$PY" tests/install_test.py
+# finding the FM-1 from Python (tools/fm1ports.py, as web/fm1ports.js) and the tools that use it, on a fake mido
+run ports "$PY" tests/ports_test.py
 # the web installer's m-bootloader step (web/fm1ota.js installBoot) against a simulated FM-1, and finding the FM-1 by
 # its port (unusual names, the loader under a new name, M-VAVE's Open firmware, resume's check, package checksums),
 # and writing the resource region after it
