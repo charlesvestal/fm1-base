@@ -183,7 +183,11 @@ int32_t plat_enc(int role)
     return v;
 }
 uint32_t plat_master(void) { return mirror_in_master(master); }
-int plat_battery(void) { return 3; }   /* (the host and the emulator: full) */
+#ifdef __EMSCRIPTEN__
+int plat_battery(void) { return -1; }  /* the browser emulator has no battery: not read, so none is shown */
+#else
+int plat_battery(void) { return 3; }   /* (the host simulator: full) */
+#endif
 /* the lights ("leds"): bright, and dim (glow 0: none); PLAY's green counts as PLAY */
 void plat_lights(uint32_t b, uint32_t k, uint32_t db, uint32_t dk, int glow)
 {

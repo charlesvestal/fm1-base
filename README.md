@@ -32,6 +32,7 @@ parts it has.
 | Bluetooth audio to headphones and speakers (A2DP) | `bt_audio = true`, with `ble_stack = "own"`; `bt_log = true` puts its set-up on the radio's log | `plat_bta_on`, `plat_bta_scan`, `plat_bta_found`, `plat_bta_known`, `plat_bta_pick`, `plat_bta_reconnect`, `plat_bta_forget`, `plat_bta_hangup`, `plat_bta_state` |
 | USB audio: the FM-1 recorded over the cable | on unless `usb_audio_in = false` | nothing: the master output |
 | USB audio: a computer plays through the FM-1 | on unless `usb_audio_out = false` (needs the input too) | nothing: mixed after the app, at MASTER |
+| USB MIDI after the USB audio interfaces, so macOS 13-15 show the audio device | on with the USB audio input, unless `usb_midi_last = false` | nothing |
 | Velocity and pressure from the keys | `#define APP_TOUCH` in app.h | `touch_on`, `touch_poll`, `touch_keys`, `touch_vel`, `touch_pressure` (lib/touch.h) |
 | WiFi: a station on the networks around, with lwIP's sockets | `wifi = true` (not with `ble`, yet), and `net = [...]` for the app's network code | `plat_wifi_on`, `plat_wifi_state`, `plat_wifi_scan`, `plat_wifi_found`, `plat_wifi_join`, `plat_wifi_saved`, `plat_wifi_forget`, `plat_net_task` |
 | A page for Bluetooth MIDI devices: the scan while it's up, the list, SAVE to connect or let go, and what happened in words | `#define APP_BTDEV` in app.h, with `ble_central` | `btdev_page`, `btdev_event`, `btdev_word`, `btdev_found`, `btdev_choose`, `btdev_save`, `btdev_title` (lib/btdev.h) |
@@ -169,10 +170,22 @@ The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss`
 MASTER, and reads back what the screen says (the screen reader's channel), the last crash and the radio's log; with
 WiFi, it turns it on and off, joins networks and reads its state (`wifi ...`).
 For example, `tools/fm1_remote.py listen tap REC wait 3000 screen log`.
+It finds the FM-1 as the web pages do (`tools/fm1ports.py`, the same rules as `web/fm1ports.js`): a port with an
+FM-1's usual name, or else one that answers the screen reader's HELLO, whatever it is called; `--port NAME` picks one.
+`tools/fm1_install.py`, `fm1_backup.py`, `fm1_mirror.py` and `fm1_debug.py` find it the same way.
 
 The site's installer page (`tools/make_site.py`, from `web/installer.html`) reads the same crash record and log in
 Chrome or Edge: "Report a problem" shows them, ready to copy, so a player can send them without Python. The record
 survives a restart, not switching off.
+
+The pages find the FM-1 with `web/fm1ports.js`, under any port name: a port with one of the FM-1's usual names, one
+the player picked (Try), or one that answers the screen reader's HELLO, which every fm1-base firmware does. Only the
+HELLO goes to other ports, three times: its ID, 7D, is the one for non-commercial use, which other gear ignores.
+The [FM-1 Screen Reader](https://github.com/charlesvestal/fm1-reader)'s page uses the same file, as a copy.
+
+The screen reader's firmware side lives here too: `device/announce.c` and `tools/gen_words.py` (MPL-2.0, like the
+rest; see LICENSING.md) are the one copy. fm1-reader keeps the page, the voice, the protocol (its PROTOCOL.md), the audit and the skill, and its
+`tools/sync_announce.sh` copies these two files into the firmwares not on fm1-base.
 
 ## .rfm1: your firmware in host apps
 

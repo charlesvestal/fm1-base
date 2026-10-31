@@ -1,9 +1,10 @@
 #!/bin/sh
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Charles Vestal
-# fm1-base's tests: the platform's pieces on the host (encoder, TRS jack, storage, fastmath, backup and restore, the
-# screen mirror), the tools and web pages for them, the installer against a simulated FM-1, the update path against
-# the template's package (tools/build.py template first), and the template in the simulator (tests/basic.txt).
+# fm1-base's tests: the platform's pieces on the host (encoder, TRS jack, storage, fastmath, the screen reader's
+# announce.c, backup and restore, the screen mirror), the tools and web pages for them, the installer against a
+# simulated FM-1, the update path against the template's package (tools/build.py template first), and the template in
+# the simulator (tests/basic.txt).
 #   tests/run_tests.sh
 set -u
 cd "$(dirname "$0")/.."
@@ -30,7 +31,15 @@ run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-funct
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts
 run fastmath sh -c "$CC -O2 -w -o $OUT/fastmath_test tests/fastmath_test.c -lm && $OUT/fastmath_test"
 run boot-pack sh tests/boot_pack_test.sh               # the boot's LZMA load images (boot_pack = true)
+# the screen reader's firmware side (device/announce.c, the one copy: fm1-reader's tools/sync_announce.sh copies it to
+# the firmwares not on fm1-base): the protocol, the SAY frames, ann_later's settling
+run announce sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/announce_test tests/announce_test.c && \
+    $OUT/announce_test"
 run installer "$PY" tests/install_test.py
+# finding the FM-1 from Python (tools/fm1ports.py, as web/fm1ports.js) and the tools that use it, on a fake mido
+run ports "$PY" tests/ports_test.py
+# the screen reader's words file (tools/gen_words.py): made, and refused over the reader's limits
+run gen-words "$PY" tests/gen_words_test.py
 # the web installer's m-bootloader step (web/fm1ota.js installBoot) against a simulated FM-1, and finding the FM-1 by
 # its port (unusual names, the loader under a new name, M-VAVE's Open firmware, resume's check, package checksums),
 # and writing the resource region after it
@@ -73,8 +82,10 @@ run mirror sh -c "mkdir -p $OUT/mirror && $CC -std=c99 -Wall -Wextra -Werror -Wn
     -Itemplate/build/gen -o $OUT/mirror_test tests/mirror_test.c && $OUT/mirror_test --out $OUT/mirror"
 if command -v node >/dev/null 2>&1; then
     run mirror-viewer node tests/mirror_test.mjs $OUT/mirror
+    # the page finding the FM-1 (web/fm1ports.js): by name, the pick, a HELLO answer on another port; never other gear
+    run mirror-ports node tests/mirror_ports_test.mjs
 else
-    echo "  skip mirror-viewer (no node)"
+    echo "  skip mirror-viewer, mirror-ports (no node)"
 fi
 run mirror-png "$PY" tools/fm1_mirror.py $OUT/mirror.png --from $OUT/mirror/stream.syx
 run template template/build/host/template_host template/tests/basic.txt template/build/host

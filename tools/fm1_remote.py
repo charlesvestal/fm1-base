@@ -4,7 +4,9 @@
 """Drive an FM-1 running an fm1-base firmware over USB-MIDI, as a player would, and read it back: for testing by hand
 or by a program (an agent). Needs mido with python-rtmidi.
 
-  tools/fm1_remote.py COMMAND ...           one or more commands, run in order:
+  tools/fm1_remote.py [--port NAME] COMMAND ...
+  one or more commands, run in order. --port: the FM-1's MIDI port (part of its name); else it is found by its name
+  or by its answer to the screen reader's HELLO (tools/fm1ports.py), whatever its port is called:
     press BTN | release BTN | tap BTN       a button (FX SEL ENV LFO EDIT GLO HOME SAVE ARP SEQ PLAY REC OCT- OCT+)
     key K down | key K up | tapkey K        a key, 0..26 (0 = F3), as pressed (no velocity reading)
     turn ENC N                              an encoder, N detents (SELECT ALGO PRESET K1 K2 K3 K4)
@@ -38,6 +40,8 @@ import time
 
 import mido
 
+import fm1ports
+
 BTN = ["FX", "SEL", "ENV", "LFO", "EDIT", "GLO", "HOME", "SAVE", "ARP", "SEQ", "PLAY", "REC", "OCT-", "OCT+"]
 ENC = ["SELECT", "ALGO", "PRESET", "K1", "K2", "K3", "K4"]
 LC, LG, LW, SR = [0x7D, 0x4C, 0x43], [0x7D, 0x4C, 0x47], [0x7D, 0x4C, 0x57], [0x7D, 0x53, 0x52]
@@ -54,12 +58,11 @@ def nibbles(text):
 
 
 class FM1:
-    def __init__(self):
-        names = [n for n in mido.get_output_names() if "FM-1" in n]
-        if not names:
-            raise SystemExit("no FM-1 on USB-MIDI")
-        self.out = mido.open_output(names[0])
-        self.inp = mido.open_input([n for n in mido.get_input_names() if "FM-1" in n][0])
+    def __init__(self, port=None):
+        try:
+            self.inp, self.out, self.name = fm1ports.connect(port, mido=mido)
+        except LookupError as e:
+            raise SystemExit(f"fm1_remote: {e}")
         self.btn = self.keys = 0
         self.listening = False
 
@@ -206,7 +209,14 @@ class FM1:
                 raise SystemExit(f"unknown command {c!r}\n\n{__doc__}")
 
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
+def main(argv):
+    port = None
+    if argv[:1] == ["--port"] and len(argv) > 1:
+        port, argv = argv[1], argv[2:]
+    if not argv:
         sys.exit(__doc__)
-    FM1().run(sys.argv[1:])
+    FM1(port).run(argv)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

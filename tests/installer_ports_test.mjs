@@ -18,8 +18,10 @@ const image = logicalImage(new Uint8Array(fs.readFileSync(process.argv[2])));
 
 // one WebMIDI port pair that a device can appear on and leave
 function port(name) {
+  const ears = new Set();
   const p = {
-    input: { name, state: "disconnected", open: async () => {}, onmidimessage: null },
+    input: { name, state: "disconnected", open: async () => {}, onmidimessage: null, ears,
+             addEventListener: (t, f) => ears.add(f), removeEventListener: (t, f) => ears.delete(f) },
     output: { name, state: "disconnected", open: async () => {}, send: (b) => { if (p.output.state !== "connected") throw new Error("gone"); p.rx && p.rx(Array.from(b)); } },
     up(rx) { p.rx = rx; p.input.state = p.output.state = "connected"; },
     down() { p.rx = null; p.input.state = p.output.state = "disconnected"; },
@@ -38,7 +40,10 @@ class Dev {
     this.p = p; this.ident = ident;
     p.up((d) => this.rx(d));
   }
-  tx(bytes) { const p = this.p; setTimeout(() => p.input.onmidimessage && p.input.onmidimessage({ data: Uint8Array.from(bytes) }), 1); }
+  tx(bytes) {
+    const p = this.p, e = { data: Uint8Array.from(bytes), target: p.input };
+    setTimeout(() => { p.input.ears.forEach((f) => f(e)); p.input.onmidimessage && p.input.onmidimessage(e); }, 1);
+  }
   request(addr, len) {
     this.waiting = addr;
     const u = [0, 0x59, 0x30, 8, 0, 0, 0, addr & 0xFF, (addr >>> 8) & 0xFF, (addr >>> 16) & 0xFF, (addr >>> 24) & 0xFF, len & 0xFF, len >> 8, 0];
@@ -48,6 +53,10 @@ class Dev {
   }
   rx(d) {
     const j = d.join();
+    if (d[1] === 0x7D && d[2] === 0x53 && d[3] === 0x52) {     // the screen reader's HELLO: an fm1-base firmware answers
+      if (d[4] === 1 && this.reader) this.tx([0xF0, 0x7D, 0x53, 0x52, 1, 1, ...[...this.reader].map((c) => c.charCodeAt(0)), 0, 0xF7]);
+      return;
+    }
     if (j === HS) {
       this.asked++;
       const t = [...this.ident].map((c) => c.charCodeAt(0));
@@ -127,7 +136,28 @@ for (const [back, want] of [["FM-1_7010400", "done"], ["FM-1_7010300", "mismatch
   check(want === "done" ? got === true && !err : err && err.code === "mismatch", `resume, back as ${back}: ${want}`);
 }
 
-// 5. the package's checksums
+// 5. an fm1-base firmware under an unusual name answers the screen reader's HELLO: the install finds it without Try;
+// the loopback and the other gear get three HELLOs, never the identity query
+{
+  const a = port("Arturia KeyStep"), b = port("SMK-37 Pro"), iac = port("IAC Driver Bus 1"), l = port("JL-USB Audio");
+  const PRODUCT = "FM-1_7010400";
+  const dev = new Dev(a, "FM-1_7010300", [[l, "ota-FM-1_1"], [a, PRODUCT]]);
+  dev.reader = "AMB-1 1.3";
+  const toB = [], toIac = [];
+  b.up((d) => toB.push(d.join()));
+  iac.up((d) => { toIac.push(d.join()); setTimeout(() => iac.input.ears.forEach((f) => f({ data: Uint8Array.from(d), target: iac.input })), 1); });
+  const up = new Updater(midi([iac, b, a, l]));
+  check(!(await up.find(null)), "not found by its name");
+  let got = null, err = null;
+  try { got = await up.install(image, PRODUCT, () => {}); } catch (e) { err = e; }
+  check(!err && got === PRODUCT, `found by its HELLO answer, installed (${err ? err.code + " " + err.message : got})`);
+  check(up.answered.has("Arturia KeyStep") && !up.answered.has("IAC Driver Bus 1"), "answered: the FM-1, not the loopback");
+  const HELLO = [0xF0, 0x7D, 0x53, 0x52, 1, 1, 0xF7].join();
+  check(toB.length === 3 && toB.every((x) => x === HELLO) && toIac.length === 3 && toIac.every((x) => x === HELLO),
+        "other gear and the loopback: three HELLOs, nothing else");
+}
+
+// 6. the package's checksums
 {
   let ok = true;
   try { checkUfw(image); } catch (_) { ok = false; }

@@ -17,7 +17,9 @@ import zlib from "zlib";
 import { fileURLToPath } from "url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const FILL = { NAME: "Template", ID: "FM-1_11", MAGIC: "TSTB", BACKUP_VERSION: "3", EXT: "bak", HOLDS: "everything", EXTRA: "", EXTRAS_JS: "const EXTRAS = [];", TERMINAL: "" };
+// fm1ports.js as tools/make_site.py inlines it (strip_module: no export, no import)
+const PORTS_JS = fs.readFileSync(path.join(root, "web/fm1ports.js"), "utf8").replace(/^export\s+/gm, "").replace(/^import .*?;\n/gm, "");
+const FILL = { NAME: "Template", ID: "FM-1_11", MAGIC: "TSTB", BACKUP_VERSION: "3", EXT: "bak", HOLDS: "everything", EXTRA: "", EXTRAS_JS: "const EXTRAS = [];", TERMINAL: "", PORTS_JS };
 let html = fs.readFileSync(path.join(root, "web/backup/index.html"), "utf8");
 html = html.replace(/\{\{([A-Z_]+)\}\}/g, (m, k) => (k in FILL ? FILL[k] : m));
 const unfilled = html.match(/\{\{[A-Z_]+\}\}/g);
@@ -244,17 +246,41 @@ const resealed = (b) => {                                      // its CRCs right
 {
   // an FM-1 under another device's name: not asked; listed for Try; asked once picked (allowed), or alone (only)
   const dev = new FakeFM1(img);
-  const port = (name) => ({ name, state: "connected", open: async () => {} });
+  const sent = {};
+  const port = (name) => ({ name, state: "connected", open: async () => {}, addEventListener() {}, removeEventListener() {},
+                            send: (b) => (sent[name] = sent[name] || []).push(b) });
   const acc = { inputs: new Map([["i", port("Arturia KeyStep")], ["j", port("Launchkey Mini")], ["k", port("IAC Bus 1")]]),
                 outputs: new Map([["o", port("Arturia KeyStep")], ["p", port("Launchkey Mini")]]) };
   let made = 0;
   let e = await err(PB.find(acc, () => { made++; return dev; }));
   check(e && e.code === "notfound" && made === 0, "a port with another device's name: not asked");
+  check(Object.values(sent).every((l) => l.length === 3 && l.every((b) => b.join() === "240,125,83,82,1,1,247")),
+        "  only the screen reader's HELLO goes to it, three times");
   check(PB.others(acc).join() === "Arturia KeyStep,Launchkey Mini", "others: the pairs are listed to try (an input alone is not)");
   const one = await PB.find(acc, () => dev, [], "Arturia KeyStep");
   check(one && one.name === "Arturia KeyStep", "Try: asked alone, it answers");
   const got = await PB.find(acc, () => dev, ["Arturia KeyStep"]);
   check(got && got.name === "Arturia KeyStep" && PB.others(acc, ["Arturia KeyStep"]).join() === "Launchkey Mini", "picked: found from then on, no longer listed");
+}
+{
+  // an FM-1 under another device's name that answers the screen reader's HELLO (every fm1-base firmware): found without
+  // picking it; a loopback (an IAC bus: the HELLO comes back as it went) and other gear are never sent the identity query
+  const dev = new FakeFM1(img);
+  const port = (name, answer) => {
+    const ears = new Set(), sent = [];
+    const input = { name, state: "connected", open: async () => {}, addEventListener: (t, f) => ears.add(f), removeEventListener: (t, f) => ears.delete(f) };
+    const hear = (b) => setTimeout(() => ears.forEach((f) => f({ data: Uint8Array.from(b), target: input })), 1);
+    const output = { name, state: "connected", open: async () => {}, send: (b) => { sent.push(b); answer && answer(Array.from(b), hear); } };
+    return { input, output, sent };
+  };
+  const fm1 = port("Arturia KeyStep", (b, hear) => b[4] === 1 && hear([0xF0, 0x7D, 0x53, 0x52, 1, 1, ...Buffer.from("Template 1.0"), 0, 0xF7]));
+  const iac = port("IAC Bus 1", (b, hear) => hear(b)), other = port("Launchkey Mini");
+  const all = [iac, other, fm1];
+  const acc = { inputs: new Map(all.map((p, i) => ["i" + i, p.input])), outputs: new Map(all.map((p, i) => ["o" + i, p.output])) };
+  const linked = [];
+  const got = await PB.find(acc, (i) => { linked.push(i.name); return dev; });
+  check(got && got.name === "Arturia KeyStep" && linked.join() === "Arturia KeyStep", "an FM-1 answering HELLO on another device's port: found, and only it asked");
+  check(iac.sent.length === 3 && other.sent.length === 3 && fm1.sent.length === 1, "  the loopback and the other gear: three HELLOs, nothing more");
 }
 {
   // the firmware's own sections after the backup (EXTRAS): the page's join and split against fm1_backup.py's

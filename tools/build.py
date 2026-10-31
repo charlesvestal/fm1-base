@@ -47,7 +47,16 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   usb_audio_out = true       a computer plays through the FM-1 over USB (FM1B_UAC_OUT; the default: true)
   usb_audio_first = true     the USB audio streaming interfaces listed first in the audio control collection
                              (felucca-bsp FELUCCA_UAC_AS_FIRST, from Felucca 1.5.1): macOS then shows the FM-1 as an audio
-                             device beside its MIDI; bcdDevice +0.08 (a changed device to the computer)
+                             device beside its MIDI; bcdDevice +0.08 (a changed device to the computer). Not enough
+                             for macOS 13-15 (fm1-loom#7, Felucca #67): usb_midi_last is; with it this changes nothing
+  usb_midi_last = false      the USB MIDI interface after the audio streaming ones (felucca-bsp FELUCCA_UAC_MIDI_LAST;
+                             the default: true, with usb_audio_in): audio control, audio in, audio out, MIDI, and the
+                             audio control collection in that order. macOS 13-15 show no USB audio device while MIDI is
+                             interface 1, between audio control and audio streaming (bisected by darosh on macOS 15.8.1);
+                             bcdDevice +0.80. false: the order of fm1-base before 2026-10-31 (MIDI interface 1).
+                             2: MIDI left out of the collection too (a test build: no USB MIDI on Linux)
+  usb_iad = true             without the USB console, an interface association descriptor over the audio function, the
+                             device then misc / IAD (felucca-bsp FELUCCA_UAC_IAD; the default: false); bcdDevice +2.00
   usb_host = true            the USB port as a MIDI host when the app asks (FM1B_USB_HOST: felucca-bsp's
                              FELUCCA_USB_HOST, docs/USB_HOST.md; plat_usb_host in plat.h): a USB-MIDI controller or
                              synth, directly or behind one powered hub (the FM-1 gives no power). Boot is a device
@@ -629,6 +638,12 @@ def build_app():
             flags.append(f"-D{flag}={int(bool(CONF[key]))}")
     if CONF.get("usb_audio_first"):
         flags.append("-DFELUCCA_UAC_AS_FIRST=1")
+    midi_last = CONF.get("usb_midi_last", True)   # (the bsp leaves it out without the USB audio input)
+    if midi_last not in (True, False, 0, 1, 2):
+        raise SystemExit(f"fm1.toml: usb_midi_last is true, false or 2, not {midi_last!r}")
+    flags.append(f"-DFELUCCA_UAC_MIDI_LAST={int(midi_last)}")
+    if CONF.get("usb_iad"):
+        flags.append("-DFELUCCA_UAC_IAD=1")
     for flag in ("FM1B_CDC", "FM1B_UAC", "FM1B_UAC_OUT", "FM1B_TRS"):
         v = os.environ.get(flag)    # unset: fm1.toml's, the app's (app.h) or the platform's default (device/unity.c)
         if v in ("0", "1"):

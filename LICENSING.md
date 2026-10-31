@@ -21,6 +21,13 @@ A firmware on fm1-base's own Bluetooth stack (`ble_stack = "own"`) links none of
 | `device/bt_own.c`, `device/bt_own_central.c`, `device/bt_own_audio.c` (the glue between the own stack and the platform) | Charles Vestal | his own |
 | felucca-bsp's radio drivers (`bsp/chip/fm1_ble.h`, `fm1_ble_rf.h`, `fm1_bredr.h`) | Optimist, by Henri David | MPL-2.0 there, from the same offer (`bsp/NOTICE`) |
 
+The screen reader's firmware side, `device/announce.c` and `tools/gen_words.py` (Charles Vestal's, from
+[fm1-reader](https://github.com/charlesvestal/fm1-reader), where they were MIT), is MPL-2.0 like the rest, and
+fm1-base holds their one copy. The older firmwares that are not on fm1-base (X0X, FoMni-1, MONK-1 and Mocky, which are
+GPL) carry copies made before, which stay under their repositories' licences until fm1-reader's
+`tools/sync_announce.sh` copies them again. MPL-2.0 is compatible with the GPL (its section 3.3), so the new copies
+can go into those firmwares too.
+
 ## The own Bluetooth stack's other parts
 
 Not everything an own-stack build uses is MPL-2.0. These parts keep their own licences, and their files keep their
