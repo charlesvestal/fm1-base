@@ -12,7 +12,7 @@ FoMni-1, X0X, CTL-1 and the other firmwares share today, made into one maintaine
 | --- | --- |
 | Leo Kuroshita's code from Felucca | his permission, recorded in hugelton/felucca-bsp#4; his name in `CREDITS.md` |
 | Charles Vestal's code (the firmwares' platform layer: X0X, FoMni and the rest) | his own |
-| keremimo's code | only what he has agreed to on the record (felucca-bsp#3; the second-core start once its PR has his comment) |
+| keremimo's code | only what he has agreed to on the record (felucca-bsp#3; the second-core start once its PR has his comment; Melodee's code, 2026-10-31: LICENSING.md) |
 
 Nothing else goes in: no code by other Felucca contributors, no GPL code from anywhere. Every imported file's history
 is checked first (its authors in git and, for files from Felucca, Felucca's README credits). Third-party material keeps its

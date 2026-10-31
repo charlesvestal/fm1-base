@@ -64,6 +64,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              hash of the sources, lifts that bar for a new build
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
 app.h); the build prints what it has.
+  boot_pack = true           .ram_text and .data stored LZMA-packed (tools/boot_pack.py, Melodee's; device/boot_lzma.h): the
+                             boot unpacks them, the decoder's tables in the pool before it is cleared (about 9 KB of
+                             flash back on a large app)
   ble_stack = "own"          with ble: Optimist's own Bluetooth stack (bt/: Henri David's, docs/bt/BLE-STACK.md;
                              FM1B_BLE_OWN) instead of JieLi's libraries: nothing of the SDK's linked, no shim
   ble_pairing = true         with ble_stack = "own": pairing and an encrypted link (LE legacy pairing, Just Works),
@@ -114,6 +117,7 @@ APP = OUT = GEN = LDR = ROOT = None               # set by main() from APP_DIR
 CONF = {}
 sys.path.insert(0, str(SRC / "tools"))
 import fm1pkg_make  # noqa: E402
+import boot_pack  # noqa: E402
 import lz4blk  # noqa: E402
 
 APP_XIP = 0x02000120                # app.bin offset 0 in the XIP map; the SPL jumps here
@@ -550,6 +554,9 @@ def radio_units():
 
 
 
+BOOT_PACKED = None                                # (raw, packed) bytes of the boot-packed load images, or None
+
+
 def build_app():
     flags = [*CFLAGS, *FPU, *inc(BSP / "chip", BSP / "boards" / "fm1", SRC / "device", SRC / "include", SRC / "lib", APP, GEN,
                                  *(APP / d for d in CONF.get("include", []) + CONF.get("device_include", [])))]
@@ -656,6 +663,19 @@ def build_app():
     def symv(name):
         return int(re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M).group(1), 16)
     img = bytearray((OUT / "text.bin").read_bytes())
+    if CONF.get("boot_pack"):                     # boot_pack = true: .ram_text and .data stored LZMA-packed from _rt_load
+        global BOOT_PACKED                        # (tools/boot_pack.py, Melodee's), main_fm1.c unpacks them
+        raw = [(OUT / sect).read_bytes() if (OUT / sect).exists() else b"" for sect in boot_pack.SECTIONS]
+        load = symv("_rt_load")
+        if load % 4 or load - APP_XIP < len(img):
+            raise SystemExit(f"_rt_load {load:#x}: not word aligned, or over the image")
+        img += b"\xff" * (load - APP_XIP - len(img))
+        packed = boot_pack.pack_images(raw)
+        img += packed
+        BOOT_PACKED = (sum(map(len, raw)), len(packed))
+        img += b"\xff" * (-len(img) % 4)
+        (OUT / (NAME + ".bin")).write_bytes(img)
+        return bytes(img), syms, dis, rt
     # .ram_text and .data follow .text at their load addresses; crt0 copies them by words
     for sect, lname in (("ramtext.bin", "_rt_load"), ("data.bin", "_data_load")):
         load = symv(lname)
@@ -783,6 +803,9 @@ def check(img, syms, dis, rt):
     if os.environ.get("FM1B_POOL_SPARE", "").isdigit():   # an app's own build for itself (a demo build with mirror)
         spare = int(os.environ["FM1B_POOL_SPARE"])
     notes.append(f"image {len(img)} B; RAM .data+.bss {bss} B of {ram}; pool {pool} B of {pool_max}")
+    if BOOT_PACKED:                               # the boot decoder runs from the flash alone (tools/boot_pack.py)
+        errors += boot_pack.check_decoder(syms, dis, APP_XIP, APP_XIP + APP_SLOT)
+        notes.append(f"boot_pack: .ram_text + .data {BOOT_PACKED[0]} B stored as {BOOT_PACKED[1]} B (LZMA, unpacked at boot)")
     if bss > ram:
         errors.append("RAM region overflow")
     if pool_max - pool < spare:                   # keep some of the pool spare
