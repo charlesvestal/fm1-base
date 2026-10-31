@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MPL-2.0
- * Copyright (C) 2026 Charles Vestal (from fm1-reader, where it was MIT) */
+ * Copyright (C) 2026 Charles Vestal (from fm1-reader) */
 /* device/announce.c on the host: the screen reader's protocol (fm1-reader PROTOCOL.md: silent until a HELLO, the
  * answer, a reader gone after 5 s, BYE, WHERE), the SAY frames (flags, cut at a word, 7-bit), and ann_later's
  * settling. (The words: fm1-reader's tests/words_test.mjs.)

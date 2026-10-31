@@ -182,8 +182,8 @@ the player picked (Try), or one that answers the screen reader's HELLO, which ev
 HELLO goes to other ports, three times: its ID, 7D, is the one for non-commercial use, which other gear ignores.
 The [FM-1 Screen Reader](https://github.com/charlesvestal/fm1-reader)'s page uses the same file, as a copy.
 
-The screen reader's firmware side lives here too: `device/announce.c` and `tools/gen_words.py` (MIT) are the one
-copy. fm1-reader keeps the page, the voice, the protocol (its PROTOCOL.md), the audit and the skill, and its
+The screen reader's firmware side lives here too: `device/announce.c` and `tools/gen_words.py` (MPL-2.0, like the
+rest; see LICENSING.md) are the one copy. fm1-reader keeps the page, the voice, the protocol (its PROTOCOL.md), the audit and the skill, and its
 `tools/sync_announce.sh` copies these two files into the firmwares not on fm1-base.
 
 ## .rfm1: your firmware in host apps

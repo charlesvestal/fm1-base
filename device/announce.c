@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: MIT
+/* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Charles Vestal */
 /* Announce: what the screen says, for a screen reader on the computer (fm1-reader: a page that speaks it,
  * or hands it to the computer's own screen reader). Shared by the FM-1 firmwares, one copy: fm1-base's
