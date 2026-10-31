@@ -826,8 +826,9 @@ static void safe_main(void)
             uint32_t n;
             if (ota_frame_get(&p, &n) && log_frame(p, n))
                 ota_frame_done();
+            else
+                ota_service();                      /* (only at a frame the log didn't take) */
         }
-        ota_service();
         if (usb.ota_req) {
             usb.ota_req = 0;
             if (flash_ok)
@@ -863,6 +864,7 @@ static void fm1_main(void)
     int32_t knob = 512 * 16;
     uint32_t batt_t = 0;                            /* (the battery's last reading, fm1_ms) */
     uint32_t last_frame = 0;
+    int took;                                       /* a SysEx frame taken this pass (not the updater's) */
     {
         uint32_t f = irq_save();
         rails_boot[0] = fm1_p33_read(FM1_P3_ANA_CON6);
@@ -995,9 +997,11 @@ static void fm1_main(void)
 #ifdef APP_LOOP
         app_loop();                                 /* the app's background (a radio's tasks) */
 #endif
-        {   /* a screen reader's SysEx (announce.c), before the updater looks */
+        {   /* a screen reader's SysEx (announce.c), before the updater looks; the updater only at a frame none took
+             * (the next one waiting, else, would be its own, dropped if not) */
             const uint8_t *p;
             uint32_t n;
+            took = 0;
             if (ota_frame_get(&p, &n) && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || remote_frame(p, n)
 #if FM1B_WIFI
                                           || wifi_frame(p, n)
@@ -1011,11 +1015,14 @@ static void fm1_main(void)
 #ifdef APP_SYSEX
                                           || app_sysex(p, n)
 #endif
-                                          ))
+                                          )) {
                 ota_frame_done();
+                took = 1;
+            }
         }
         fm1b_dbg.stage = 4;
-        usb_cmd(ota_service());                     /* M-UPGRADE handshake; the commands in its framing (backup,
+        if (!took)
+            usb_cmd(ota_service());                 /* M-UPGRADE handshake; the commands in its framing (backup,
                                                      * mirror, the app's); other SysEx is dropped */
 #if FM1B_BACKUP
         bu_step();                                  /* a backup streaming to the host */
