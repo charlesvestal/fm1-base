@@ -535,6 +535,11 @@ $("backup").addEventListener("click", async () => {
   }
 });
 
+// iOS turns accept into file types and has none for our extension, so it greys the backup out in Files: no filter
+// there (a wrong file is said on choosing it). iPadOS calls itself MacIntel, with touch.
+if (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1))
+  $("file").removeAttribute("accept");
+
 $("file").addEventListener("change", async (e) => {
   picked = null;
   const f = e.target.files && e.target.files[0];
