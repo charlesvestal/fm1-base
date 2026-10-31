@@ -23,6 +23,8 @@
  *                                stand-in stack is ready a second after the start)
  *   wav FILE | wavstop           start / stop recording the output
  *   peakreset                    restart the output peak (expect peak_db_min / peak_db_max)
+ *   usbtone HZ                   the computer plays a sine over USB audio at half of full level (0: silence): the
+ *                                app's input with plat_usb_audio_route on
  *   shot FILE.png                save the screen
  *   leds                         print the lit buttons and keys (keys: # bright, + dim)
  *   out                          print the MIDI sent since the last "out" (and forget it; clocks not shown)
@@ -525,6 +527,12 @@ int plat_host_read(uint32_t addr, uint8_t *dst, uint32_t n) { (void)addr, (void)
 void plat_host_patience(uint32_t try_ms, uint32_t total_ms) { (void)try_ms, (void)total_ms; }
 static int uac_full;                            /* plat_usb_audio_full: the render at full level, MASTER after it */
 void plat_usb_audio_full(int on) { uac_full = on != 0; }
+/* USB audio output as the app's input: a computer playing a sine (usbtone HZ, 0 silence) at half of full level */
+static int uac_route;
+static const int32_t *uac_in_now;
+static double usb_tone_hz, usb_tone_ph;
+void plat_usb_audio_route(int on) { uac_route = on != 0; }
+const int32_t *plat_usb_audio_in(void) { return uac_in_now; }
 
 /* flash: one buffer per object, kept across a simulated reboot */
 static uint8_t store[OBJ_NOBJ][PLAT_STORE_MAX];
@@ -985,7 +993,16 @@ static void sim_render(int32_t *blk)            /* one APP_BLOCK-frame block, as
 {
     double t0 = now_ns(), dt;
     uint32_t k;
+    if (uac_route) {                            /* the computer's audio the app's input */
+        static int32_t in[2u * APP_BLOCK];
+        for (k = 0; k < APP_BLOCK; k++) {
+            in[2u * k] = in[2u * k + 1u] = usb_tone_hz > 0.0 ? (int32_t)(4194303.0 * sin(usb_tone_ph)) : 0;
+            usb_tone_ph = fmod(usb_tone_ph + 6.283185307179586 * usb_tone_hz / 44100.0, 6.283185307179586);
+        }
+        uac_in_now = in;
+    }
     app_render(blk, APP_BLOCK, uac_full ? 4096u : APP_GAIN(master));
+    uac_in_now = 0;
     if (uac_full) {                             /* (the USB audio input took it at full level) the speaker: MASTER */
         const float g = (float)APP_GAIN(master) * (1.0f / 4096.0f);
         for (k = 0; k < 2u * APP_BLOCK; k++)
@@ -1423,6 +1440,8 @@ int main(int argc, char **argv)
             wav_close();
         else if (!strcmp(cmd, "peakreset"))
             peak_out = 0.0f;
+        else if (!strcmp(cmd, "usbtone"))          /* usbtone HZ: the computer plays a sine over USB audio (0: silence) */
+            usb_tone_hz = atof(a);
         else if (!strcmp(cmd, "shot")) {
             snprintf(out, sizeof out, "%s/%s", dir, a);
             png_write(out);
