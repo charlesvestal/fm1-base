@@ -217,6 +217,9 @@ up = updater([iac, other])
 for _ in range(5):
     up.find(only_port=False)                           # (wait_for asks again and again)
 ok(iac.sent == [HELLO] * 3 and other.sent == [HELLO] * 3, "  no FM-1, asked again and again: three HELLOs at most")
+up2 = I.Updater(up.backend)
+up2.find(only_port=False)                              # (fm1_backup.find: a new Updater each try)
+ok(other.sent == [HELLO] * 3, "  a new Updater on the same backend: none more")
 
 dev = Dev("Arturia KeyStep", answer=fm1("Template 1.0", identity="FM-1_1100"))
 up = updater([dev], port="Launch")

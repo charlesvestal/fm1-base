@@ -215,6 +215,8 @@ class MidoBackend:
     def __init__(self):
         import mido
         self.mido = mido
+        self.answered = set()               # ports that answered the screen reader's HELLO (Updater.answering),
+        self.asking = fm1ports.Asking()     # and how often each other one was asked: for every Updater on it
 
     def input_names(self):
         return list(dict.fromkeys(self.mido.get_input_names()))
@@ -281,8 +283,12 @@ class Updater:
     def __init__(self, backend, port=None):
         self.backend = backend
         self.port = port
-        self.answered = set()               # ports that answered the screen reader's HELLO: asked as usual ones
-        self.asking = fm1ports.Asking()     # each other port sent a HELLO at most three times
+        # ports that answered the screen reader's HELLO, asked as usual ones; each other port sent a HELLO at most
+        # three times. The backend's, when it keeps them: the same for every Updater on it (fm1_backup.find makes one
+        # a try)
+        self.answered = getattr(backend, "answered", None)
+        self.answered = set() if self.answered is None else self.answered
+        self.asking = getattr(backend, "asking", None) or fm1ports.Asking()
 
     def usual(self, name):
         return bool(PORT_RE.search(name)) or name in self.answered
