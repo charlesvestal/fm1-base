@@ -20,6 +20,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   usb_product = "..."
   o2 = ["dsp/engine.c"]      separate units compiled at -O2 (the app's DSP), relative to APP_DIR (globs too); each with
                              its own directory on the include path
+  unity_opt = "z"            the unity build (the platform, the app but its o2 units) at -Oz instead of -Os: smaller,
+                             a little slower (what runs in the audio interrupt outside the o2 units, too)
   o2_cflags = ["-DX=1"]      more flags for those; o2_include = ["lib/prefix.h"]: a header included first in each
   include = ["dsp/lib"]      more include directories, relative to APP_DIR
   device_include = ["inc"]   include directories for the firmware only (headers the toolchain lacks)
@@ -657,6 +659,10 @@ def build_app():
     if CPU2:
         flags += ["-DFM1_CPU1=1", f"-DFM1B_BUILD={build_id():#010x}u", f"-DFM1_CPU1_FALLBACK={int(bool(CONF.get('cpu2_fallback')))}"]
     o2 = [f if f != "-Os" else "-O2" for f in flags]
+    unity_opt = CONF.get("unity_opt", "s")        # the unity build's level: -Os, or -Oz (the o2 units stay -O2)
+    if unity_opt not in ("s", "z"):
+        raise SystemExit(f"fm1.toml: unity_opt is \"s\" or \"z\", not {unity_opt!r}")
+    flags = [f"-O{unity_opt}" if f == "-Os" else f for f in flags]
     ir = CONF.get("ir_pass")                      # the app's pass over the IR (see the top)
     ir_out = ["-S", "-emit-llvm", "-Xclang", "-disable-llvm-optzns"] if ir else []
     units = [("cc", "-c", BSP / "chip" / "crt0.S", "-o", OUT / "crt0.o"),
@@ -697,7 +703,7 @@ def build_app():
             ir_pass(o.with_suffix(".ll"), o.with_suffix(".pass.ll"), str(f.relative_to(APP)))
         opt = [f for f in flags if not f.startswith(("-I", "-D", "-W"))]
         tc_all(("cc", *opt, "-c", OUT / "unity.pass.ll", "-o", OUT / "unity.o"),
-               *[("cc", *[f if f != "-Os" else "-O2" for f in opt], "-c", o.with_suffix(".pass.ll"), "-o", o)
+               *[("cc", *[f if f not in ("-Os", "-Oz") else "-O2" for f in opt], "-c", o.with_suffix(".pass.ll"), "-o", o)
                  for _, o in o2_units])
     elf = OUT / (NAME + ".elf")
     # unreferenced functions (each in its own section: -ffunction-sections) are dropped: the DSP keeps
