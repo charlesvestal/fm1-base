@@ -29,6 +29,14 @@ enum { OBJ_PROJ, OBJ_PANEL, OBJ_SONGS, OBJ_PAT0, OBJ_NOBJ = OBJ_PAT0 + 16 };
 #define APP_BACKUP_OBJS {OBJ_PROJ, OBJ_SONGS, OBJ_PAT0, OBJ_PAT0 + 1, OBJ_PAT0 + 2, OBJ_PAT0 + 3, OBJ_PAT0 + 4, \
                          OBJ_PAT0 + 5, OBJ_PAT0 + 6, OBJ_PAT0 + 7, OBJ_PAT0 + 8, OBJ_PAT0 + 9, OBJ_PAT0 + 10, \
                          OBJ_PAT0 + 11, OBJ_PAT0 + 12, OBJ_PAT0 + 13, OBJ_PAT0 + 14, OBJ_PAT0 + 15}
+#ifdef BACKUP_TEST_POOL                 /* the same app with its songs and slots in a pool (storage.c APP_STORE_POOL) */
+#define APP_STORE_POOL
+#define APP_STORE_POOL_BASE 0x97000u
+#define APP_STORE_POOL_N 24u
+#define APP_STORE_POOL_OLD 34u
+#define APP_STORE_POOL_OBJ0 OBJ_SONGS
+#define APP_STORE_POOL_OBJN 17u
+#endif
 #define APP_BACKUP_MAGIC 0x42545354u     /* "TSTB" */
 #define APP_BACKUP_VERSION 3u
 
@@ -97,6 +105,10 @@ static void ota_commit(const uint8_t *parm) { (void)parm; }
 
 static int in_store(uint32_t off, uint32_t n)     /* the 18 objects' sectors, the journal record's */
 {
+#ifdef APP_STORE_POOL
+    if (off >= APP_STORE_POOL_BASE && off + n <= APP_STORE_POOL_BASE + APP_STORE_POOL_OLD * ST_SECTOR)
+        return 1;
+#endif
     for (uint32_t i = 0; i < BU_NOBJ; i++) {
         uint32_t b = st_sector(bu_obj(i), 0);
         if (off >= b && off + n <= b + 2u * ST_SECTOR)
@@ -254,6 +266,11 @@ int main(int argc, char **argv)
         st_erase(st_sector(bu_obj(i), 1));
     }
     st_erase(RS_REC);
+#ifdef APP_STORE_POOL
+    for (uint32_t i = 0; i < APP_STORE_POOL_OLD; i++)
+        st_erase(APP_STORE_POOL_BASE + i * ST_SECTOR);
+    st_pool_boot();
+#endif
     memset(nor + st_sector(OBJ_PANEL, 0), 0x33, sizeof panel_was);   /* the calibration: never touched */
     memcpy(panel_was, nor + st_sector(OBJ_PANEL, 0), sizeof panel_was);
 
@@ -484,6 +501,26 @@ int main(int argc, char **argv)
             }
             cut_at = -1;
             rs_boot();                            /* the next power-on */
+#ifdef APP_STORE_POOL
+            st_pool_scan = APP_STORE_POOL_OLD;
+            st_pool_boot();
+            snap(&now);
+            for (uint32_t i = 0; i < BU_NOBJ; i++)   /* each object whole: A's, B's or absent */
+                if (!(now.n[i] < 0 || (now.n[i] == set_a.n[i] && !memcmp(now.d[i], set_a.d[i], (size_t)now.n[i])) ||
+                      (now.n[i] == set_b.n[i] && !memcmp(now.d[i], set_b.d[i], (size_t)now.n[i]))))
+                    mixed++;
+            if (same(&now, &set_a))
+                n_new++;
+            else
+                n_old++;
+            answer = 1;                               /* restored again: the backup whole */
+            ops = 0;
+            if (restore() != 0)
+                mixed++;
+            snap(&now);
+            if (!same(&now, &set_a))
+                mixed++;
+#else
             snap(&now);
             if (same(&now, &set_a))
                 n_new++;
@@ -491,13 +528,18 @@ int main(int argc, char **argv)
                 n_old++;
             else
                 mixed++;
+#endif
             if (nor[RS_REC] != 0xFF)
                 mixed++;
         }
         cut_at = -1;
         printf("  %d flash writes a restore: cut before the record %d (old), after %d (new, finished at boot)\n", total,
                n_old, n_new);
+#ifdef APP_STORE_POOL
+        check("pool: a cut at each write: every object whole; restoring again gives the backup", !mixed && n_old);
+#else
         check("a power cut at each write: the old set or the new, whole, never a mix", !mixed && n_old && n_new);
+#endif
         check("... the panel's calibration untouched through all of it", panel_same());
     }
     printf("%s\n", fails ? "BACKUP TEST FAILED" : "backup test passed");

@@ -570,6 +570,7 @@ int plat_store_size(uint32_t obj)
     store_ready();
     return obj >= OBJ_NOBJ || store_len[obj] <= 0 ? -1 : store_len[obj];
 }
+int plat_store_room(void) { return -1; }   /* (the simulator's store has no pool) */
 int plat_store_save(uint32_t obj, const void *src, uint32_t len)
 {
     store_ready();

@@ -331,6 +331,11 @@ int plat_store_load(uint32_t obj, void *dst, uint32_t max) { return flash_ok ? s
 int plat_store_head(uint32_t obj, void *dst, uint32_t n) { return flash_ok ? st_load_head(obj, dst, n) : -1; }
 int plat_store_size(uint32_t obj) { return flash_ok ? st_size(obj) : -1; }
 int plat_store_save(uint32_t obj, const void *src, uint32_t len) { return flash_ok ? st_save(obj, src, len) : -9; }
+#ifdef APP_STORE_POOL
+int plat_store_room(void) { return flash_ok ? st_pool_room() : 0; }
+#else
+int plat_store_room(void) { return -1; }
+#endif
 
 static volatile uint32_t audio_cpu_pct, audio_xruns;
 uint32_t plat_cpu_pct(void) { return audio_cpu_pct; }

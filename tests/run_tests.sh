@@ -26,6 +26,8 @@ run() {
 run encoder sh -c "$CC -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -o $OUT/encoder_test tests/encoder_test.c && $OUT/encoder_test"
 run trs sh -c "$CC -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -Idevice -o $OUT/trs_test tests/trs_test.c && $OUT/trs_test"
 run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/storage_test"
+run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
+    tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts
 run fastmath sh -c "$CC -O2 -w -o $OUT/fastmath_test tests/fastmath_test.c -lm && $OUT/fastmath_test"
 run boot-pack sh tests/boot_pack_test.sh               # the boot's LZMA load images (boot_pack = true)
 run installer "$PY" tests/install_test.py
@@ -43,6 +45,8 @@ fi
 # the tool's own conversation and a simulated FM-1 in JS
 run backup sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -o $OUT/backup_test tests/backup_test.c && \
     $OUT/backup_test $OUT/backup.bin"
+run backup-pool sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -DBACKUP_TEST_POOL \
+    -o $OUT/backup_pool_test tests/backup_test.c && $OUT/backup_pool_test"   # restore with a pooled store
 run backup-tool "$PY" tests/backup_tool_test.py $OUT/backup.bin
 if command -v node >/dev/null 2>&1; then
     run backup-page sh -c "$PY tests/backup_record.py $OUT/backup.bin $OUT/backup_transcript.json && \

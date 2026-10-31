@@ -896,6 +896,9 @@ static void fm1_main(void)
 #if FM1B_BACKUP
             rs_boot();                              /* a restore's commit cut short by a power loss: finished */
 #endif
+#ifdef APP_STORE_POOL
+            st_pool_boot();                         /* the A/B pairs from before the pool moved into it (storage.c) */
+#endif
             ota_boot_cleanup();
             fl_plain_window_init();                 /* the data area read in place, unencrypted (plat_data) */
         }

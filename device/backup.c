@@ -36,6 +36,11 @@
  *   5. everything reloaded as at power-on (app_backup_restored); the result to the host: a read of RS_OK_ADDR, or
  *      RS_FAIL_ADDR | code. RS_ASK_ADDR is read just before the question (the host says so).
  * RAM: one object's buffer (bu_buf, 3840 B, the pool), the staging list; the flash does the rest.
+ * An app with a pooled store (APP_STORE_POOL, storage.c) has no second copy of everything to stage into: 2. stages
+ * nothing (every record still received and checked, so a wrong or cut backup changes nothing), and 4. erases the
+ * pooled objects, then fetches the image again and saves each object (rs_rewrite; the backup is the user's own: a
+ * cable pulled in between leaves a partly restored set, and restoring again finishes it). An older backup's
+ * placeholders (APP_STORE_POOL_EMPTY) are not written.
  *
  * Hooks (the platform's, unity.c; the app's are app_backup_*, plat.h):
  *   rs_fetch(addr, p, n)  the image's bytes from the host (ota_read)                 0 = ok
@@ -391,6 +396,47 @@ static int rs_commit(void)
     return 0;
 }
 
+#ifdef APP_STORE_POOL
+/* the pool's restore, after the question: every pooled object's copies erased, then each object of the image (fetched
+ * again, each record's CRC checked again) saved; 0 = done */
+static int rs_rewrite(void)
+{
+    uint32_t pos = BU_HEAD, i, k;
+    (void)rs_stage;                                   /* (the A/B pairs' staging and commit: not a pool's) */
+    (void)rs_commit;
+    for (i = APP_STORE_POOL_OBJ0; i < ST_POOL_LAST; i++)
+        if (st_pool_drop(i))
+            return RS_E_ERASE;
+    for (i = 0; i < BU_NOBJ; i++) {
+        uint8_t r[BU_REC];
+        uint32_t len, crc;
+        if (rs_fetch(pos, r, BU_REC))
+            return RS_E_FETCH;
+        pos += BU_REC;
+        len = bu_rd16(r + 2);
+        crc = bu_rd32(r + 4);
+        if (bu_rd16(r) != bu_obj(i) || len > ST_PAYLOAD_MAX)
+            return RS_E_OBJ;
+        for (k = 0; k < len; k += 512u) {
+            uint32_t n = len - k > 512u ? 512u : len - k;
+            if (rs_fetch(pos + k, bu_buf + k, n))
+                return RS_E_FETCH;
+        }
+        pos += len;
+        if (bu_crc(0, bu_buf, len) != crc)
+            return RS_E_CRC;
+#ifdef APP_STORE_POOL_EMPTY
+        if (st_pooled(bu_obj(i)) && APP_STORE_POOL_EMPTY(bu_obj(i), bu_buf, len))
+            len = 0;                                  /* (an older backup's placeholder: no sector, storage.c) */
+#endif
+        if (st_save(bu_obj(i), bu_buf, len))
+            return RS_E_PROG;
+        rs_show(95u + (i + 1u) * 5u / BU_NOBJ);
+    }
+    return 0;
+}
+#endif
+
 /* the host's restore request: the image of len bytes, CRC-32 crc. Returns 0 (restored) or RS_E_*; the host is told
  * either way (rs_note); *begun: the screen was taken (a backup was coming) */
 static int restore_rx(uint32_t len, uint32_t crc, int *begun_out)
@@ -449,8 +495,10 @@ static int restore_rx(uint32_t len, uint32_t crc, int *begun_out)
             rc = RS_E_CRC;
             goto out;
         }
+#ifndef APP_STORE_POOL
         if ((rc = rs_stage(e)) != 0)
             goto out;
+#endif
         rs_show((i + 1u) * 90u / BU_NOBJ);
     }
     {
@@ -478,7 +526,15 @@ static int restore_rx(uint32_t len, uint32_t crc, int *begun_out)
         goto out;
     }
     rs_show(95);
+#ifdef APP_STORE_POOL
+    if ((rc = rs_rewrite()) != 0) {
+        rs_reload();                                  /* (part written: what the flash holds now) */
+        goto out;
+    }
+    if (0) {
+#else
     if ((rc = rs_commit()) != 0) {
+#endif
         if (rc == RS_E_COMMIT)
             rs_reload();                              /* (headers part written: what the flash holds now) */
         goto out;

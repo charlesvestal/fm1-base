@@ -232,9 +232,16 @@ int plat_store_head(uint32_t obj, void *dst, uint32_t n);     /* its first n byt
                                                                * shorter */
 int plat_store_size(uint32_t obj);                           /* its length in bytes, < 0 = none / bad (an app that
                                                                * wants it whole or not at all checks it first) */
-int plat_store_save(uint32_t obj, const void *src, uint32_t len);   /* 0 = ok */
+int plat_store_save(uint32_t obj, const void *src, uint32_t len);   /* 0 = ok; -8: the pool is full (nothing written) */
+/* an app with a pool (app.h APP_STORE_POOL: storage.c): the sectors free for its pooled objects' next copies (a save
+ * of n objects that finds n keeps every previous copy); -1 no pool */
+int plat_store_room(void);
 #define PLAT_STORE_MAX 3840u           /* bytes per object */
-/* The objects are the app's (app.h): an enum that includes OBJ_PANEL (the panel calibration, the platform's) and
+/* An app may pool some objects (APP_STORE_POOL, APP_STORE_POOL_BASE / _N / _OBJ0 / _OBJN / _OLD: storage.c): those
+ * share sectors instead of a pair each, and APP_STORE_MAP's entries for them are not used. APP_STORE_POOL_EMPTY(obj, p,
+ * n), if the app defines it: true for an old copy that holds nothing worth a sector (a placeholder of the layout
+ * before the pool): the move into the pool drops the object instead (every copy of it erased).
+ * The objects are the app's (app.h): an enum that includes OBJ_PANEL (the panel calibration, the platform's) and
  * ends with OBJ_NOBJ, and APP_STORE_MAP, each object's flash offset: two 4 KiB sectors (A/B) from there, inside the
  * data area (0x97000..0xDFFFF) or Felucca's settings sector pair at 0xFC000. An object's number is written in its
  * record, so an app keeps its numbering from one release to the next. */
