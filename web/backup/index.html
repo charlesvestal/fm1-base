@@ -66,6 +66,8 @@ ul.small, p.small { color: var(--muted); font-size: .92rem; }
 ul.small { padding-left: 1.1rem; margin: 0; }
 ul.ports { list-style: none; padding: 0; margin: 0 0 .6rem; }
 ul.ports li { display: flex; gap: .6rem; align-items: center; margin: 0 0 .4rem; }
+.ask { border-top: 1px solid var(--rule); margin-top: .9rem; padding-top: .8rem; }
+.ask p { color: var(--ink); }
 kbd { font: 600 .9em "Barlow Semi Condensed", "Barlow", sans-serif; border: 1px solid var(--rule); border-bottom-width: 2px;
       border-radius: 4px; padding: 0 .3em; background: var(--ground); }
 </style>
@@ -104,6 +106,14 @@ cable. This page works in Chrome or Edge, and there is nothing to install.</p>
     <button id="restore" class="primary" type="button" disabled>Restore</button>
   </div>
   <p class="file" id="fileInfo" hidden></p>
+  <!-- asked in the page, not with confirm(): an iOS app showing pages (MIDIWeb) may not show confirm() and answers no -->
+  <div class="ask" id="ask" role="group" aria-labelledby="askText" hidden>
+    <p id="askText"></p>
+    <div class="row">
+      <button id="askYes" class="primary" type="button">Replace everything</button>
+      <button id="askNo" class="quiet" type="button">Cancel</button>
+    </div>
+  </div>
 </section>
 
 <ul class="small">
@@ -444,6 +454,7 @@ function setBusy(on) {
   $("backup").disabled = on;
   $("restore").disabled = on || !picked;
   $("file").disabled = on;
+  if (on) $("ask").hidden = true;
 }
 window.addEventListener("beforeunload", (e) => { if (busy) { e.preventDefault(); e.returnValue = ""; } });
 
@@ -542,6 +553,7 @@ if (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "Mac
 
 $("file").addEventListener("change", async (e) => {
   picked = null;
+  $("ask").hidden = true;
   const f = e.target.files && e.target.files[0];
   const info = $("fileInfo");
   info.hidden = true;
@@ -566,9 +578,16 @@ $("file").addEventListener("change", async (e) => {
   setBusy(false);
 });
 
-$("restore").addEventListener("click", async () => {
+$("restore").addEventListener("click", () => {
   if (busy || !picked) return;
-  if (!confirm(`Replace everything on ${FW.name} with ${picked.name}?\n\n${FW.name} asks too, on its screen.`)) return;
+  $("askText").innerHTML = `Replace everything on ${esc(FW.name)} with <b>${esc(picked.name)}</b>? ${esc(FW.name)} asks too, on its screen.`;
+  $("ask").hidden = false;
+  $("askYes").focus();
+});
+$("askNo").addEventListener("click", () => { $("ask").hidden = true; $("restore").focus(); });
+$("askYes").addEventListener("click", async () => {
+  if (busy || !picked) return;
+  $("ask").hidden = true;
   setBusy(true);
   let dev = null;
   try {
