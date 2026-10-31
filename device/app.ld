@@ -12,7 +12,8 @@
  * 0x01C7FD50.. is reserved: boot_info, boot-state mailbox, vector table. */
 MEMORY
 {
-    XIP    (rx)  : ORIGIN = 0x02000120, LENGTH = 0x8DFBC
+    XIP    (rx)  : ORIGIN = 0x02000120, LENGTH = 0x9DFBC   /* the app slot (0x8DFBC) and 64 KB: the image before
+                                                       * boot_pack packs it; build.py checks the slot */
     RAMTEXT (rwx): ORIGIN = 0x01C00000, LENGTH = 0x8000
     RAM    (rwx) : ORIGIN = 0x01C08000, LENGTH = 96K
     POOL   (rw)  : ORIGIN = 0x01C20000, LENGTH = 0x54000
@@ -35,7 +36,8 @@ SECTIONS
                   . = ALIGN(4); _c1_start = .; KEEP(*(.c1_text*)) . = ALIGN(4); _c1_end = .;
                   _rt_end = .; } > RAMTEXT AT > XIP
     _rt_load = LOADADDR(.ram_text);
-    _app_xip_end = ORIGIN(XIP) + LENGTH(XIP);        /* (the boot's bound on the packed load images: main_fm1.c) */
+    _app_xip_end = ORIGIN(XIP) + 0x8DFBC;            /* the app slot's end (the boot's bound on the packed load
+                                                      * images: main_fm1.c) */
     .data : { . = ALIGN(4); _data_start = .; *(.data*) *(.sdata*) *(.*_data) . = ALIGN(4); _data_end = .; } > RAM AT > XIP
     _data_load = LOADADDR(.data);
     .bss (NOLOAD) : { _bss_start = .; *(.bss*) *(.sbss*) *(COMMON) *(.*_bss) *(.bd_base) . = ALIGN(4); _bss_end = .; } > RAM
