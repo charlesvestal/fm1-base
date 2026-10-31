@@ -174,6 +174,15 @@ The site's installer page (`tools/make_site.py`, from `web/installer.html`) read
 Chrome or Edge: "Report a problem" shows them, ready to copy, so a player can send them without Python. The record
 survives a restart, not switching off.
 
+The pages find the FM-1 with `web/fm1ports.js`, under any port name: a port with one of the FM-1's usual names, one
+the player picked (Try), or one that answers the screen reader's HELLO, which every fm1-base firmware does. Only the
+HELLO goes to other ports, three times: its ID, 7D, is the one for non-commercial use, which other gear ignores.
+The [FM-1 Screen Reader](https://github.com/charlesvestal/fm1-reader)'s page uses the same file, as a copy.
+
+The screen reader's firmware side lives here too: `device/announce.c` and `tools/gen_words.py` (MIT) are the one
+copy. fm1-reader keeps the page, the voice, the protocol (its PROTOCOL.md), the audit and the skill, and its
+`tools/sync_announce.sh` copies these two files into the firmwares not on fm1-base.
+
 ## .rfm1: your firmware in host apps
 
 An `.rfm1` file is your firmware built to run inside an app instead of on the FM-1: RemoteFM1 for iOS first, as

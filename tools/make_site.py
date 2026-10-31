@@ -6,14 +6,14 @@
 
   index.html                  the front page (APP_DIR/site/landing.md, with {{VERSION}} and {{PKG}} filled in; its
                               images from APP_DIR/site/img)
-  install/index.html          the web installer (web/installer.html, with fm1pkg.js, fm1ota.js and the package's
-                              metadata inlined; Chrome or Edge, Web MIDI)
+  install/index.html          the web installer (web/installer.html, with fm1ports.js, fm1pkg.js, fm1ota.js and the
+                              package's metadata inlined; Chrome or Edge, Web MIDI)
   manual/index.html, img/     the manual (APP_DIR/docs/MANUAL.md, its images from APP_DIR/docs/img), if there is one
   emu/                        the firmware in the browser (APP_DIR/build/emu: tools/build.py APP_DIR --web)
   words/                      the screen reader's words files (APP_DIR/web/words), every one ever made
   mirror/index.html           the screen mirror (web/mirror/index.html), with mirror = true
-  backup/index.html           backup and restore in the browser (web/backup/index.html), with backup = true: its
-                              magic and version from APP_DIR/app.h (APP_BACKUP_MAGIC, APP_BACKUP_VERSION)
+  backup/index.html           backup and restore in the browser (web/backup/index.html, with fm1ports.js inlined), with
+                              backup = true: its magic and version from APP_DIR/app.h (APP_BACKUP_MAGIC, APP_BACKUP_VERSION)
   firmware/NAME-VERSION.fwsc  the package the installer writes; also the download
   firmware/NAME-VERSION-res.bin  the resource region (fm1.toml resources), when PKG_STEM-res.bin is beside the
                               package (tools/build.py): the installer writes it after the firmware
@@ -54,6 +54,11 @@ def product_of(raw):
     return "".join(chr((m - i - 1) & 0xFF) for i in range(BLOCKS) if (m := raw[i * BLK + KEEP]) != 0x7D)
 
 
+def ports_js():
+    """web/fm1ports.js (finding FM-1s on Web MIDI) as plain script, for a page's {{PORTS_JS}}"""
+    return strip_module((SRC / "web" / "fm1ports.js").read_text(encoding="utf-8"))
+
+
 def fill(html, values, what):
     """a page's {{KEY}}s filled in; every one must be"""
     for key, val in values.items():
@@ -91,7 +96,8 @@ def tool_pages(app, conf=None, values=None):
                                         dict({"NAME": conf.get("name", app.name)}, **(values or {})), "web/mirror")
     if conf.get("backup"):
         out["backup/index.html"] = fill((SRC / "web" / "backup" / "index.html").read_text(encoding="utf-8"),
-                                        dict(backup_values(app, conf), **(values or {})), "web/backup")
+                                        dict(backup_values(app, conf), PORTS_JS=ports_js(), **(values or {})),
+                                        "web/backup")
     return out
 
 
@@ -139,8 +145,8 @@ def main(app, pkg, version, out):
         shutil.copy(lic, out / "firmware" / lic.name)      # files, an own-stack build's Apache / BSD parts): beside them
     # the installer
     html = (SRC / "web" / "installer.html").read_text(encoding="utf-8")
-    lib = strip_module((SRC / "web" / "fm1pkg.js").read_text(encoding="utf-8")) + "\n" + \
-        strip_module((SRC / "web" / "fm1ota.js").read_text(encoding="utf-8"))
+    lib = "\n".join(strip_module((SRC / "web" / f).read_text(encoding="utf-8"))
+                    for f in ("fm1ports.js", "fm1pkg.js", "fm1ota.js"))
     meta = json.dumps({"version": version, "product": product, "pkg": "../firmware/" + name,
                        "backup": bool(conf.get("backup")),
                        "res": "../firmware/" + res_name if res_src.exists() else None,

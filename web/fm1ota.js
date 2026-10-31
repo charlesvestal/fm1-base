@@ -5,10 +5,12 @@
 //   return check: from fm-static, github.com/seajaysec/fm-static, by his permission under MPL-2.0:
 //   seajaysec/fm-static#1)
 //
-// The FM-1 USB-MIDI update protocol (M-UPGRADE compatible) over WebMIDI.
+// The FM-1 USB-MIDI update protocol (M-UPGRADE compatible) over WebMIDI. Ports are found with fm1ports.js.
 // Step 1: the running firmware reads parts of the package and stages the update
 // loader. Step 2: the loader reads the whole image and writes it. In both steps
 // the device sends cmd 0x30 read requests on the logical image and we answer.
+
+import { PORT_NAMES, usualName, livePorts, outputFor, pairs, askAll } from "./fm1ports.js";
 
 const HS_QUERY = [0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7];
 const UPGRADE = [0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7];
@@ -25,9 +27,8 @@ const OPEN_RE = /^FM1_(OFFICIAL_OPEN|COMMUNITY_\d+)$/;
 // open too); its update loader names itself "ota-FM1C_" and a build id in hex, not digits
 const MVAVE_OPEN_RE = /^FM-1_80000\d\d$/;
 const OPEN_LOADER_RE = /^ota-FM1C_[0-9a-f]+$/;
-// port names asked without being picked (any case, part of the name): any other port only once the page allows it
-// (allow), or when it appears during an update (see watch). "FM1": the Open firmware's "FM1 Community"
-export const PORT_NAMES = ["fm-1", "fm1", "felucca", "ota", "composite", "sinco", "usb-midi"];
+// The ports asked (fm1ports.js): a usual name (PORT_NAMES), a port the page allows (allow), one that appears during an
+// update (see watch), or one that answers the screen reader's HELLO (answering: every fm1-base firmware does)
 // M-VAVE's FM-1 firmware, any version: "FM-1_0" and two digits ("FM-1_016"; fm1-base's dev builds are
 // "FM-1_x00", its releases longer; m-bootloader's installer is FM-1_099). Whether a package is safe to write is the device's to check
 // (felucca-bsp chip/ota.c: a well-made writer, a bootable boot area), not a list of known files
@@ -189,27 +190,38 @@ export class Updater {
     this.names = PORT_NAMES.slice();        // the usual names (setNames adds the user's own)
     this.allowed = new Set();               // ports the user picked although their names are none of the usual ones
     this.baseline = null;                   // the ports when an update started (watch)
+    this.answered = new Set();              // ports found by answering() (a page may remember them, as the user's picks)
   }
 
   setNames(list) { this.names = [...PORT_NAMES, ...list.map((x) => String(x).trim().toLowerCase()).filter(Boolean)]; }
   allow(name) { this.allowed.add(name); }
-  usual(name) { const n = (name || "").toLowerCase(); return this.names.some((p) => n.includes(p)); }
+  usual(name) { return usualName(name, this.names); }
 
   // the port names now: an FM-1 restarting into its update loader and back can come back under another name (the loader
   // has another USB id, and macOS names a port from its own cache, by USB id and socket). Until unwatch(), a port that
   // was not there now is asked too
-  watch() { this.baseline = new Set([...this.access.inputs.values()].filter((i) => i.state !== "disconnected").map((i) => i.name || "")); }
+  watch() { this.baseline = new Set(livePorts(this.access.inputs).map((i) => i.name || "")); }
   unwatch() { this.baseline = null; }
 
   // the port names that have an input and an output, whatever they are called (for a list to pick from)
-  ports() {
-    const live = (m) => [...m.values()].filter((p) => p.state !== "disconnected").map((p) => p.name || "");
-    const outs = new Set(live(this.access.outputs));
-    return [...new Set(live(this.access.inputs))].filter((n) => outs.has(n));
+  ports() { return [...new Set(pairs(this.access).map((p) => p.name))]; }
+
+  // never probe other gear: a usual name, a port the user allowed or that answered a HELLO, or one that appeared during
+  // an update
+  askable(name) { return this.usual(name) || this.allowed.has(name) || (!!this.baseline && !this.baseline.has(name || "")); }
+
+  // FM-1s on ports of any name: the ones that answer the screen reader's HELLO (fm1ports.js askAll; every fm1-base
+  // firmware does), allowed from then on -> their port names (also kept in this.answered)
+  async answering() {
+    const got = await askAll(this.access, { skip: (n) => this.askable(n) });
+    for (const g of got) { this.allow(g.name); this.answered.add(g.name); }
+    return got.map((g) => g.name);
   }
 
-  // never probe other gear: a usual name, a port the user allowed, or one that appeared during an update
-  askable(name) { return this.usual(name) || this.allowed.has(name) || (!!this.baseline && !this.baseline.has(name || "")); }
+  // find(), and when nothing answers on the ports asked, again after asking the others for a HELLO
+  async findAny(filter) {
+    return (await this.find(filter)) || ((await this.answering()).length ? await this.find(filter) : null);
+  }
 
   // ask one port who it is (allowing it): -> its identity, or null
   async probe(name) {
@@ -222,11 +234,9 @@ export class Updater {
 
   // every in/out pair with the same port name that answers the handshake (only: the port called only)
   async find(filter, only) {
-    const outs = [...this.access.outputs.values()];
-    for (const input of this.access.inputs.values()) {
-      if (input.state === "disconnected") continue;
+    for (const input of livePorts(this.access.inputs)) {
       if (only != null ? input.name !== only : !this.askable(input.name)) continue;
-      const output = outs.find((o) => o.name === input.name) || (outs.length === 1 ? outs[0] : null);
+      const output = outputFor(this.access, input);
       if (!output) continue;
       try { await input.open(); await output.open(); } catch (_) { continue; }
       const link = new Link(input, output);
@@ -280,7 +290,7 @@ export class Updater {
   // full install: running firmware -> loader -> new firmware
   async install(image, product, onStep, sha256) {
     const step = onStep || (() => {});
-    const dev = await this.find((id) => !IS_OTA(id));
+    const dev = await this.findAny((id) => !IS_OTA(id));
     if (!dev) throw fail("notfound", "FM-1 not found (USB cable, and no other app using it?)");
     const [model] = product.split("_");
     if (dev.id.model !== model) { dev.link.close(); throw fail("model", `the device is ${dev.id.text}, the package is for ${product}`); }

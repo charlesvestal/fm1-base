@@ -1,9 +1,10 @@
 #!/bin/sh
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Charles Vestal
-# fm1-base's tests: the platform's pieces on the host (encoder, TRS jack, storage, fastmath, backup and restore, the
-# screen mirror), the tools and web pages for them, the installer against a simulated FM-1, the update path against
-# the template's package (tools/build.py template first), and the template in the simulator (tests/basic.txt).
+# fm1-base's tests: the platform's pieces on the host (encoder, TRS jack, storage, fastmath, the screen reader's
+# announce.c, backup and restore, the screen mirror), the tools and web pages for them, the installer against a
+# simulated FM-1, the update path against the template's package (tools/build.py template first), and the template in
+# the simulator (tests/basic.txt).
 #   tests/run_tests.sh
 set -u
 cd "$(dirname "$0")/.."
@@ -30,6 +31,10 @@ run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-funct
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts
 run fastmath sh -c "$CC -O2 -w -o $OUT/fastmath_test tests/fastmath_test.c -lm && $OUT/fastmath_test"
 run boot-pack sh tests/boot_pack_test.sh               # the boot's LZMA load images (boot_pack = true)
+# the screen reader's firmware side (device/announce.c, the one copy: fm1-reader's tools/sync_announce.sh copies it to
+# the firmwares not on fm1-base): the protocol, the SAY frames, ann_later's settling
+run announce sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/announce_test tests/announce_test.c && \
+    $OUT/announce_test"
 run installer "$PY" tests/install_test.py
 # the web installer's m-bootloader step (web/fm1ota.js installBoot) against a simulated FM-1, and finding the FM-1 by
 # its port (unusual names, the loader under a new name, M-VAVE's Open firmware, resume's check, package checksums),

@@ -1,10 +1,11 @@
 # Licensing
 
 **fm1-base is MPL-2.0** (full text in `LICENSE`), file by file: every source file carries an
-`SPDX-License-Identifier: MPL-2.0` header. If you change one of these files and distribute it, publish your change to
-that file under MPL-2.0. Your own files, such as an app built on fm1-base, may use any licence, closed ones included.
-So a firmware made of felucca-bsp, fm1-base and its own code may link JieLi's binary Bluetooth and Wi-Fi libraries.
-A firmware on fm1-base's own Bluetooth stack (`ble_stack = "own"`) links none of them; the build checks it.
+`SPDX-License-Identifier: MPL-2.0` header, but the screen reader's two MIT files (below). If you change one of these
+files and distribute it, publish your change to that file under MPL-2.0. Your own files, such as an app built on
+fm1-base, may use any licence, closed ones included. So a firmware made of felucca-bsp, fm1-base and its own code may
+link JieLi's binary Bluetooth and Wi-Fi libraries. A firmware on fm1-base's own Bluetooth stack (`ble_stack = "own"`)
+links none of them; the build checks it.
 
 ## Where the code comes from
 
@@ -20,6 +21,10 @@ A firmware on fm1-base's own Bluetooth stack (`ble_stack = "own"`) links none of
 | `bt/` (the own Bluetooth stack: `bt/ble` BLE MIDI, link layer, host, SMP, central; `bt/br` BR/EDR and the A2DP source: SSP, L2CAP, AVDTP, AVRCP, SDP, AFH), its docs `docs/bt/`, tools `tools/bt/` and tests `tests/bt/`, but the third-party parts below. Copyright (C) 2026 Henri David (hdavid) | [Optimist](https://github.com/w0ts/optimist) (`3274ce5`), where its files carry `GPL-3.0-only OR MPL-2.0` | offered under either licence ([w0ts/optimist#55](https://github.com/w0ts/optimist/issues/55)), taken here under MPL-2.0. The files keep their dual SPDX header; the MPL's Exhibit B does not apply |
 | `device/bt_own.c`, `device/bt_own_central.c`, `device/bt_own_audio.c` (the glue between the own stack and the platform) | Charles Vestal | his own |
 | felucca-bsp's radio drivers (`bsp/chip/fm1_ble.h`, `fm1_ble_rf.h`, `fm1_bredr.h`) | Optimist, by Henri David | MPL-2.0 there, from the same offer (`bsp/NOTICE`) |
+
+Two files are MIT, not MPL-2.0: `device/announce.c` and `tools/gen_words.py`, the screen reader's firmware side
+(Charles Vestal's, from [fm1-reader](https://github.com/charlesvestal/fm1-reader)). fm1-base holds their one copy, and
+firmwares that are not on fm1-base, GPL and MIT ones, carry copies of them, so they keep the licence they had.
 
 ## The own Bluetooth stack's other parts
 

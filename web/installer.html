@@ -399,6 +399,14 @@ const PICKED = "fm1-ports";
 let picked = [];
 try { picked = JSON.parse(localStorage.getItem(PICKED) || "[]").filter((x) => typeof x === "string"); } catch (_) { /* none */ }
 const updater = (midi, lg) => { const up = new Updater(midi, lg); picked.forEach((n) => up.allow(n)); return up; };
+/* and the ports an FM-1 answered the screen reader's HELLO on (Updater.answering: an fm1-base firmware under any name),
+   kept as picks */
+function remember(names) {
+  const add = [...names].filter((n) => !picked.includes(n));
+  if (!add.length) return;
+  picked.push(...add);
+  try { localStorage.setItem(PICKED, JSON.stringify(picked)); } catch (_) { /* until the page is closed */ }
+}
 /* after "not found": the ports the page did not ask, each with Try */
 function showPorts(midi) {
   const up = updater(midi);
@@ -456,9 +464,9 @@ async function run(img, product, isStock, sha256) {
   writing = true;
   $("portpick").hidden = true;
   $("go").disabled = $("stockgo").disabled = true;
-  let installed = false;
+  let installed = false, up = null;
   try {
-    const up = updater(midi, log);
+    up = updater(midi, log);
     /* progress: the bytes the device reads, against what it reads for this package (the size of the package,
        not a fixed request count). Step 1 (the running firmware): the UFW header, the loader's head twice, its
        body. Step 2 (fm1-base's loader): the header, the chip-key check, the whole flash.bin (checked before
@@ -500,6 +508,7 @@ async function run(img, product, isStock, sha256) {
     else sayK("error", e && e.message);
     log(String(e && e.stack || e));
   }
+  remember(up ? up.answered : []);   /* (before the resources: their updater finds it by these picks) */
   if (installed && meta.res && !isStock) await writeRes(midi, product);
   if (installed && APP && APP.after && !isStock) {
     try { await APP.after(midi, appUi, appState); }
@@ -545,7 +554,9 @@ $("reportgo").addEventListener("click", async () => {
   st("reportwait");
   const lines = [];
   try {
-    const dev = await updater(midi).find((id) => !IS_OTA(id));
+    const rup = updater(midi);
+    const dev = await rup.findAny((id) => !IS_OTA(id));
+    remember(rup.answered);
     if (dev) {
       lines.push(`${dev.id.text} (${dev.name}), ${new Date().toISOString()}`);
       dev.link.drain();

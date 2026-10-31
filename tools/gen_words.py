@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026 Charles Vestal
-"""A firmware's words file for the screen reader (fm1-reader; copied into each firmware by sync_announce.sh).
+"""A firmware's words file for the screen reader (fm1-reader). The one copy is fm1-base's tools/gen_words.py;
+fm1-reader's tools/sync_announce.sh copies it into the firmwares not on fm1-base. Change it here, not in a copy.
 
     gen_words.py firmware/words.tsv web/words build/gen/ann_words.h
 
