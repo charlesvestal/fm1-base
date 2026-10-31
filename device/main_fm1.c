@@ -721,6 +721,24 @@ static void usb_cmd(uint32_t d)
         return;
     }
 #endif
+#if FM1B_RES
+    if (d == 15u && ota_dec[2] == RES_REQ && flash_ok) {   /* the resource region from the host (res.c) */
+        uint32_t len = ota_rd32(ota_dec + 6), crc = ota_rd32(ota_dec + 10);
+        int begun = 0, rc;
+        if (bu.on)
+            bu_stop();
+        ota_try_ms = 2000u;
+        ota_deadline = ota_now_ms() + 120000u;
+        rc = res_rx(len, crc, &begun);
+        ota_try_ms = 5000u;
+        ota_deadline = 0;
+        if (begun) {
+            app_ui_init();
+            app_say("RESOURCES", !rc ? "INSTALLED" : "NOT INSTALLED");
+        }
+        return;
+    }
+#endif
 #if FM1B_MIRROR
     if (d == 8u && ota_dec[2] == MR_REQ) {
         mirror_cmd(ota_dec[6]);                     /* the screen mirrored: on, off, refresh */
@@ -901,6 +919,9 @@ static void fm1_main(void)
 #endif
             ota_boot_cleanup();
             fl_plain_window_init();                 /* the data area read in place, unencrypted (plat_data) */
+#if FM1B_RES
+            res_check();                            /* the resource region: this build's? (res.c, plat_res) */
+#endif
         }
     }
     lcd_init();

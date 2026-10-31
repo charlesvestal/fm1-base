@@ -32,10 +32,12 @@ run fastmath sh -c "$CC -O2 -w -o $OUT/fastmath_test tests/fastmath_test.c -lm &
 run boot-pack sh tests/boot_pack_test.sh               # the boot's LZMA load images (boot_pack = true)
 run installer "$PY" tests/install_test.py
 # the web installer's m-bootloader step (web/fm1ota.js installBoot) against a simulated FM-1, and finding the FM-1 by
-# its port (unusual names, the loader under a new name, M-VAVE's Open firmware, resume's check, package checksums)
+# its port (unusual names, the loader under a new name, M-VAVE's Open firmware, resume's check, package checksums),
+# and writing the resource region after it
 if command -v node >/dev/null 2>&1; then
     run installer-boot node tests/installer_boot_test.mjs web/m-bootloader/fm1-uboot-1.2.fwsc
     run installer-ports node tests/installer_ports_test.mjs web/m-bootloader/fm1-uboot-1.2.fwsc
+    run installer-res node tests/installer_res_test.mjs   # the resource region after an install (Updater.installRes)
 else
     echo "  skip installer-boot (no node)"
 fi

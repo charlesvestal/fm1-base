@@ -8,7 +8,9 @@
 - **keremimo** ([@keremimo](https://github.com/keremimo)): the MIDI clock and transport sync in felucca-bsp's
   `usb.c` ([hugelton/felucca-bsp#3](https://github.com/hugelton/felucca-bsp/pull/3)); from
   [Melodee](https://github.com/keremimo/melodee) (Kerem Kilic, Ellic Studio), the boot's LZMA-packed load images
-  (`device/boot_lzma.h`, `tools/boot_pack.py`), with permission.
+  (`device/boot_lzma.h`, `tools/boot_pack.py`), and the designs fm1-base's resource region (`device/res.c`,
+  `tools/fm1_resources.py`, the installer's step) and pooled store (`device/storage.c` APP_STORE_POOL) follow, with
+  permission.
 - **Henri David** (hdavid): the own Bluetooth stack in `bt/` and felucca-bsp's radio
   drivers, from [Optimist](https://github.com/w0ts/optimist): BLE MIDI, pairing, the central role, and Bluetooth
   audio (BR/EDR, Secure Simple Pairing, A2DP), written from the Bluetooth specifications and measurements of the

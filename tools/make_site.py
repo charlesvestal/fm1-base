@@ -15,6 +15,8 @@
   backup/index.html           backup and restore in the browser (web/backup/index.html), with backup = true: its
                               magic and version from APP_DIR/app.h (APP_BACKUP_MAGIC, APP_BACKUP_VERSION)
   firmware/NAME-VERSION.fwsc  the package the installer writes; also the download
+  firmware/NAME-VERSION-res.bin  the resource region (fm1.toml resources), when PKG_STEM-res.bin is beside the
+                              package (tools/build.py): the installer writes it after the firmware
   firmware/m-bootloader-X.Y.fwsc  m-bootloader (MIT), which the installer offers after the firmware
 
   tools/make_site.py APP_DIR APP_DIR/build/NAME-VERSION.fwsc VERSION OUT_DIR
@@ -119,6 +121,15 @@ def main(app, pkg, version, out):
     for d in ("install", "firmware"):
         (out / d).mkdir(parents=True)
     shutil.copy(pkg, out / "firmware" / name)
+    # the resource region beside the package (tools/build.py: fm1.toml resources), checked as the FM-1 checks it
+    res_src, res_name = pkg.with_name(pkg.stem + "-res.bin"), Path(name).stem + "-res.bin"
+    if res_src.exists():
+        from fm1_resources import ResError, payload_of
+        try:
+            payload_of(res_src.read_bytes())
+        except ResError as e:
+            raise SystemExit(f"{res_src}: {e}")
+        shutil.copy(res_src, out / "firmware" / res_name)
     # m-bootloader (MIT), which the installer offers to install after the firmware, with its licence
     boot = SRC / "web" / "m-bootloader" / f"fm1-uboot-{MBOOT_VERSION}.fwsc"
     boot_name = f"m-bootloader-{MBOOT_VERSION}.fwsc"
@@ -132,6 +143,7 @@ def main(app, pkg, version, out):
         strip_module((SRC / "web" / "fm1ota.js").read_text(encoding="utf-8"))
     meta = json.dumps({"version": version, "product": product, "pkg": "../firmware/" + name,
                        "backup": bool(conf.get("backup")),
+                       "res": "../firmware/" + res_name if res_src.exists() else None,
                        "boot": {"pkg": "../firmware/" + boot_name, "version": MBOOT_VERSION,
                                 "sha256": hashlib.sha256(boot.read_bytes()).hexdigest()}})
     for mark in ("/*LIB*/", "/*META*/"):
@@ -173,7 +185,8 @@ def main(app, pkg, version, out):
         (out / p).write_text(h, encoding="utf-8")
     (out / ".nojekyll").write_text("")
     print(f"site: {out}: index.html, install/ ({product}), {'manual/, ' if manual.exists() else ''}emu/, words/, "
-          f"{''.join(p.split('/')[0] + '/, ' for p in tools)}firmware/{name} ({len(raw)} B)")
+          f"{''.join(p.split('/')[0] + '/, ' for p in tools)}firmware/{name} ({len(raw)} B)"
+          f"{f', firmware/{res_name}' if res_src.exists() else ''}")
 
 
 if __name__ == "__main__":

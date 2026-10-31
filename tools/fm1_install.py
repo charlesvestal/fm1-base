@@ -22,6 +22,7 @@ loader / no restart), 6 wrong model, or another identity after the install.
 """
 import argparse
 import hashlib
+import os
 import queue
 import re
 import sys
@@ -498,7 +499,33 @@ def run(a, backend, out, ask):
         up.install(dev, image, product, prog, digest)
     finally:
         prog.end()
+    res = a.resources or os.path.join(os.path.dirname(a.package), os.path.basename(a.package).rsplit(".", 1)[0] + "-res.bin")
+    if not a.no_resources and os.path.isfile(res):
+        install_resources(backend, res, a.port, out)
     return 0
+
+
+def install_resources(backend, res, port, out):
+    """the firmware's resource region (device/res.c: NAME-res.bin beside the package) after the update; never fails
+    the install: without it the firmware does without (its words for it) until tools/fm1_resources.py writes it"""
+    import fm1_resources as R
+    for _ in range(20):                       # (the FM-1 starting the new firmware)
+        try:
+            dev = __import__("fm1_backup").find(backend, port)
+            break
+        except InstallError:
+            time.sleep(0.5)
+    else:
+        print(f"resources: the FM-1 did not answer after the update; run tools/fm1_resources.py {res}", file=out)
+        return
+    try:
+        code = R.push(dev, open(res, "rb").read(), out)
+        print("resources: " + ("on the FM-1" if not code else R.ERRORS.get(code, f"code {code}") +
+                               f"; run tools/fm1_resources.py {res}"), file=out)
+    except (InstallError, R.ResError, OSError) as e:
+        print(f"resources: {e}; run tools/fm1_resources.py {res}", file=out)
+    finally:
+        dev.link.close()
 
 
 def ask_tty(prompt):
@@ -515,6 +542,9 @@ def main(argv=None, backend=None, out=sys.stdout, ask=ask_tty):
     ap.add_argument("--port", metavar="NAME", help="MIDI port to use (part of its name)")
     ap.add_argument("--yes", action="store_true", help="do not ask for confirmation")
     ap.add_argument("--force", action="store_true", help="install a package without the Felucca loader marker")
+    ap.add_argument("--resources", metavar="FILE", help="the resource region to write after the update (default: "
+                    "NAME-res.bin beside the package, if there: tools/fm1_resources.py)")
+    ap.add_argument("--no-resources", action="store_true", help="do not write the resource region")
     a = ap.parse_args(argv)
     if bool(a.info) == bool(a.package):
         ap.error("give a PACKAGE.fwsc or --info")

@@ -25,6 +25,7 @@
  *   FM1B_BLE 0              Bluetooth MIDI (fm1.toml ble = true; tools/build.py --no-ble leaves it out)
  *   FM1B_MIRROR 0           the screen and panel mirrored over USB (fm1.toml mirror = true: mirror.c)
  *   FM1B_BACKUP 0           backup and restore of the app's objects over USB (fm1.toml backup = true: backup.c)
+ *   FM1B_RES 0              the resource region (fm1.toml resources = FILE: res.c; with backup)
  *   FM1B_CPU2 0             the second core (fm1.toml cpu2 = true: cpu2.c, felucca-bsp's fm1_cpu1.h) */
 #include <stdint.h>
 #include "plat.h"
@@ -103,6 +104,9 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #endif
 #ifndef FM1B_MIRROR
 #define FM1B_MIRROR 0
+#endif
+#ifndef FM1B_RES
+#define FM1B_RES 0
 #endif
 #ifndef FM1B_BACKUP
 #define FM1B_BACKUP 0
@@ -299,6 +303,11 @@ static void rs_begin(void)                          /* a backup is coming: patie
     ota_try_ms = 5000u;
     ota_deadline = ota_now_ms() + 120000u;
 }
+static void rs_show(uint32_t pct);
+#if FM1B_RES
+#include "fm1_res.h"              /* FM1B_RES_LEN, FM1B_RES_CRC: the build's resources (build.py, from the file) */
+#include "res.c"                  /* the resource region (tools/fm1_resources.py) */
+#endif
 static void rs_show(uint32_t pct)
 {
     char b[8];

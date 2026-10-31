@@ -88,6 +88,33 @@ function parseIdentity(pkt) {
   return { text: txt, model: m[1], version: parseInt(m[2], 10), ...(MVAVE_OPEN_RE.test(txt) ? { open: true } : {}) };
 }
 
+// the resource region (device/res.c; fm1.toml resources): NAME-res.bin, written after an update as a restore is
+// (web/backup): RES_REQ with the payload's length and CRC-32, then the FM-1's reads (the payload's offsets) until it
+// reads RES_OK, or RES_FAIL | its code. After Melodee's web/fm1res.js and its installer step (Kerem Kilic, Ellic
+// Studio; used in fm1-base under MPL-2.0 with permission)
+const RES_REQ = 0x44, RES_MAGIC = 0x31534552, RES_HEAD = 32, RES_OK = 0xC0000000, RES_FAIL = 0xCF000000;
+const CRC32_T = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+export function crc32(d) {                                // zlib's
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < d.length; i++) c = CRC32_T[(c ^ d[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+const rd32 = (b, o) => (b[o] | b[o + 1] << 8 | b[o + 2] << 16 | b[o + 3] << 24) >>> 0;
+const le32 = (v) => [v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF];
+// a NAME-res.bin, its header checked (magic, the header's CRC, the payload's length and CRC) -> {payload, crc};
+// throws (code "resbad") on anything else (tools/fm1_resources.py payload_of)
+export function resPayload(region) {
+  const bad = () => fail("resbad", "not a resource file, or a damaged one");
+  if (region.length < RES_HEAD || rd32(region, 0) !== RES_MAGIC || rd32(region, 28) !== crc32(region.subarray(0, 28))) throw bad();
+  const len = rd32(region, 4), crc = rd32(region, 8), payload = region.subarray(RES_HEAD, RES_HEAD + len);
+  if (payload.length !== len || crc32(payload) !== crc) throw bad();
+  return { payload, crc };
+}
+
 // one MIDI in/out pair with a SysEx queue
 class Link {
   constructor(input, output) {
@@ -330,6 +357,40 @@ export class Updater {
       dev.link.close();
       throw fail("stopped", `${dev.id.text} refused the package: nothing was written`);
     }
+  }
+
+  // the resource region after an install (resPayload's file): once the FM-1 runs product, RES_REQ, then its reads
+  // answered -> 0 written (or there already), else the FM-1's code (device/res.c: 2 transfer, 7 erase, 8 write,
+  // 10 playing, 20 another build's, 21 the store's move not done, 22 the check). Throws noreturn, lost, stopped, badreq
+  async installRes(region, product, onProgress) {
+    const { payload, crc } = resPayload(region);
+    const dev = await this.waitFor((id) => !IS_OTA(id) && id.text === product, 40000);
+    if (!dev) throw fail("noreturn", "the device did not come back: power-cycle it");
+    const { link } = dev;
+    try {
+      link.drain();
+      link.send(frame(RES_REQ, [...le32(payload.length), ...le32(crc)]));
+      let last = Date.now(), idle = 10000;                /* (the first read after the region's erase) */
+      for (;;) {
+        const pkt = await link.read(500);
+        if (!pkt) {
+          if (link.lost) throw fail("lost", "the device was disconnected");
+          if (Date.now() - last > idle) throw fail("stopped", "the device stopped asking for the resources");
+          continue;
+        }
+        const r = parseRequest(pkt);
+        if (!r) continue;
+        last = Date.now(); idle = 10000;
+        const top = (r.addr & 0xFF000000) >>> 0;
+        if (top === RES_OK || top === RES_FAIL) {
+          link.send(response(r.addr, [...new TextEncoder().encode("success"), 0], r.fl));
+          return top === RES_OK ? 0 : (r.addr & 0xFFFF) || 99;
+        }
+        if (r.len > MAXDATA || r.addr + r.len > payload.length) throw fail("badreq", `bad request ${r.addr.toString(16)}+${r.len}`);
+        if (!link.send(response(r.addr, Array.from(payload.subarray(r.addr, r.addr + r.len)), r.fl))) throw fail("lost", "the device was disconnected");
+        if (onProgress) onProgress(((r.addr + r.len) * 100) / payload.length);
+      }
+    } finally { link.close(); }
   }
 
   // step 2 with the loader found by find()/waitFor()

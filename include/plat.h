@@ -203,6 +203,11 @@ const uint8_t *plat_data(uint32_t off);   /* read in place; 0 = outside the wind
 int plat_data_erase(uint32_t off);        /* the 4 KiB sector at off (aligned); 0 = done */
 int plat_data_write(uint32_t off, const void *src, uint32_t n);   /* into erased flash, src in RAM; 0 = done */
 void plat_sysex_send(const uint8_t *frame, uint32_t n);   /* a whole SysEx frame (F0 .. F7) out over USB */
+/* the resource region (fm1.toml resources = FILE, FM1B_RES; app.h APP_RES_BASE, APP_RES_SECTORS: device/res.c):
+ * the file's bytes read in place, *len their count; 0 (and *len 0) while the FM-1 does not hold this build's (not
+ * yet written after an update, torn, another build's): the app does without. The host writes it
+ * (tools/fm1_resources.py; the installer after an update); a sound reading it is stopped first (app_panic) */
+const uint8_t *plat_res(uint32_t *len);
 
 /* the app's own commands in the update's SysEx framing (F0 pack7(00 59 cmd len24 body ~sum) F7: felucca-bsp ota.c),
  * an app with APP_USB_CMD: app_usb_cmd(d, n) gets each frame whose cmd the platform does not take (d: the decoded
