@@ -215,6 +215,13 @@ void plat_host_patience(uint32_t try_ms, uint32_t total_ms);   /* each try's wai
 /* USB audio full (FM1B_UAC): 1, the USB audio input at full level (the app's render at gain 4096), MASTER for the
  * speaker and headphones only; 0, both at MASTER (the default) */
 void plat_usb_audio_full(int on);
+/* USB audio output as the app's input (FM1B_UAC_OUT): on, the computer's audio is the app's to use (a synth's external
+ * input: through its filter and amplifier) and no longer plays after it; off (the default), it plays at MASTER after
+ * the app's render. Read once a render: a change takes the next */
+void plat_usb_audio_route(int on);
+/* during app_render, the route on: the computer's audio for this render's frames, stereo interleaved, 24-bit as
+ * app_render's lr at full level (+-8388607; silence while nothing plays); 0 with the route off (or no USB audio) */
+const int32_t *plat_usb_audio_in(void);
 
 /* the keys' velocity and pressure (an app with APP_KEY_SENSE): on, the scan reads the keys on the analog rows and
  * hands each reading to the app (app_key_sample, app_key_probe); off by default */

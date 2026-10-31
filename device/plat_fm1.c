@@ -200,6 +200,11 @@ void plat_host_patience(uint32_t try_ms, uint32_t total_ms)
 /* USB audio full: the render at full level for the USB audio input, MASTER after it (main_fm1.c render_block) */
 static volatile uint8_t uac_full;
 void plat_usb_audio_full(int on) { uac_full = (uint8_t)(on != 0); }
+/* USB audio output as the app's input: the route asked, and the block app_render may read (main_fm1.c render_block) */
+static volatile uint8_t uac_route;
+static const int32_t *uac_in_now;
+void plat_usb_audio_route(int on) { uac_route = (uint8_t)(on != 0); }
+const int32_t *plat_usb_audio_in(void) { return uac_in_now; }
 void plat_yield(void)
 {
     ble_poll();                                   /* Bluetooth: its notifications go out while the screen draws */
