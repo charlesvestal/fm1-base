@@ -188,12 +188,12 @@ const TEXT = {
     tryport: "試す", pickwait: "問い合わせ中…", pickempty: "ほかの MIDI ポートはありません。",
     picknone: "{port} からは FM-1 の応答がありません。",
     pickok: "{port} で {id} が見つかりました。このブラウザが覚えておきます。もう一度押してください。",
-    res: "{{NAME}} の音を書き込み中", resdone: "完了しました（{{NAME}} の音も書き込みました）",
-    resfail: "{{NAME}} はインストールされ、動きます。ただし音は、もう一度インストールするまでありません。書き込めなかった理由: ",
+    res: "{{RES_JA}}を書き込み中", resdone: "完了しました（{{RES_JA}}も書き込みました）",
+    resfail: "{{NAME}} はインストールされ、動きます。ただし{{RES_JA}}は、もう一度インストールするまでありません。書き込めなかった理由: ",
     res2: "転送が途中で止まりました。", res7: "FM-1 がメモリを消去できませんでした。", res8: "FM-1 がメモリに書き込めませんでした。",
-    res10: "FM-1 が再生中です。止めてから、もう一度インストールしてください。", res20: "この音は {{NAME}} の別のビルドのものです。",
+    res10: "FM-1 が再生中です。止めてから、もう一度インストールしてください。", res20: "この{{RES_JA}}は {{NAME}} の別のビルドのものです。",
     res21: "FM-1 が保存したものを移動中です。電源を入れ直してから、もう一度インストールしてください。",
-    res22: "書き込んだ内容の確認に失敗しました。", resload: "音のファイルを読み込めませんでした。ページを再読み込みしてください。",
+    res22: "書き込んだ内容の確認に失敗しました。", resload: "{{RES_JA}}のファイルを読み込めませんでした。ページを再読み込みしてください。",
     resnoreturn: "インストール後、FM-1 が応答しませんでした。", reslost: "USB の接続が切れました。",
     resother: "エラーコード ",
   },
@@ -252,12 +252,12 @@ const TEXT = {
     tryport: "Try", pickwait: "Asking…", pickempty: "No other MIDI ports.",
     picknone: "No FM-1 answered on {port}.",
     pickok: "Found {id} on {port}. This browser remembers it. Press the button again.",
-    res: "Writing {{NAME}}'s sounds", resdone: "Done. {{NAME}}'s sounds are written too.",
-    resfail: "{{NAME}} is installed and works, but without its sounds until you install it again. They were not written: ",
+    res: "Writing {{RES}}", resdone: "Done, with {{RES}} written too.",
+    resfail: "{{NAME}} is installed and works, but without {{RES}} until you install it again. Not written: ",
     res2: "the transfer stopped.", res7: "the FM-1 could not erase its memory.", res8: "the FM-1 could not write its memory.",
-    res10: "the FM-1 is playing. Stop it, then install again.", res20: "these sounds are for another build of {{NAME}}.",
+    res10: "the FM-1 is playing. Stop it, then install again.", res20: "the file of {{RES}} is for another build of {{NAME}}.",
     res21: "the FM-1 is still moving what it has saved. Switch it off and on, then install again.",
-    res22: "what was written did not check.", resload: "the sounds file did not load. Reload the page.",
+    res22: "what was written did not check.", resload: "the file of {{RES}} did not load. Reload the page.",
     resnoreturn: "the FM-1 did not answer after the update.", reslost: "the USB connection was lost.",
     resother: "error code ",
   },
@@ -512,7 +512,7 @@ async function run(img, product, isStock, sha256) {
 
 /* the resource region (device/res.c) once the new firmware runs: Updater.installRes (fm1ota.js; after Melodee's
    web/fm1res.js and installer step, Kerem Kilic, Ellic Studio, used under MPL-2.0 with permission). Never a failed
-   install: without it the firmware does without its sounds until the next install */
+   install: without it the firmware does without them until the next install */
 const RES_WHY = { 2: "res2", 7: "res7", 8: "res8", 10: "res10", 20: "res20", 21: "res21", 22: "res22",
                   noreturn: "resnoreturn", lost: "reslost", stopped: "res2", resbad: "resload" };
 async function writeRes(midi, product) {

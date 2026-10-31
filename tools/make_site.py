@@ -151,7 +151,9 @@ def main(app, pkg, version, out):
             raise SystemExit(f"web/installer.html must contain {mark} once")
     repo = conf.get("repo", "")
     credits = conf.get("credits", "")
-    for key, val in (("NAME", conf["name"]), ("REPO", repo), ("REPO_SHORT", re.sub(r"^https?://", "", repo)),
+    for key, val in (("RES", conf.get("resources_what", "{{NAME}}'s data")),   # (fm1.toml: what the resource
+                     ("RES_JA", conf.get("resources_what_ja", "{{NAME}} のデータ")),   # region holds, in the page's words)
+                     ("NAME", conf["name"]), ("REPO", repo), ("REPO_SHORT", re.sub(r"^https?://", "", repo)),
                      ("LICENSE", conf.get("licence", "MPL-2.0")), ("CREDITS", " " + credits if credits else "")):
         html = html.replace("{{" + key + "}}", val)
     # the firmware's own steps around an install (fm1.toml install_app = "web/install_app.js": an expression, an

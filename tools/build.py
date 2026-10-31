@@ -61,7 +61,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              to APP_DIR, {gen} the generated headers' directory: an app's gen step may make it) kept out
                              of the image in app.h's APP_RES_BASE, APP_RES_SECTORS, written by the host after an update
                              (tools/fm1_resources.py, fm1_install.py and the installer page: build/NAME-res.bin beside
-                             the package); the host and web builds have it compiled in
+                             the package); the host and web builds have it compiled in. resources_what (and
+                             resources_what_ja): what it holds, in the installer's words ("the 909 cymbals")
   cpu2 = true                the second core (FM1B_CPU2: device/cpu2.c, plat_cpu2_* in plat.h, on felucca-bsp's
                              chip/fm1_cpu1.*): a worker for a part of the render. A failure of it (a misread, a
                              fault, a late job) restarts the FM-1, the reason in the crash record (Melodee's releases)
