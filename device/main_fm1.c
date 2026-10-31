@@ -980,8 +980,14 @@ static void fm1_main(void)
                 master_pos = mirror_in_master(remote.master >= 0 ? (uint32_t)remote.master : (uint32_t)(knob / 4));
             }
         }
+#ifdef FM1_BATT_EVERY                               /* (felucca-bsp's scan reads the battery too) */
+        if (fm1_ms - batt_t >= 100u) {              /* the battery, ten times a second (plat_battery); the scan's
+                                                     * reading while it owns the converter (the keys' readings on) */
+            int32_t b = fm1_an.con || fm1_an.pend ? (int32_t)fm1_an.batt : fm1_adc_read(FM1_ADC_BATT);
+#else
         if (!fm1_an.con && !fm1_an.pend && fm1_ms - batt_t >= 100u) {   /* the battery, ten times a second (plat_battery) */
             int32_t b = fm1_adc_read(FM1_ADC_BATT);
+#endif
             batt_t = fm1_ms;
             if (b > 0)
                 batt_raw = batt_raw ? batt_raw + (b - batt_raw) / 16 : b;
