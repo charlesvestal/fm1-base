@@ -11,7 +11,7 @@
   manual/index.html, img/     the manual (APP_DIR/docs/MANUAL.md, its images from APP_DIR/docs/img), if there is one
   emu/                        the firmware in the browser (APP_DIR/build/emu: tools/build.py APP_DIR --web)
   words/                      the screen reader's words files (APP_DIR/web/words), every one ever made
-  mirror/index.html           the screen mirror (web/mirror/index.html), with mirror = true
+  mirror/index.html           the screen mirror (web/mirror/index.html, with fm1ports.js inlined), with mirror = true
   backup/index.html           backup and restore in the browser (web/backup/index.html, with fm1ports.js inlined), with
                               backup = true: its magic and version from APP_DIR/app.h (APP_BACKUP_MAGIC, APP_BACKUP_VERSION)
   firmware/NAME-VERSION.fwsc  the package the installer writes; also the download
@@ -93,7 +93,8 @@ def tool_pages(app, conf=None, values=None):
     out = {}
     if conf.get("mirror"):
         out["mirror/index.html"] = fill((SRC / "web" / "mirror" / "index.html").read_text(encoding="utf-8"),
-                                        dict({"NAME": conf.get("name", app.name)}, **(values or {})), "web/mirror")
+                                        dict({"NAME": conf.get("name", app.name), "PORTS_JS": ports_js()}, **(values or {})),
+                                        "web/mirror")
     if conf.get("backup"):
         out["backup/index.html"] = fill((SRC / "web" / "backup" / "index.html").read_text(encoding="utf-8"),
                                         dict(backup_values(app, conf), PORTS_JS=ports_js(), **(values or {})),

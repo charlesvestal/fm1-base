@@ -78,8 +78,10 @@ run mirror sh -c "mkdir -p $OUT/mirror && $CC -std=c99 -Wall -Wextra -Werror -Wn
     -Itemplate/build/gen -o $OUT/mirror_test tests/mirror_test.c && $OUT/mirror_test --out $OUT/mirror"
 if command -v node >/dev/null 2>&1; then
     run mirror-viewer node tests/mirror_test.mjs $OUT/mirror
+    # the page finding the FM-1 (web/fm1ports.js): by name, the pick, a HELLO answer on another port; never other gear
+    run mirror-ports node tests/mirror_ports_test.mjs
 else
-    echo "  skip mirror-viewer (no node)"
+    echo "  skip mirror-viewer, mirror-ports (no node)"
 fi
 run mirror-png "$PY" tools/fm1_mirror.py $OUT/mirror.png --from $OUT/mirror/stream.syx
 run template template/build/host/template_host template/tests/basic.txt template/build/host
