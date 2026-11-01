@@ -30,6 +30,7 @@ run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/
 run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts
 run fastmath sh -c "$CC -O2 -w -o $OUT/fastmath_test tests/fastmath_test.c -lm && $OUT/fastmath_test"
+run midi-rel sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -o $OUT/midi_rel_test tests/midi_rel_test.c && $OUT/midi_rel_test"   # include/midi_rel.h
 run boot-pack sh tests/boot_pack_test.sh               # the boot's LZMA load images (boot_pack = true)
 # the screen reader's firmware side (device/announce.c, the one copy: fm1-reader's tools/sync_announce.sh copies it to
 # the firmwares not on fm1-base): the protocol, the SAY frames, ann_later's settling
