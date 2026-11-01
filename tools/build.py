@@ -31,6 +31,10 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              that nothing calls or loads the chip ROM skips them
   mul64_check_skip = ["mul_f256"]   functions the note on inlined 64-bit multiplies beside loads leaves out
                              (felucca-bsp docs/CPU.md; the compiler runtime's __* are left out anyway)
+  web_cflags = ["-sX=1"]     more emcc flags for the emulator, compiling and linking (fm1-ripple: Lua's setjmp in
+                             WebAssembly itself, -sSUPPORT_LONGJMP=wasm)
+  web = ["build/web/*.c"]    units for the browser's emulator only (relative to APP_DIR, globs too): what the device
+                             loads at run time, linked in (fm1-ripple's currents)
   vendored = ["third_party/"]   other people's libraries, compiled for the FM-1 with their machine-specific code off
                              by flags: the register check skips them entirely (it reads the text: x86 asm behind
                              an #if would fail it)
@@ -955,6 +959,25 @@ def o2_objects(cc, base_flags, out):
     return [str(o) for _, o in jobs]
 
 
+def web_objects(base_flags, out):
+    """fm1.toml web = [...]: units compiled into the browser's emulator only (a firmware's plug-ins, linked in where
+    the device loads them at run time), relative to APP_DIR (globs too); their objects"""
+    files = [f for u in CONF.get("web", []) for f in (sorted(APP.glob(u)) if any(ch in u for ch in "*?[") else [APP / u])]
+    out.mkdir(parents=True, exist_ok=True)
+    jobs = [(f, out / ("web_" + "_".join(f.relative_to(APP).with_suffix("").parts) + ".o")) for f in files]
+
+    def one(job):
+        f, o = job
+        r = subprocess.run(["emcc", *base_flags, f"-I{f.parent}", "-c", str(f), "-o", str(o)], capture_output=True, text=True)
+        return r.stderr if r.returncode else ""
+    with ThreadPoolExecutor(8) as ex:
+        errs = [e for e in ex.map(one, jobs) if e]
+    if errs:
+        sys.stderr.write(errs[0])
+        raise SystemExit("build: a web unit failed")
+    return [str(o) for _, o in jobs]
+
+
 def build_id():
     """this build's sources (the app's, fm1-base's, felucca-bsp's chip/) and version, hashed: the second core's bar
     (fm1_cpu1_bar_build) is lifted for a new build"""
@@ -1002,12 +1025,15 @@ def build_web():
     emu = OUT / "emu"
     emu.mkdir(parents=True, exist_ok=True)
     web_inc = [f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))]
-    o2_objs = o2_objects("emcc", ["-O2", "-ffp-contract=off", "-std=gnu99", "-w", "-DPLAT_HOST", "-DPLAT_WEB", *web_inc],
+    wf = CONF.get("web_cflags", [])
+    o2_objs = o2_objects("emcc", ["-O2", "-ffp-contract=off", "-std=gnu99", "-w", "-DPLAT_HOST", "-DPLAT_WEB", *wf, *web_inc],
                          emu / "o2")
+    o2_objs += web_objects(["-O2", "-ffp-contract=off", "-std=gnu99", "-w", "-DPLAT_HOST", "-DPLAT_WEB", *wf, *web_inc],
+                           emu / "web")
     cmd = ["emcc", "-O2", "-ffp-contract=off", "-std=gnu99", "-Wall", "-Wno-unused-function", "-Wno-unused-parameter",
            "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *opt_flags(), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
            *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
-           "--no-entry", "-sSTANDALONE_WASM", "-sSTACK_SIZE=1048576", "-sINITIAL_MEMORY=33554432", "-sFILESYSTEM=0",
+           *wf, "--no-entry", "-sSTANDALONE_WASM", "-sSTACK_SIZE=1048576", "-sINITIAL_MEMORY=33554432", "-sFILESYSTEM=0",
            "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *o2_objs]
     r = subprocess.run(cmd, capture_output=True, text=True)
     sys.stderr.write(r.stderr)
