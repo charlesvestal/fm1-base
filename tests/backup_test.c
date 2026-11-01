@@ -23,9 +23,11 @@
 #define FELUCCA_ID "FM-1_1100"
 
 /* the app (its app.h) */
-enum { OBJ_PROJ, OBJ_PANEL, OBJ_SONGS, OBJ_PAT0, OBJ_NOBJ = OBJ_PAT0 + 16 };
+enum { OBJ_PROJ, OBJ_PANEL, OBJ_SONGS, OBJ_PAT0, OBJ_KEYS = OBJ_PAT0 + 16, OBJ_NOBJ };   /* KEYS: not backed up (the
+                                                * radio's, say): the pooled variant keeps it in the pool */
 #define APP_STORE_MAP {0xFC000u, 0xDC000u, 0x97000u, 0x99000u, 0x9B000u, 0x9D000u, 0x9F000u, 0xA1000u, 0xA3000u, \
-                       0xA5000u, 0xA7000u, 0xA9000u, 0xAB000u, 0xAD000u, 0xAF000u, 0xB1000u, 0xB3000u, 0xB5000u, 0xB7000u}
+                       0xA5000u, 0xA7000u, 0xA9000u, 0xAB000u, 0xAD000u, 0xAF000u, 0xB1000u, 0xB3000u, 0xB5000u, 0xB7000u, \
+                       0xB9000u}
 #define APP_BACKUP_OBJS {OBJ_PROJ, OBJ_SONGS, OBJ_PAT0, OBJ_PAT0 + 1, OBJ_PAT0 + 2, OBJ_PAT0 + 3, OBJ_PAT0 + 4, \
                          OBJ_PAT0 + 5, OBJ_PAT0 + 6, OBJ_PAT0 + 7, OBJ_PAT0 + 8, OBJ_PAT0 + 9, OBJ_PAT0 + 10, \
                          OBJ_PAT0 + 11, OBJ_PAT0 + 12, OBJ_PAT0 + 13, OBJ_PAT0 + 14, OBJ_PAT0 + 15}
@@ -35,7 +37,7 @@ enum { OBJ_PROJ, OBJ_PANEL, OBJ_SONGS, OBJ_PAT0, OBJ_NOBJ = OBJ_PAT0 + 16 };
 #define APP_STORE_POOL_N 24u
 #define APP_STORE_POOL_OLD 34u
 #define APP_STORE_POOL_OBJ0 OBJ_SONGS
-#define APP_STORE_POOL_OBJN 17u
+#define APP_STORE_POOL_OBJN 18u             /* (the songs, 16 slots and KEYS) */
 #endif
 #define APP_BACKUP_MAGIC 0x42545354u     /* "TSTB" */
 #define APP_BACKUP_VERSION 3u
@@ -357,6 +359,9 @@ int main(int argc, char **argv)
     save(OBJ_PAT0 + 15, 3840, 8);
     snap(&set_b);
     check("set B differs from A", !same(&set_a, &set_b));
+#ifdef APP_STORE_POOL
+    save(OBJ_KEYS, 200, 77);                      /* a pooled object the backup does not hold */
+#endif
 
     /* ---- refused, failed: nothing changes */
     playing = 1;
@@ -463,6 +468,14 @@ int main(int argc, char **argv)
                                                                reloads == 1 && begins == 1);
     check("... every object as backed up (the slot absent in A: absent)", same(&now, &set_a) && now.n[3] < 0);
     check("... the panel's calibration untouched", panel_same());
+#ifdef APP_STORE_POOL
+    {
+        uint8_t b[256], k[256];
+        fill(b, 200, 77);
+        check("... a pooled object the backup does not hold (the radio's keys): kept",
+              st_load(OBJ_KEYS, k, sizeof k) == 200 && !memcmp(k, b, 200));
+    }
+#endif
     check("... the journal record erased", nor[RS_REC] == 0xFF && nor[RS_REC + 299] == 0xFF);
     backup(0);
     check("... a backup of it is the image again", got_n == img_n && !memcmp(got, img, img_n));

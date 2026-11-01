@@ -38,7 +38,8 @@
  * RAM: one object's buffer (bu_buf, 3840 B, the pool), the staging list; the flash does the rest.
  * An app with a pooled store (APP_STORE_POOL, storage.c) has no second copy of everything to stage into: 2. stages
  * nothing (every record still received and checked, so a wrong or cut backup changes nothing), and 4. erases the
- * pooled objects, then fetches the image again and saves each object (rs_rewrite; the backup is the user's own: a
+ * pooled objects the backup holds (one it does not, OBJ_BLE's keys say, is kept), then fetches the image again and
+ * saves each object (rs_rewrite; the backup is the user's own: a
  * cable pulled in between leaves a partly restored set, and restoring again finishes it). An older backup's
  * placeholders (APP_STORE_POOL_EMPTY) are not written.
  *
@@ -397,15 +398,16 @@ static int rs_commit(void)
 }
 
 #ifdef APP_STORE_POOL
-/* the pool's restore, after the question: every pooled object's copies erased, then each object of the image (fetched
- * again, each record's CRC checked again) saved; 0 = done */
+/* the pool's restore, after the question: the copies of every pooled object the backup holds erased (a pooled object
+ * it does not, the radio's keys say, kept), then each object of the image (fetched again, each record's CRC checked
+ * again) saved; 0 = done */
 static int rs_rewrite(void)
 {
     uint32_t pos = BU_HEAD, i, k;
     (void)rs_stage;                                   /* (the A/B pairs' staging and commit: not a pool's) */
     (void)rs_commit;
-    for (i = APP_STORE_POOL_OBJ0; i < ST_POOL_LAST; i++)
-        if (st_pool_drop(i))
+    for (i = 0; i < BU_NOBJ; i++)
+        if (st_pooled(bu_obj(i)) && st_pool_drop(bu_obj(i)))
             return RS_E_ERASE;
     for (i = 0; i < BU_NOBJ; i++) {
         uint8_t r[BU_REC];
