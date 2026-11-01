@@ -5,7 +5,8 @@
 // input goes in and, about 30 times a second, the screen, the lights, any saved objects and what the
 // firmware said to a screen reader (fm1-reader's SysEx frames) go out.
 // An app can add its own part (APP_DIR/web/emu/app_worklet.js, loaded first): globalThis.fm1App with any of
-// load(fm1), message(fm1, m) for the page's { type: "app" } messages, and process(fm1) before each quantum.
+// load(fm1), message(fm1, m) for the page's { type: "app" } messages, process(fm1) before each quantum, and env:
+// functions app.wasm imports (its "env" imports; any other is a stub that returns 0).
 
 const clock = globalThis.performance ? () => globalThis.performance.now() : () => Date.now();
 
@@ -34,7 +35,8 @@ class Fm1 extends AudioWorkletProcessor {
         proc_exit: () => {},
       };
       const stub = new Proxy(wasi, { get: (t, k) => (k in t ? t[k] : () => 0) });
-      const env = new Proxy({}, { get: () => () => 0 });
+      const appEnv = (globalThis.fm1App && globalThis.fm1App.env) || {};
+      const env = new Proxy(appEnv, { get: (t, k) => (k in t ? t[k] : () => 0) });
       const { instance } = await WebAssembly.instantiate(m.wasm, { wasi_snapshot_preview1: stub, env });
       this.ex = instance.exports;
       this.mem = this.ex.memory;

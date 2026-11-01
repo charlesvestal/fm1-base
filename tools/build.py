@@ -35,6 +35,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              WebAssembly itself, -sSUPPORT_LONGJMP=wasm)
   web = ["build/web/*.c"]    units for the browser's emulator only (relative to APP_DIR, globs too): what the device
                              loads at run time, linked in (fm1-ripple's currents)
+  web_link = ["build/web/*.a"]   archives linked into the browser's emulator as they are (relative to APP_DIR, globs
+                             too): what a firmware builds for it itself (fm1-ripple: its C++ currents, by emcc)
   vendored = ["third_party/"]   other people's libraries, compiled for the FM-1 with their machine-specific code off
                              by flags: the register check skips them entirely (it reads the text: x86 asm behind
                              an #if would fail it)
@@ -1034,7 +1036,9 @@ def build_web():
            "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *opt_flags(), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
            *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            *wf, "--no-entry", "-sSTANDALONE_WASM", "-sSTACK_SIZE=1048576", "-sINITIAL_MEMORY=33554432", "-sFILESYSTEM=0",
-           "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *o2_objs]
+           "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *o2_objs,
+           *[str(f) for u in CONF.get("web_link", []) for f in (sorted(APP.glob(u)) if any(ch in u for ch in "*?[")
+                                                               else [APP / u])]]
     r = subprocess.run(cmd, capture_output=True, text=True)
     sys.stderr.write(r.stderr)
     if r.returncode:
