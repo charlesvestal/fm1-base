@@ -268,6 +268,29 @@ uint32_t plat_xruns(void);
 #define PLAT_TICKS_PER_US 24u
 uint32_t plat_ticks24(void);
 
+/* Disk mode (fm1.toml msc = true: FM1B_MSC; device/msc.c on felucca-bsp's FELUCCA_MSC): the FM-1 shows the computer a
+ * USB drive, the app's blocks, until it goes back to itself; meanwhile it has no USB MIDI or audio. The app keeps the
+ * blocks (plat_disk_t) and calls plat_disk_poll from its main loop (APP_LOOP: every pass) while on. Host: nothing
+ * comes (PLAT_DISK_WAITING) */
+typedef struct {
+    uint32_t blocks;                                   /* 512-byte blocks */
+    const uint8_t *(*read)(uint32_t lba);              /* the block (512 bytes, kept until the next call); 0: zeros */
+    int (*write)(uint32_t lba, const uint8_t *b);      /* 0 = written (it may hold it until flush) */
+    void (*flush)(void);                               /* what is held, written (the computer synced or ejected) */
+    const char *vendor, *product;                      /* what the computer calls it: 8 and 16 characters at most */
+} plat_disk_t;
+enum { PLAT_DISK_OFF, PLAT_DISK_WAITING, PLAT_DISK_MOUNTED, PLAT_DISK_EJECTED };
+void plat_disk_mode(const plat_disk_t *d);             /* d: the FM-1 drops off USB and comes back as this disk; 0:
+                                                        * flushed, then back as itself */
+int plat_disk_poll(void);                              /* main loop: serve the computer -> PLAT_DISK_* (EJECTED: the
+                                                        * computer let it go) */
+uint32_t plat_disk_idle_ms(void);                      /* since the computer's last command */
+
+/* code loaded at run time (fm1-ripple's currents: plug-ins copied from its disk into the pool and run there): the
+ * guard's RAM code window (felucca-bsp fm1_guard.h, normally .ram_text alone) widened from .ram_text up to end, so
+ * code there may run. Main loop, after the guards are on (app_init or later); host: nothing */
+void plat_code_window(const void *end);
+
 /* The second core (fm1.toml cpu2 = true: FM1B_CPU2; felucca-bsp's chip/fm1_cpu1.h, Melodee's): a worker for a part of
  * the render. Start it in app_init (the one time it may start: at power-on, before the audio and the timers); the
  * render hands it a job, does its own share, then waits for it. One job at a time. A failure (it misread a job, it

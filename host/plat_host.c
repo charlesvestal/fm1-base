@@ -608,6 +608,17 @@ int plat_store_save(uint32_t obj, const void *src, uint32_t len)
 static uint32_t cpu_pct;
 uint32_t plat_cpu_pct(void) { return cpu_pct; }
 uint32_t plat_xruns(void) { return 0; }
+void plat_code_window(const void *end) { (void)end; }
+/* disk mode: no computer in the simulator; the app's screen and flush still run */
+static const plat_disk_t *host_disk;
+void plat_disk_mode(const plat_disk_t *d)
+{
+    if (!d && host_disk && host_disk->flush)
+        host_disk->flush();
+    host_disk = d;
+}
+int plat_disk_poll(void) { return host_disk ? PLAT_DISK_WAITING : PLAT_DISK_OFF; }
+uint32_t plat_disk_idle_ms(void) { return 0; }
 uint32_t plat_ticks24(void)                     /* the host's monotonic clock, at the device's rate */
 {
     struct timespec t;
@@ -1476,11 +1487,11 @@ int main(int argc, char **argv)
             FILE *df = fopen(a, "rb");
             uint32_t off = (uint32_t)strtoul(b, 0, 0);
             data_init();
-            if (!df || off < PLAT_DATA_LO || off >= PLAT_DATA_HI) {
+            if (!df || !PLAT_DATA_OK(off, 1u)) {
                 printf("FAIL data %s %s: no such file, or outside the data area\n", a, b);
                 fails++;
-            } else {
-                size_t n = fread(&data_area[off - PLAT_DATA_LO], 1, PLAT_DATA_HI - off, df);
+            } else {                                /* (data_area starts at DATA_BASE: the windows below too) */
+                size_t n = fread(&data_area[off - DATA_BASE], 1, PLAT_XDATA1_HI - off, df);
                 printf("  ok   data: %u B at %#x\n", (unsigned)n, (unsigned)off);
             }
             if (df)
