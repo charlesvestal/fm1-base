@@ -19,7 +19,8 @@
  *   FM1B_UAC_DEEP 0         1: the USB audio input keeps a half more in hand, for renders that take most of
  *                           their time (its 4 KB ring in the app's pool; 5.8 ms more latency)
  *   FM1B_UAC_RING_POOL 0    1: the USB audio input's 2 KB ring in the pool, its RAM left to the app
- *   FM1B_UAC_OUT 1          USB audio output: the computer plays through the FM-1, mixed after the app, at MASTER
+ *   FM1B_UAC_OUT 1          USB audio output: the computer plays through the FM-1, mixed after the app and after the
+ *                           USB recording's tap, at MASTER and plat_usb_play_gain (device/uac_mix.h)
  *   FM1B_TRS 1              MIDI in on the TRS jack
  *   APP_TOUCH               velocity and pressure from the keys (lib/touch.h)
  *   FM1B_BLE 0              Bluetooth MIDI (fm1.toml ble = true; tools/build.py --no-ble leaves it out)

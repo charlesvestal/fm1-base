@@ -28,7 +28,8 @@
  *   out                          print the MIDI sent since the last "out" (and forget it; clocks not shown)
  *   expect_out PORT B0 B1 B2     check that this message went out to PORT since the last "out" (USB, BLE, BLE-DEV)
  *   expect_no_out PORT B0 B1 B2  check that it did not
- *   expect WHAT VALUE            check state: exit 1 on mismatch; VALUE "<N" / ">N" is a bound
+ *   expect WHAT VALUE            check state: exit 1 on mismatch; VALUE "<N" / ">N" is a bound (WHAT: store_writes,
+ *                                store_tries, clocks_out, midi_out, usb_play_gain, usb_audio_full, ... below)
  *   reboot                       re-run boot from the simulated flash (persistence test)
  *   data FILE OFFSET             a file into the simulated data area (plat_data) at OFFSET (its windows: plat.h)
  *   res 0|1                      (FM1B_RES) the resource region there (1, at start) or not (0: an FM-1 updated
@@ -544,6 +545,8 @@ int plat_host_read(uint32_t addr, uint8_t *dst, uint32_t n) { (void)addr, (void)
 void plat_host_patience(uint32_t try_ms, uint32_t total_ms) { (void)try_ms, (void)total_ms; }
 static int uac_full;                            /* plat_usb_audio_full: the render at full level, MASTER after it */
 void plat_usb_audio_full(int on) { uac_full = on != 0; }
+static uint32_t usb_play_q12 = 4096u;            /* plat_usb_play_gain: no USB audio on the host; kept for a test */
+void plat_usb_play_gain(uint32_t q12) { usb_play_q12 = q12 > 4096u ? 4096u : q12; }
 
 /* flash: one buffer per object, kept across a simulated reboot */
 static uint8_t store[OBJ_NOBJ][PLAT_STORE_MAX];
@@ -1140,6 +1143,10 @@ static int expect(const char *what, const char *val)
 #endif
     else if (!strcmp(what, "clocks_out"))
         got = (int)clock_out_count;
+    else if (!strcmp(what, "usb_play_gain"))        /* plat_usb_play_gain's level, 0..4096 */
+        got = (int)usb_play_q12;
+    else if (!strcmp(what, "usb_audio_full"))       /* plat_usb_audio_full: 1 full, 0 at MASTER */
+        got = uac_full;
     else if (!strcmp(what, "midi_out"))
         got = (int)midi_out_count;
     else if (!strcmp(what, "midi_in_from"))         /* plat_midi_in_from: 1 USB, 2 BLE, 8 BLE-DEV, 0 TRS */

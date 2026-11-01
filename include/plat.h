@@ -220,6 +220,12 @@ void plat_host_patience(uint32_t try_ms, uint32_t total_ms);   /* each try's wai
 /* USB audio full (FM1B_UAC): 1, the USB audio input at full level (the app's render at gain 4096), MASTER for the
  * speaker and headphones only; 0, both at MASTER (the default) */
 void plat_usb_audio_full(int on);
+/* the computer's audio (FM1B_UAC_OUT, usb_audio_out: the computer plays through the FM-1): the level it is mixed in
+ * at, 0 muted .. 4096 as sent (the default; above is 4096), times MASTER. Muted, the FM-1 still takes the stream, so
+ * the computer sees no change and turning it up again starts in step. The USB recording (usb_audio_in) is taken
+ * before the computer's audio is mixed in, whatever this is: recording the FM-1 never records the computer's own
+ * playback (device/uac_mix.h). Without usb_audio_out, nothing */
+void plat_usb_play_gain(uint32_t q12);
 
 /* the keys' velocity and pressure (an app with APP_KEY_SENSE): on, the scan reads the keys on the analog rows and
  * hands each reading to the app (app_key_sample, app_key_probe); off by default */

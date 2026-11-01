@@ -142,6 +142,7 @@ Before writing a feature into the app, look for it in fm1-base (`include/plat.h`
 | room in the MIDI out queue, a new USB connection | `plat_midi_out_room(to)`, `plat_midi_out_link()` |
 | dim keys, PLAY's green LED | `plat_lights` |
 | USB audio at full level, MASTER for the speaker only | `plat_usb_audio_full` |
+| the computer's USB audio muted or turned down (usb_audio_out) | `plat_usb_play_gain` |
 | lower case in the big fonts | `font_full = ["L"]` |
 | its own exports in the browser build | `APP_WEB` (the app's `web.c`), and its own page in `app/web/emu/` |
 | its own second core (hardware code that cannot go into felucca-bsp: another licence, not tried there yet) | `asm = [...]` (its entry assembled), `vendored = [...]` (the register check leaves it), its RAM loop in section `.c1_text` (copied and guarded with `.ram_text`, left out of the RAM-calls check), `APP_CSTART` (held first thing at a start), `APP_FAULT` (a crash on it, or beside it) |

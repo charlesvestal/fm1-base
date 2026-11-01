@@ -26,6 +26,11 @@ run() {
 }
 run encoder sh -c "$CC -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -o $OUT/encoder_test tests/encoder_test.c && $OUT/encoder_test"
 run trs sh -c "$CC -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -Idevice -o $OUT/trs_test tests/trs_test.c && $OUT/trs_test"
+# USB audio around a render block (device/uac_mix.h) on felucca-bsp's usb.c: the recording without the computer's audio,
+# the computer's at plat_usb_play_gain and MASTER, muted still read; and without usb_audio_out
+run uac-mix sh -c "$CC -std=c99 -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -o $OUT/uac_mix_test tests/uac_mix_test.c && \
+    $OUT/uac_mix_test && $CC -std=c99 -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -DTEST_NO_OUT -o $OUT/uac_mix_test_noout \
+    tests/uac_mix_test.c && $OUT/uac_mix_test_noout"
 run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/storage_test"
 run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts

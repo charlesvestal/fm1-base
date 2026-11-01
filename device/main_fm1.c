@@ -40,6 +40,7 @@ static int bta_frame(const uint8_t *p, uint32_t n);
 #if FM1B_BLE_OWN && FM1B_BLE_CENTRAL
 static int dev_frame(const uint8_t *p, uint32_t n);   /* bt_own_central.c */
 #endif
+#include "uac_mix.h"                                /* the USB recording, the computer's audio, in that order */
 static void render_block(int32_t *o)                /* ALNK0: one half, measured */
 {
     uint32_t t0 = fm1_ticks(), us, budget = HALF_FRAMES * 1000000u / FS;
@@ -72,19 +73,8 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
             }
             if (radio_quiet)
                 continue;
-#if FELUCCA_UAC_OUT
-            uac_play(o + 2u * k, REND_FRAMES, full ? 4096u : master_pos * master_pos >> 12);   /* the computer's audio,
-                                                                                         * at MASTER */
-#endif
-#if FELUCCA_UAC
-            uac_tap(o + 2u * k, REND_FRAMES);       /* the USB audio input: the same master output */
-#endif
-            if (full) {                             /* the speaker and headphones: MASTER after the tap */
-                const float g = (float)gain * (1.0f / 4096.0f);
-                uint32_t i;
-                for (i = 0; i < 2u * REND_FRAMES; i++)
-                    o[2u * k + i] = (int32_t)((float)o[2u * k + i] * g);
-            }
+            uac_mix(o + 2u * k, REND_FRAMES, gain, master_pos, full, usb_play_q12);   /* the USB
+                                                     * recording, then the computer's audio, then MASTER if full */
 #if FM1B_BT_AUDIO
             if (own_bta_feed(o + 2u * k, REND_FRAMES)) {   /* Bluetooth audio streams: the FM-1's own output muted */
                 uint32_t i;

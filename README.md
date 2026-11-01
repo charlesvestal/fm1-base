@@ -30,8 +30,8 @@ parts it has.
 | Bluetooth on fm1-base's own stack instead of JieLi's libraries (below) | `ble_stack = "own"`, with `ble` | the same calls |
 | Pairing on the own stack (LE legacy pairing, the bond kept) | `ble_pairing = true`, with `ble_stack = "own"` | nothing |
 | Bluetooth audio to headphones and speakers (A2DP) | `bt_audio = true`, with `ble_stack = "own"`; `bt_log = true` puts its set-up on the radio's log | `plat_bta_on`, `plat_bta_scan`, `plat_bta_found`, `plat_bta_known`, `plat_bta_pick`, `plat_bta_reconnect`, `plat_bta_forget`, `plat_bta_hangup`, `plat_bta_state` |
-| USB audio: the FM-1 recorded over the cable | on unless `usb_audio_in = false` | nothing: the master output |
-| USB audio: a computer plays through the FM-1 | on unless `usb_audio_out = false` (needs the input too) | nothing: mixed after the app, at MASTER |
+| USB audio: the FM-1 recorded over the cable | on unless `usb_audio_in = false` | nothing: the app's output at MASTER, without the computer's audio (taken before it is mixed in) |
+| USB audio: a computer plays through the FM-1 | on unless `usb_audio_out = false` (needs the input too) | nothing: mixed after the app and after the recording's tap, at MASTER; `plat_usb_play_gain` (0 muted .. 4096, the default) for the app's own setting |
 | USB MIDI after the USB audio interfaces, so macOS 13-15 show the audio device | on with the USB audio input, unless `usb_midi_last = false` | nothing |
 | Velocity and pressure from the keys | `#define APP_TOUCH` in app.h | `touch_on`, `touch_poll`, `touch_keys`, `touch_vel`, `touch_pressure` (lib/touch.h) |
 | WiFi: a station on the networks around, with lwIP's sockets | `wifi = true` (not with `ble`, yet), and `net = [...]` for the app's network code | `plat_wifi_on`, `plat_wifi_state`, `plat_wifi_scan`, `plat_wifi_found`, `plat_wifi_join`, `plat_wifi_saved`, `plat_wifi_forget`, `plat_net_task` |
