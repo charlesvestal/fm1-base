@@ -343,7 +343,7 @@ int plat_net_task(void (*fn)(void *), void *arg, const char *name);   /* a task 
 #define FM1B_WIFI_OWN 0
 #endif
 #define PLAT_WIFI_STORE_SIZE 336u
-enum { WIFI_MODE_OFF, WIFI_MODE_AUTO, WIFI_MODE_MAN, WIFI_MODE_AP, WIFI_MODE_AP_MAN, WIFI_MODE_JAM };   /* JAM: AUTO, and an Optimist access point (FM1-xxxx, its password wifi_ap_default_key's) is joined when no saved network is heard */
+enum { WIFI_MODE_OFF, WIFI_MODE_AUTO, WIFI_MODE_MAN, WIFI_MODE_AP, WIFI_MODE_AP_MAN, WIFI_MODE_JAM, WIFI_MODE_JAM_HOST };   /* JAM_HOST: AP with the automatic name and its default password only, for JAM to join */   /* JAM: AUTO, and an Optimist access point (FM1-xxxx, its password wifi_ap_default_key's) is joined when no saved network is heard */
 void plat_wifi_mode(int mode);         /* OFF: nothing runs (the radio, once started, stays up); MAN: joins when asked;
                                         * AUTO: and the best saved network heard, at the start and whenever none is
                                         * joined; AP, AP_MAN: the FM-1 is the access point (wifi_ap = true, below).
@@ -443,8 +443,11 @@ int plat_wifi_ap_set(const uint8_t *ssid, uint32_t len, const char *pass);   /* 
                                         * automatic one) and password (8..63 printable characters): the key made (a
                                         * slice a pass) and kept, the access point started again on it (AP_MAN: started).
                                         * 0, -1 a bad name or password */
-int plat_wifi_ap_set_channel(int ch);  /* 1..13, kept; a running access point moves once it has rested 1.2 s. 0 / -1 */
-int plat_wifi_ap_channel(void);        /* the channel (kept, or the one plat_wifi_ap_start runs) */
+int plat_wifi_ap_set_channel(int ch);  /* 0 AUTO (the default: the quietest channel, chosen again at each start), or 1..13, kept;
+                                        * a running access point moves once it has rested 1.2 s. 0 / -1 */
+int plat_wifi_ap_channel(void);        /* the channel in use (AUTO: the one chosen, else the kept one, or the one
+                                        * plat_wifi_ap_start runs) */
+int plat_wifi_ap_channel_auto(void);   /* 1: CHANNEL is AUTO */
 int plat_wifi_ap_name(char *name);     /* the network's name (33 bytes, may be 0): its length */
 int plat_wifi_jam(void);               /* MODE JAM: 0 not joined that way, 1 joining / joined an Optimist access point (plat_wifi_ssid), 2 the last one tried refused its default password (it has a typed one) */
 int plat_wifi_ap_has_key(void);        /* a typed password's key is kept */

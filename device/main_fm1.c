@@ -925,10 +925,10 @@ static int wifi_frame(const uint8_t *p, uint32_t n)
              * falls 0": which switches are on, then what each does now */
             struct plat_wifi_tune t;
             static const char *const CAL[] = {"not read", "187 ", "no 187"};
-            static const char L[4] = {'a', 'b', 'c', 'f'};
+            static const char L[5] = {'a', 'b', 'c', 'f', 'g'};   /* (g: MODE AP's group frames once, WT_GRP) */
             int up = plat_wifi_tune_info(&t);
             q = wifi_cat(b, "tune", e);
-            for (i = 0; i < 4; i++) {
+            for (i = 0; i < 5; i++) {
                 char k[4] = {' ', L[i], ':', 0};
                 q = wifi_cat(q, k, e);
                 q = wifi_cat(q, t.on >> i & 1u ? "on" : "off", e);
@@ -993,9 +993,9 @@ static int wifi_frame(const uint8_t *p, uint32_t n)
         }
         break;
 #if FM1B_WIFI_OWN
-    case 9:                                      /* the tuning's switches: 1 a, 2 b, 4 c, 8 f (wifi/wifi_tune.h) */
+    case 9:                                      /* the tuning's switches: 1 a, 2 b, 4 c, 8 f, 16 g (wifi/wifi_tune.h) */
         if (n >= 5u)
-            plat_wifi_tune_set(p[4] & 15u);
+            plat_wifi_tune_set(p[4] & 31u);   /* (wifi_tune.h WT_BITS) */
         break;
 #endif
     default:
