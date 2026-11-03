@@ -14,8 +14,12 @@
  *   - each client's pairwise key in the MAC at WCID i + 1 (WCID 0 is the MAC's drop entry: never used);
  *   - what is not protected data (beacons, management, EAPOL) goes out at WA_PLAIN, a WCID never keyed: the MAC encrypts
  *     whatever it sends at a keyed WCID, whatever the frame's own Protected bit says;
- *   - a group-addressed frame (Link's multicast) goes once to each keyed client, as a unicast frame with the group
- *     address left in its IP header (the pairwise path is the one proven on this MAC);
+ *   - a group-addressed frame (Link's multicast) goes once to each keyed client but the one it came from, as a unicast
+ *     frame with the group address left in its IP header (the pairwise path is the one proven on this MAC); with the
+ *     tuning's WT_GRP (g) once for all, encrypted with the group key at WCID WA_GRP (not yet measured on the radio);
+ *   - the clients' frames to one another relayed (the user, 2026-11-03: Link's peers must hear each other, not only the
+ *     FM-1): a group frame from a client goes on to the others (and to the FM-1's own stack), a unicast one to the client
+ *     it names; as an access point's own frame (FromDS, its address as the sender's in addr3);
  *   - data from a station that is not associated (it was before a restart): told to join again (deauthentication,
  *     reason 7), once a second at most;
  *   - a ping to the access point is answered (wifi_ip.c, as an access point only).
@@ -28,16 +32,19 @@
  *                power-on
  * plat_wifi_ap_start runs one that is not kept, with MODE OFF. The station's manager rests in either AP mode. */
 #define WA_PLAIN 8u                                     /* the WCID of the frames sent in the clear: never keyed */
+#define WA_GRP (WIFI_AP_CLIENTS + 1u)                   /* the WCID of a group frame sent once (WT_GRP): the group key's */
 #define WA_BEACON_MS 102u
 #define WA_M1_DELAY_MS 20u                              /* association answered -> M1 (the client needs a moment) */
 #define WA_HS_RETRY_MS 1000u
 #define WA_HS_TRIES 4u
 #define WA_IP 0xC0A80401u                               /* 192.168.4.1 */
-#define WA_CH_DEFAULT 6u
+#define WA_CH_DEFAULT 6u                                /* (CHANNEL AUTO before its first choice) */
+#define WA_SCAN_MS 120u                                 /* CHANNEL AUTO: each of the 13 channels listened to this long at a start */
 #define WA_RESTART_MS 1200u                             /* a channel changed: the access point restarts once it rests this long */
 #define WA_STRAY_MS 1000u
-enum { WA_OFF, WA_PMK, WA_RADIO, WA_UP, WA_FAIL };
+enum { WA_OFF, WA_PMK, WA_RADIO, WA_SCAN, WA_UP, WA_FAIL };   /* WA_SCAN: CHANNEL AUTO, the channels heard first */
 _Static_assert(WIFI_AP_CLIENTS < WA_PLAIN, "the clients' WCIDs 1..4 below WA_PLAIN");
+_Static_assert(WA_GRP < WA_PLAIN, "the group WCID between the clients' and WA_PLAIN");
 
 /* what runs the access point (its clients, their handshakes, the leases): with fm1.toml wifi_mem = "app" (FM1B_WIFI_MEM,
  * plat.h plat_wifi_ap_mem) a block the app lends while a MODE AP is chosen or one is starting or up, else static.
@@ -50,7 +57,7 @@ struct wa_mem {
     struct wifi_ap ap;                                  /* the network: the association table, the group key */
     struct wifi_ap hs[WIFI_AP_CLIENTS];                 /* each client's handshake: ANonce, PTK, replay counter */
     struct wifi_ap_dhcp dhcp;
-    struct { uint32_t beacon, assoc, m2, m4, bad, data, dhcp, stray, tx, tx_err; } n;
+    struct { uint32_t beacon, assoc, m2, m4, bad, data, dhcp, stray, tx, tx_err, relay, relay_big; } n;
 };
 static struct {
     uint8_t st, ch, ssid_len;
@@ -58,7 +65,7 @@ static struct {
     uint8_t user_on;                                    /* AP MAN: started (plat_wifi_ap_run, a password set); never kept */
     uint8_t by_mode;                                    /* started by the mode (the record's network), else plat_wifi_ap_start */
     uint8_t save_key;                                   /* the key job in hand is a new password: kept when done */
-    uint32_t t_restart, t_beacon, t_stray;
+    uint32_t t_restart, t_beacon, t_stray, t_scan;
     uint8_t pmk[32];
     char pass[64];                                      /* until the key job has it */
     struct wc_pmk_job job;                              /* (the key: made without the access point running) */
@@ -98,9 +105,13 @@ static void wa_send(uint32_t len)
         wa_tx(len, WA_PLAIN, (f[4] & 1u) ? 0u : 1u);
         return;
     }
-    if (f[4] & 1u) {                                    /* group-addressed: a copy to each keyed client */
-        for (i = 0; i < WIFI_AP_CLIENTS; i++) {
-            if (!wa.m->keyed[i])
+    if (f[4] & 1u) {                                    /* group-addressed */
+        if (wt_mask() & WT_GRP) {                       /* (g): once, the group key's WCID; its sender (addr3) drops its own */
+            wa_tx(len, WA_GRP, 0u);
+            return;
+        }
+        for (i = 0; i < WIFI_AP_CLIENTS; i++) {         /* a copy to each keyed client, but the one it came from */
+            if (!wa.m->keyed[i] || !memcmp(wa.m->ap.clients[i].mac, f + 16, 6))
                 continue;
             memcpy(f + 4, wa.m->ap.clients[i].mac, 6);
             wa_tx(len, i + 1u, 1u);
@@ -135,6 +146,36 @@ static void wa_group_install(void)                      /* the group key in the 
     uint32_t id = wa.m->ap.gtk_id & 3u;
     fm1_wifi_key_wr(FM1_WIFI_SKEY(id), wa.m->ap.gtk);
     fm1_wifi_mac_wr(FM1_WIFI_SKEY_MODE, FM1_WIFI_CIPHER_CCMP << (id * 4u));
+    /* (g)'s WCID: its attribute the shared table (CCMP, no pairwise bit), its IV the group key's id (Optimist's
+     * wifi/wifi_apd.c experiment, wa.mc) */
+    fm1_wifi_mac_wr(FM1_WIFI_WCID_ATTR(WA_GRP), FM1_WIFI_CIPHER_CCMP << 1);
+    fm1_wifi_mac_wr(FM1_WIFI_IVEIV(WA_GRP), id << 30 | 0x20000001u);
+    fm1_wifi_mac_wr(FM1_WIFI_IVEIV(WA_GRP) + 4u, 0);
+}
+/* a client's data frame (f, len; its header hl long, decrypted, LLC/SNAP at hl) to the others: rebuilt as our own frame
+ * (FromDS: addr1 its destination, addr2 us, addr3 the client that sent it), out through wa_send (a group frame to the
+ * other clients, a unicast one to its client) */
+static void wa_relay(const uint8_t *f, uint32_t len, uint32_t hl)
+{
+    uint8_t *t = own_frame();
+    uint32_t n = len - hl;
+    uint16_t seq;
+    if (24u + n > 576u) {                               /* (wifi_txb's room; Link's datagrams are well under it) */
+        wa.m->n.relay_big++;
+        return;
+    }
+    seq = wl.ip.tx_seq++;
+    memset(t, 0, 24);
+    t[0] = 0x08u;                                       /* data (a QoS one's field dropped) */
+    t[1] = 0x42u;                                       /* FromDS, Protected */
+    memcpy(t + 4, f + 16, 6);                           /* addr1: where it goes */
+    memcpy(t + 10, wa.m->ap.mac, 6);                    /* addr2: us */
+    memcpy(t + 16, f + 10, 6);                          /* addr3: the client that sent it */
+    t[22] = (uint8_t)(seq << 4);
+    t[23] = (uint8_t)(seq >> 4);
+    memcpy(t + 24, f + hl, n);
+    wa.m->n.relay++;
+    wa_send(24u + n);
 }
 static void wa_client_drop(uint32_t i)                  /* its keys out of the MAC, its handshake over */
 {
@@ -287,8 +328,18 @@ static void wa_rx(const uint8_t *f, uint32_t len, int8_t rssi, int64_t now)
         }
         return;
     }
-    if (!wa.m->keyed[s] || len < hl + 8u || !wifi_ip_early_filter(&wl.ip, f, len))
+    if (!wa.m->keyed[s] || len < hl + 8u)
         return;                                         /* (only a client whose keys are in) */
+    if (memcmp(f + 16, wa.m->ap.mac, 6) != 0) {         /* not to us: to the other clients (the FM-1 keeps a group one too),
+                                                         * before the IP layer's filter, which keeps only what is the FM-1's */
+        int d = (f[16] & 1u) ? -1 : wa_slot_of(f + 16);
+        if ((f[16] & 1u) || (d >= 0 && wa.m->keyed[d]))
+            wa_relay(f, len, hl);
+        if (!(f[16] & 1u))
+            return;                                     /* (unicast to a client, or to nobody we know: not ours) */
+    }
+    if (!wifi_ip_early_filter(&wl.ip, f, len))
+        return;
     wl.n_kept++;
     if (f[hl + 6u] == 0x08u && f[hl + 7u] == 0x00u && len >= hl + 8u + 20u) {   /* IPv4: where its source is */
         const uint8_t *ip = f + hl + 8u;
@@ -344,7 +395,8 @@ static uint32_t wa_name(uint8_t *out)                   /* the name chosen, else
 {
     static const char H[] = "0123456789ABCDEF";
     uint8_t mac[6];
-    if (wn_st.ap.ssid_len && wn_st.ap.ssid_len <= WN_SSID_MAX) {
+    if (wn_st.ap.ssid_len && wn_st.ap.ssid_len <= WN_SSID_MAX && wn_st.mode != WN_MODE_JAM_HOST) {   /* (JAM HOST: always the
+                                                         * automatic name, the one JAM looks for, wifi_own.c wc_jam_pick) */
         memcpy(out, wn_st.ap.ssid, wn_st.ap.ssid_len);
         return wn_st.ap.ssid_len;
     }
@@ -354,10 +406,35 @@ static uint32_t wa_name(uint8_t *out)                   /* the name chosen, else
     out[6] = (uint8_t)H[mac[5] >> 4], out[7] = (uint8_t)H[mac[5] & 15u];
     return 8u;
 }
-static uint32_t wa_channel(void) { return wn_st.ap.ch ? wn_st.ap.ch : WA_CH_DEFAULT; }   /* (the record's: the AP may
+static uint8_t wa_auto_ch;                              /* CHANNEL AUTO: the one chosen at this start (0: none yet) */
+static uint32_t wa_channel(void) { return wn_st.ap.ch ? wn_st.ap.ch : wa_auto_ch ? wa_auto_ch : WA_CH_DEFAULT; }
+/* CHANNEL AUTO (the user, 2026-11-03: "the channel that is least used ... the default ... at every boot"): the networks the
+ * scan heard (t, the station's table), each weighing its strength (dBm + 100, 0..70) on its channel and, less, on its
+ * neighbours (a 20 MHz channel reaches 2 either side: 4 3 2 1 by distance); the lightest of 1..13 wins, on a tie 6 (the
+ * old default), then 1 and 11 (no overlap between the three), then the lowest. The radio's noise floor is not read (no such register used here):
+ * only the networks heard count */
+static uint32_t wa_pick_channel(const struct wn_scan *t)
+{
+    static const uint8_t W[4] = {4, 3, 2, 1};
+    uint32_t c, i, best = WA_CH_DEFAULT, best_s = 0xFFFFFFFFu;
+    for (c = 1; c <= 13u; c++) {
+        uint32_t sc = 0;
+        for (i = 0; i < t->n; i++) {
+            int32_t d = (int32_t)t->ap[i].ch - (int32_t)c, st = (int32_t)t->ap[i].rssi + 100;
+            d = d < 0 ? -d : d;
+            st = st < 0 ? 0 : st > 70 ? 70 : st;
+            if (d < 4)
+                sc += W[d] * (uint32_t)st;
+        }
+        sc = sc * 4u + (c == 6u ? 0u : c == 1u || c == 11u ? 1u : 2u);   /* (the tie's order: 6, the old default, then 1, 11) */
+        if (sc < best_s)
+            best_s = sc, best = c;
+    }
+    return best;
+}   /* (the record's: the AP may
                                                                                           * still be on the one before) */
-static int wa_mode_ap(void) { return wn_st.mode == WN_MODE_AP || wn_st.mode == WN_MODE_AP_MAN; }
-static int wa_wanted(void) { return wn_st.mode == WN_MODE_AP || (wn_st.mode == WN_MODE_AP_MAN && wa.user_on); }
+static int wa_mode_ap(void) { return wn_st.mode == WN_MODE_AP || wn_st.mode == WN_MODE_AP_MAN || wn_st.mode == WN_MODE_JAM_HOST; }
+static int wa_wanted(void) { return wn_st.mode == WN_MODE_AP || wn_st.mode == WN_MODE_JAM_HOST || (wn_st.mode == WN_MODE_AP_MAN && wa.user_on); }
 static void wa_pmk_start(const char *pass, uint32_t pl);
 static void wa_begin_mode(void)                         /* the record's network: no key job, the radio next */
 {
@@ -365,7 +442,7 @@ static void wa_begin_mode(void)                         /* the record's network:
     wa.save_key = 0;
     wa.ssid_len = (uint8_t)wa_name(wa.ssid);
     wa.ch = (uint8_t)wa_channel();
-    if (wn_st.ap.set == 1u) {                           /* a typed password: its key is kept */
+    if (wn_st.ap.set == 1u && wn_st.mode != WN_MODE_JAM_HOST) {   /* a typed password: its key is kept (JAM HOST: never, the default one) */
         memcpy(wa.pmk, wn_st.ap.pmk, 32);
         wa.st = WA_RADIO;
         return;
@@ -445,10 +522,31 @@ static void wa_poll(void)                               /* once a main-loop pass
         r = own_radio_up();
         if (r < 0)
             wa.st = WA_FAIL;
-        else if (r > 0)
+        else if (r > 0 && wa.by_mode && !wn_st.ap.ch) {   /* CHANNEL AUTO: the channels heard first */
+            wn_scan_clear(&wc_tab);
+            wc.ch = 1;
+            fm1_wifi_mac_wr(FM1_WIFI_RX_FILTER, FM1_WIFI_RX_FILTER_ALL);
+            fm1_wifi_set_channel(wc.ch);
+            wa.t_scan = now;
+            wa.st = WA_SCAN;
+        } else if (r > 0)
             wa_bring_up();
         break;
     }
+    case WA_SCAN:
+        own_rx(wc_on_scan, 8u);                         /* (the station's beacon parser into its table: the manager rests in AP) */
+        if (now - wa.t_scan < WA_SCAN_MS)
+            break;
+        if (wc.ch < 13u) {
+            wc.ch++;
+            fm1_wifi_set_channel(wc.ch);
+            wa.t_scan = now;
+            break;
+        }
+        wa_auto_ch = (uint8_t)wa_pick_channel(&wc_tab);
+        wa.ch = wa_auto_ch;
+        wa_bring_up();
+        break;
     case WA_UP:
         if (now - wa.t_beacon >= WA_BEACON_MS) {
             wa.t_beacon += WA_BEACON_MS;
@@ -497,8 +595,8 @@ int plat_wifi_ap_set(const uint8_t *ssid, uint32_t len, const char *pass)
 {
     uint32_t pl = wa_pass_len(pass);
     own_store_load();
-    if (len > WN_SSID_MAX || (len && !ssid) || !pl)
-        return -1;
+    if (len > WN_SSID_MAX || (len && !ssid) || !pl || wn_st.mode == WN_MODE_JAM_HOST)
+        return -1;                                      /* (JAM HOST: its password is the default one, never typed) */
     wa_stop();
     if (wn_st.mode == WN_MODE_AP_MAN)
         wa.user_on = 1;                                 /* (a password typed starts it) */
@@ -516,8 +614,8 @@ int plat_wifi_ap_set(const uint8_t *ssid, uint32_t len, const char *pass)
 int plat_wifi_ap_set_channel(int ch)
 {
     own_store_load();
-    if (ch < 1 || ch > 13 || wn_ap_set_channel(&wn_st, (uint32_t)ch) != 0)
-        return -1;
+    if (ch < 0 || ch > 13 || wn_ap_set_channel(&wn_st, (uint32_t)ch) != 0)
+        return -1;                                      /* (0: AUTO, chosen again at the restart) */
     own_store_changed();
     if (wa.by_mode && wa.st != WA_OFF) {
         wa.t_restart = own_ms() + WA_RESTART_MS;
@@ -527,6 +625,7 @@ int plat_wifi_ap_set_channel(int ch)
     return 0;
 }
 int plat_wifi_ap_channel(void) { own_store_load(); return (int)(wa.st != WA_OFF && !wa.by_mode ? wa.ch : wa_channel()); }
+int plat_wifi_ap_channel_auto(void) { own_store_load(); return wn_st.ap.ch == 0u; }
 int plat_wifi_ap_name(char *name)
 {
     uint8_t b[WN_SSID_MAX];
@@ -539,7 +638,7 @@ int plat_wifi_ap_name(char *name)
     }
     return (int)n;
 }
-int plat_wifi_ap_has_key(void) { own_store_load(); return wn_st.ap.set == 1u; }
+int plat_wifi_ap_has_key(void) { own_store_load(); return wn_st.ap.set == 1u && wn_st.mode != WN_MODE_JAM_HOST; }
 int plat_wifi_ap_default_key(char *out)
 {
     uint8_t b[WN_SSID_MAX];
@@ -547,7 +646,7 @@ int plat_wifi_ap_default_key(char *out)
     own_store_load();
     n = wa.st != WA_OFF && !wa.by_mode ? wa.ssid_len : wa_name(b);
     wifi_ap_default_key(wa.st != WA_OFF && !wa.by_mode ? wa.ssid : b, n, out);
-    return wn_st.ap.set != 1u;
+    return wn_st.ap.set != 1u || wn_st.mode == WN_MODE_JAM_HOST;   /* (JAM HOST: the default one, whatever is kept) */
 }
 void plat_wifi_ap_forget(void)
 {

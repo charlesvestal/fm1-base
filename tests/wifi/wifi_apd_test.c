@@ -339,7 +339,8 @@ int main(void)
     for (i = 0; i < sizeof wa.pass && wa.pass[i] == 0; i++)
         ;
     check(i == sizeof wa.pass, "the password is wiped once the key job has it");
-    check(wa.ch == 6u && plat_wifi_ap_channel() == 6 && wa.ssid_len == sizeof NAME, "the default channel 6, the chosen name");
+    check(wa.ch == 6u && plat_wifi_ap_channel() == 6 && plat_wifi_ap_channel_auto() && wa.ssid_len == sizeof NAME,
+          "CHANNEL AUTO (the default): nothing heard, channel 6; the chosen name");
     {
         char nm[33];
         check(plat_wifi_ap_name(nm) == 7 && !strcmp(nm, "FM1TEST"), "plat_wifi_ap_name");
@@ -412,6 +413,63 @@ int main(void)
           "the group address stays in the IP header; Protected");
     check(plat_net_udp_send(20808, 0xC0A80409u, 1, "x", 1) == -1, "an address nobody holds is not sent to");
 
+    /* 7b. the clients hear each other (the user, 2026-11-03: Link's peers): A's group datagram goes on to B (not back to A)
+     * and to the app; A's unicast frame to B goes to B only; with the tuning's (g) a group frame goes once, at the group
+     * key's WCID, no ACK asked */
+    {
+        uint8_t f[200];
+        uint32_t off, g0 = group_rx;
+        const struct txe *e;
+        off = cl_frame(f, A.mac, 0x0800, 1);          /* a QoS frame: the relayed one is a plain data frame */
+        memset(f + off, 0, 40);
+        f[off] = 0x45, f[off + 3] = 20 + 8 + 4, f[off + 8] = 1, f[off + 9] = 17;
+        f[off + 12] = 192, f[off + 13] = 168, f[off + 14] = 4, f[off + 15] = 2;
+        f[off + 16] = 224, f[off + 17] = 76, f[off + 18] = 78, f[off + 19] = 75;
+        f[off + 20] = 20808 >> 8, f[off + 21] = 20808 & 255, f[off + 22] = 20808 >> 8, f[off + 23] = 20808 & 255, f[off + 25] = 8 + 4;
+        memcpy(f + off + 28, "LINK", 4);              /* (on_group counts A's "LINK") */
+        mark = ntx;
+        rx(f, off + 20u + 12u);
+        e = &txlog[mark % TXMAX];
+        check(ntx == mark + 1u && e->wcid == 2u && !memcmp(e->f + 4, B.mac, 6) && !memcmp(e->f + 10, AP_MAC, 6) &&
+              !memcmp(e->f + 16, A.mac, 6) && e->f[0] == 0x08 && e->f[1] == 0x42 && !memcmp(e->f + 24 + 8 + 28, "LINK", 4),
+              "relay: A's group datagram goes on to B alone (FromDS, A in addr3, the payload whole), not back to A");
+        check(group_rx == g0 + 1u, "relay: ... and the access point's own app hears it too");
+        off = cl_frame(f, A.mac, 0x0800, 0);          /* unicast from A to B */
+        memcpy(f + 16, B.mac, 6);
+        memset(f + off, 0, 40);
+        f[off] = 0x45, f[off + 3] = 20 + 8 + 4, f[off + 8] = 1, f[off + 9] = 17;
+        f[off + 12] = 192, f[off + 13] = 168, f[off + 14] = 4, f[off + 15] = 2;
+        f[off + 16] = 192, f[off + 17] = 168, f[off + 18] = 4, f[off + 19] = 3;
+        f[off + 20] = 20808 >> 8, f[off + 21] = 20808 & 255, f[off + 22] = 20808 >> 8, f[off + 23] = 20808 & 255, f[off + 25] = 8 + 4;
+        g0 = group_rx;
+        mark = ntx;
+        rx(f, off + 20u + 12u);
+        e = &txlog[mark % TXMAX];
+        check(ntx == mark + 1u && e->wcid == 2u && !memcmp(e->f + 4, B.mac, 6) && !memcmp(e->f + 16, A.mac, 6) && group_rx == g0,
+              "relay: A's unicast frame to B goes to B only, not to the app");
+        memcpy(f + 16, "\x02\x11\x22\x33\x44\xEE", 6); /* to a station that is not ours: dropped */
+        mark = ntx;
+        rx(f, off + 20u + 12u);
+        check(ntx == mark, "relay: a unicast frame to a station that is not a client: nothing sent");
+        plat_wifi_tune_set(WT_ALL | WT_GRP);
+        check(reg(0x6800 + 4 * WA_GRP) == 8u && (reg(0x6000 + 8 * WA_GRP) & 0x3FFFFFFFu) == 0x20000001u,
+              "(g): the group WCID's attribute is the shared table (CCMP), its IV the group key's");
+        mark = ntx;
+        check(plat_net_udp_send(20808, 0xE04C4E4Bu, 20808, "HELLO", 5) == 0 && ntx == mark + 1u && txlog[mark % TXMAX].wcid == WA_GRP &&
+              txlog[mark % TXMAX].ack == 0u && (txlog[mark % TXMAX].f[4] & 1u), "(g): our group datagram goes once, at the group WCID, no ACK, to the group address");
+        mark = ntx;
+        off = cl_frame(f, A.mac, 0x0800, 0);
+        memset(f + off, 0, 40);
+        f[off] = 0x45, f[off + 3] = 20 + 8 + 4, f[off + 8] = 1, f[off + 9] = 17;
+        f[off + 12] = 192, f[off + 13] = 168, f[off + 14] = 4, f[off + 15] = 2;
+        f[off + 16] = 224, f[off + 17] = 76, f[off + 18] = 78, f[off + 19] = 75;
+        f[off + 20] = 20808 >> 8, f[off + 21] = 20808 & 255, f[off + 22] = 20808 >> 8, f[off + 23] = 20808 & 255, f[off + 25] = 8 + 4;
+        rx(f, off + 20u + 12u);
+        check(ntx == mark + 1u && txlog[mark % TXMAX].wcid == WA_GRP && !memcmp(txlog[mark % TXMAX].f + 16, A.mac, 6),
+              "(g): A's group datagram relayed once for all (A drops its own: addr3 is its address)");
+        plat_wifi_tune_set(WT_ALL);
+    }
+
     /* 8. A leaves: its slot and keys go; B stays */
     {
         uint8_t dea[30];
@@ -465,7 +523,19 @@ int main(void)
     }
 
     /* 11. a channel change: kept at once, the AP restarts on it once it has rested */
-    check(plat_wifi_ap_set_channel(0) == -1 && plat_wifi_ap_set_channel(14) == -1 && wn_st.ap.ch == 0u, "channel 0 and 14 refused");
+    check(plat_wifi_ap_set_channel(14) == -1 && plat_wifi_ap_set_channel(-1) == -1 && wn_st.ap.ch == 0u, "channel 14 and -1 refused (0 is AUTO)");
+    {   /* CHANNEL AUTO's choice: the networks heard weigh by strength on their channel and its neighbours */
+        struct wn_scan t;
+        memset(&t, 0, sizeof t);
+        check(wa_pick_channel(&t) == 6u, "AUTO, nothing heard: 6 (then 1, 11)");
+        t.n = 2, t.ap[0].ch = 6, t.ap[0].rssi = -40, t.ap[1].ch = 1, t.ap[1].rssi = -60;
+        check(wa_pick_channel(&t) == 11u, "AUTO: a strong network on 6 and one on 1: 11");
+        t.n = 3, t.ap[2].ch = 11, t.ap[2].rssi = -35;
+        { uint32_t c = wa_pick_channel(&t);
+          check(c != 6u && c != 11u && c != 1u && (c <= 3u || (c >= 8u && c <= 9u) || c == 13u), "AUTO: 1, 6 and 11 all busy: a channel between them"); }
+        t.n = 1, t.ap[0].ch = 6, t.ap[0].rssi = -95;
+        check(wa_pick_channel(&t) == 1u, "AUTO: only a faint one on 6: 1 (6's own weight, however small)");
+    }
     check(plat_wifi_ap_set_channel(11) == 0 && wn_st.ap.ch == 11u && wa.ch == 6u && wa.st == WA_UP, "channel 11 kept; the AP still on 6");
     tick(WA_RESTART_MS + 50u);
     run_until_up();

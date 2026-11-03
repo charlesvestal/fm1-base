@@ -3,8 +3,8 @@
 /* The Wi-Fi tuning's pure part (wifi_tune.h): no radio, no flash. Host-tested in tests/wifi/wifi_tune_test.c. */
 #include "wifi_tune.h"
 
-uint32_t wt_mask_from(uint8_t kept, uint32_t def) { return (kept & WT_KEPT) ? kept & WT_ALL : def & WT_ALL; }
-uint8_t wt_mask_keep(uint32_t mask) { return (uint8_t)(WT_KEPT | (mask & WT_ALL)); }
+uint32_t wt_mask_from(uint8_t kept, uint32_t def) { return (kept & WT_KEPT) ? kept & WT_BITS : def & WT_BITS; }
+uint8_t wt_mask_keep(uint32_t mask) { return (uint8_t)(WT_KEPT | (mask & WT_BITS)); }
 
 /* ---- (a) */
 static uint32_t wt_crc16(uint32_t crc, const uint8_t *p, uint32_t n)   /* CRC-16/XMODEM: poly 0x1021, init 0 */

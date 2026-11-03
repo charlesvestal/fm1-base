@@ -16,7 +16,8 @@ expect ap_key 1
 expect ap_state 0
 expect ap_channel 6
 wifi mode AP
-wait 300
+wait 2000
+# (CHANNEL AUTO, the default since 2026-11-03: the 13 channels listened to first, 120 ms each, then up on the quietest)
 expect wifi_mode 3
 expect ap_state 3
 expect wifi_step 0

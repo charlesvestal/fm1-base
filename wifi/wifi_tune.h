@@ -28,7 +28,12 @@
 #define WT_FILT 2u
 #define WT_AGC 4u
 #define WT_RATE 8u
+#define WT_GRP 16u                       /* (g) MODE AP: a group frame (Link's multicast) sent once, encrypted with the group key
+                                          * at its own WCID (device/wifi_own_ap.c WA_GRP), instead of once to each client as a
+                                          * unicast frame (the path proven on this MAC); not yet measured on the radio, so not
+                                          * in WT_ALL, the default (the user, 2026-11-03: "send the packets once on the wire") */
 #define WT_ALL 15u
+#define WT_BITS 31u                      /* every switch a record or a set may hold (WT_ALL: the ones on by default) */
 #define WT_KEPT 0x80u                    /* the record's byte: a mask was chosen (else the build's default) */
 
 uint32_t wt_mask_from(uint8_t kept, uint32_t def);     /* the mask in use from the record's byte */

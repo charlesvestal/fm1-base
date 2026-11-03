@@ -34,7 +34,8 @@ or by a program (an agent). Needs mido with python-rtmidi.
                                             "tune a:on b:on c:on f:on | cal 187 in | filt sta | agc 51 | 2000k falls 0":
                                             the tuning's switches and what each does now
     wifi tune abcf | wifi tune none         the own stack's tuning (kept): a the stored calibration, b the RX filter,
-                                            c the AGC, f 2 Mb/s data; the letters given on, the rest off
+                                            c the AGC, f 2 Mb/s data, g MODE AP's group frames once (the group key);
+                                            the letters given on, the rest off
     wifi join SSID [PASSWORD]               join a network (kept once joined); no password: a kept one's, or none
     wifi forget N                           forget the network kept at N (0 = the most recent)
     bta on | bta off | bta scan             Bluetooth audio (ble_stack = "own" with bt_audio = true): on, off, look
@@ -83,12 +84,12 @@ WIFI_OP = {"on": 1, "off": 2, "scan": 3, "status": 4, "saved": 5, "forget": 6, "
 
 
 def tune_mask(arg: str) -> int:
-    """'wifi tune' letters -> the switches' mask (device/main_fm1.c wifi_frame op 9): a 1, b 2, c 4, f 8; 'none' 0"""
+    """'wifi tune' letters -> the switches' mask (device/main_fm1.c wifi_frame op 9): a 1, b 2, c 4, f 8, g 16; 'none' 0"""
     if arg == "none":
         return 0
-    bits = {"a": 1, "b": 2, "c": 4, "f": 8}
+    bits = {"a": 1, "b": 2, "c": 4, "f": 8, "g": 16}
     if not arg or any(ch not in bits for ch in arg):
-        raise SystemExit(f"wifi tune {arg!r}: letters of abcf (each on, the rest off), or none")
+        raise SystemExit(f"wifi tune {arg!r}: letters of abcfg (each on, the rest off), or none")
     return sum(bits[ch] for ch in set(arg))
 LA = [0x7D, 0x4C, 0x41]                    # Bluetooth audio (device/bt_own_audio.c bta_frame)
 BTA_OP = {"on": 1, "off": 2, "scan": 3, "status": 4, "found": 5, "pick": 6, "connect": 7, "known": 8, "hangup": 9,

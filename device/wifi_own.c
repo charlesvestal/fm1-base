@@ -43,7 +43,8 @@ _Static_assert(PLAT_WIFI_STORE_SIZE == WN_STORE_SIZE, "plat.h PLAT_WIFI_STORE_SI
 /* (int): the two lists are different enums, their values are what must match (gcc's -Wenum-compare) */
 _Static_assert((int)WIFI_MODE_OFF == (int)WN_MODE_OFF && (int)WIFI_MODE_AUTO == (int)WN_MODE_AUTO &&
                (int)WIFI_MODE_MAN == (int)WN_MODE_MAN && (int)WIFI_MODE_AP == (int)WN_MODE_AP &&
-               (int)WIFI_MODE_AP_MAN == (int)WN_MODE_AP_MAN,
+               (int)WIFI_MODE_AP_MAN == (int)WN_MODE_AP_MAN && (int)WIFI_MODE_JAM == (int)WN_MODE_JAM &&
+               (int)WIFI_MODE_JAM_HOST == (int)WN_MODE_JAM_HOST,
                "plat.h WIFI_MODE_*: wifi_nets.h's");
 
 #define WC_CH_MS 150u                    /* one channel's listening in a scan */
@@ -54,7 +55,10 @@ _Static_assert((int)WIFI_MODE_OFF == (int)WN_MODE_OFF && (int)WIFI_MODE_AUTO == 
 #define WC_PRE_MS 150u                   /* after the deauth: the AP drops its record of us */
 #define WC_LINK_MS 300u                  /* M4 sent -> DHCP: the AP needs this to take the key into use */
 #define WC_RETRY_MS 20000u               /* AUTO: another round after a failure or nothing found */
-#define WC_JAM_BAD_MS 120000u            /* JAM: an access point that refused the default password is left alone this long */
+#define WC_JAM_BAD_MS 15000u             /* JAM: an access point that refused the default password is left alone this long
+                                          * (2 min before 2026-11-03: a JAM HOST only ever uses its default one, so a refusal
+                                          * is a host still starting; the user: "both devices eventually reconnected after a while") */
+#define WC_JAM_RETRY_MS 5000u            /* JAM: another round this soon while no network is joined (AUTO's is WC_RETRY_MS) */
 #define WC_LOST_MS 8000u                 /* joined, and nothing heard from the AP this long (its beacons): gone */
 #define WC_RADIO_MS 3000u                /* the radio is started this long after power-on at the earliest (the start's own work first) */
 #define OWN_RX_MAX 1024u                 /* the largest frame taken, with its receive header (a UDP datagram of 512 B and more fits) */
@@ -504,7 +508,7 @@ static struct wn_scan wc_tab;                     /* the APs heard */
 #include "wifi_own_tune.c"                       /* the tuning on the radio (wifi/wifi_tune.h) */
 
 static int wc_auto(void) { return wn_st.mode == WN_MODE_AUTO || wn_st.mode == WN_MODE_JAM; }   /* (saved networks joined by themselves) */
-static int wc_mode_off(void) { return wn_st.mode == WN_MODE_OFF || wn_st.mode == WN_MODE_AP || wn_st.mode == WN_MODE_AP_MAN; }
+static int wc_mode_off(void) { return wn_st.mode == WN_MODE_OFF || wn_st.mode == WN_MODE_AP || wn_st.mode == WN_MODE_AP_MAN || wn_st.mode == WN_MODE_JAM_HOST; }
 static void wc_to(uint32_t st) { wc.st = (uint8_t)st; wc.t0 = own_ms(); }
 static void wc_fail(uint32_t why) { wc.fail = (uint8_t)why; wc.fails++; wc_to(WC_FAIL); wc.t_retry = own_ms(); }
 static void wc_send(uint32_t len) { own_tx(len, 1u, 1u); }
@@ -794,9 +798,11 @@ static void wc_poll(void)                         /* once a main-loop pass: one 
         }
         if (wc.st == WC_FAIL && wc.fail == WCF_NOCAL)
             break;
-        if (wc.st == WC_FAIL && now - wc.t_retry < WC_RETRY_MS && wc_auto() && !wc.scan_want && !wc.scan_once)
+        if (wc.st == WC_FAIL && now - wc.t_retry < (wn_st.mode == WN_MODE_JAM ? WC_JAM_RETRY_MS : WC_RETRY_MS) && wc_auto() &&
+            !wc.scan_want && !wc.scan_once)
             break;
-        if (wc.scan_want || wc.scan_once || ((wn_st.mode == WN_MODE_JAM || (wn_st.mode == WN_MODE_AUTO && wn_count(&wn_st))) && now - wc.t_retry >= WC_RETRY_MS))
+        if (wc.scan_want || wc.scan_once || ((wn_st.mode == WN_MODE_JAM && now - wc.t_retry >= WC_JAM_RETRY_MS) ||
+                                                   (wn_st.mode == WN_MODE_AUTO && wn_count(&wn_st) && now - wc.t_retry >= WC_RETRY_MS)))
             wc_sweep();
         break;
     case WC_SCAN:

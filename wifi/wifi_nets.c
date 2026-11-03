@@ -28,7 +28,7 @@ int wn_load(struct wn_store *s, const uint8_t raw[WN_STORE_SIZE])
     if (t.mark != WN_MARK || t.ver < 1u || t.ver > WN_VER)
         return 0;
     s->rsv = t.rsv & 0x80u ? t.rsv : 0u;               /* (the spare byte: the Wi-Fi tuning's switches, wifi_tune.h WT_KEPT) */
-    s->mode = t.mode <= WN_MODE_MAN || ((t.mode == WN_MODE_AP || t.mode == WN_MODE_AP_MAN || t.mode == WN_MODE_JAM) && t.ver >= 2u) ? t.mode : WN_MODE_OFF;
+    s->mode = t.mode <= WN_MODE_MAN || ((t.mode == WN_MODE_AP || t.mode == WN_MODE_AP_MAN || t.mode == WN_MODE_JAM || t.mode == WN_MODE_JAM_HOST) && t.ver >= 2u) ? t.mode : WN_MODE_OFF;
     for (i = 0; i < WN_SLOTS; i++)
         if (wn_entry_ok(&t.n[i]))
             s->n[j++] = t.n[i];                         /* (damaged ones dropped, the rest closed up in order) */
@@ -131,9 +131,9 @@ void wn_ap_forget(struct wn_store *s)
     s->ap.set = 0;
 }
 
-int wn_ap_set_channel(struct wn_store *s, uint32_t ch)
+int wn_ap_set_channel(struct wn_store *s, uint32_t ch)   /* 0: AUTO (the quietest at each start), else 1..13 */
 {
-    if (ch < 1u || ch > 13u)
+    if (ch > 13u)
         return -1;
     s->ap.ch = (uint8_t)ch;
     return 0;
