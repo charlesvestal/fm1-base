@@ -815,6 +815,10 @@ static void run(int kind, int opt, uint32_t ticks0, uint32_t events, const char 
 int main(void)
 {
     run(C_MAC, O_QUIRK, 1000u, 2100u, "§8.2 engine (FM-1 first-event quirk), a Mac");
+    /* HW §21 table: a peripheral's receive window after the first packet is 2 x widening + 50. Flat 50 with the window
+     * opening w early closes it 50 - w after the anchor: +6 us at 45 ms (SCA 250), a link that dies (optimist#17) */
+    check("steady window: 2 x widening + 50 (30 ms, SCA 250 ppm: widening 30), WINCNTL2 50",
+          CB->wincntl[0] == 110u && CB->wincntl[1] == 0u && CB->wincntl2 == 50u);
     run(C_MAC, 0, 1000u, 2100u, "§8.2 engine (the emulator's model), a Mac");
     run(C_MAC, O_QUIRK | O_LOSS, 1000u, 2100u, "§8.2 engine, a Mac, packets lost both ways");
     run(C_WAITS, O_QUIRK, 1000u, 2100u, "§8.2 engine, a central that waits");
