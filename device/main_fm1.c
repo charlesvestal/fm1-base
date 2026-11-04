@@ -31,6 +31,7 @@ static uint32_t wdt_stage __attribute__((section(".noinit")));   /* the main loo
                                                                   * 2 Bluetooth, 3 the app's loop, 4 USB, 5 a frame,
                                                                   * 6 input (fm1b_dbg.stage) */
 
+#include "fm1_flash_ok.h"                          /* the flash parts the storage may use (FM1B_FLASH_JEDEC_OK) */
 static void render_block(int32_t *o)                /* ALNK0: one half, measured */
 {
     uint32_t t0 = fm1_ticks(), us, budget = HALF_FRAMES * 1000000u / FS;
@@ -781,7 +782,7 @@ static void fm1_main(void)
                                                      * VDDIO 3.2 V, WiFi's regulator automatic (fm1_sys.h) */
         fm1_clock_read(clock_boot);
         clock_fix = (int8_t)fm1_clock_stock();      /* the stock 360 MHz, whichever bootloader started us (fm1_clock.h) */
-        flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;   /* the expected 1 MiB part, else RAM only */
+        flash_ok = FM1B_FLASH_JEDEC_OK(FL_FAR(fl_jedec_ram)());   /* a known 1 MiB part, else RAM only */
 #if FM1B_WIFI
         if (flash_ok)
             FL_FAR(fl_uid_ram)(flash_uid);
