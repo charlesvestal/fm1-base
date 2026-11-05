@@ -852,6 +852,8 @@ def wifi_own_flags(host=False):
     f = ["-DFM1B_WIFI=1", "-DFM1B_WIFI_OWN=1", *inc(SRC / "wifi")]
     if host:
         f = [*inc(SRC / "host" / "wifi_fake"), *f]
+    else:                                           # felucca-bsp fm1_ble_rf.h: the radio's start keeps the Wi-Fi IQ entries
+        f.append("-DFM1_RF_WIFI_IQ=1")              # (the tuning's stored calibration); Bluetooth-only builds keep none
     if LINK:
         f += ["-DFM1B_LINK=1", *inc(SRC / "link")]
     if WIFI_AP:
