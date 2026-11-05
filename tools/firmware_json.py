@@ -14,6 +14,12 @@ SRC = Path(__file__).resolve().parents[1]            # fm1-base
 SCHEMA = 1
 DESCRIPTION_MAX = 600
 
+# the screenshot: a square PNG in the firmware's repository, at least the FM-1's screen (240 x 240), at most 2 MiB;
+# its path relative to the repository's root, / between folders, no "." or ".." (the schema has the same pattern)
+SCREENSHOT_RE = r"^(?!(.*/)?\.\.?(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*\.png$"
+SCREENSHOT_MIN = 240
+SCREENSHOT_MAX = 2 * 1024 * 1024
+
 # what a firmware is: fm1.toml tags, from this list only
 TAGS = ("synth", "drum-machine", "groovebox", "sequencer", "sampler", "controller", "midi", "chords", "arranger",
         "ambient", "generative", "fm", "game", "utility", "general-midi", "experimental")
@@ -42,11 +48,11 @@ FEATURE_NAMES = tuple(f for f, _ in FEATURES)
 MODELS = ("FM-1",)
 
 # the fm1.toml keys a release build needs (a dev build only warns without them); author may be the .rfm1's authors
-REQUIRED = ("author", "licence", "tagline", "description", "tags", "install", "repo")
+REQUIRED = ("author", "licence", "tagline", "description", "tags", "install", "repo", "screenshot")
 
 # the order of the file's keys
 KEYS = ("schema", "id", "name", "author", "license", "tagline", "description", "tags", "install", "site", "source",
-        "hardware", "credits")
+        "screenshot", "hardware", "credits")
 
 
 def flash_ids(header=SRC / "device" / "fm1_flash_ok.h"):
@@ -114,9 +120,10 @@ def missing(conf):
     return [k for k in REQUIRED if k not in have]
 
 
-def require(conf, release, toml="fm1.toml"):
-    """a release build (release true) refuses an fm1.toml without the REQUIRED keys; any other build prints one
-    warning line naming them and goes on. Returns the missing keys"""
+def require(conf, release, toml="fm1.toml", app_dir=None):
+    """a release build (release true) refuses an fm1.toml without the REQUIRED keys, or (given app_dir) with a
+    screenshot that fails screenshot_problem; any other build prints one warning line for each and goes on. Returns
+    the missing keys"""
     gone = missing(conf)
     if gone and release:
         raise SystemExit(f"{toml}: a release needs {', '.join(gone)} (firmware.json, for firmware hubs: "
@@ -124,7 +131,67 @@ def require(conf, release, toml="fm1.toml"):
     if gone:
         print(f"warning: {toml} has no {', '.join(gone)}: firmware.json goes without them, and a release build "
               f"refuses (docs/FIRMWARE-JSON.md)")
+    bad = screenshot_problem(conf, app_dir) if app_dir is not None else None
+    if bad and release:
+        raise SystemExit(f"{toml}: a release needs a screenshot that is a square PNG of at least {SCREENSHOT_MIN} x "
+                         f"{SCREENSHOT_MIN}, at most 2 MiB: {bad} (firmware.json, for firmware hubs: fm1-base's "
+                         f"docs/FIRMWARE-JSON.md)")
+    if bad:
+        print(f"warning: {toml} screenshot: {bad}: firmware.json goes without it, and a release build refuses "
+              f"(docs/FIRMWARE-JSON.md)")
     return gone
+
+
+def repo_root(app_dir, src=SRC):
+    """the firmware's repository: the parent of an APP_DIR named app (fm1-ctl/app), else APP_DIR itself (fm1-base's
+    template)"""
+    app = Path(app_dir).resolve()
+    return app.parent if app.name == "app" and app.parent != Path(src).resolve() else app
+
+
+def screenshot_path(conf):
+    """fm1.toml screenshot, None when left out; refuses one that is not a path in the repository ending .png"""
+    v = conf.get("screenshot")
+    if v is None or v == "":
+        return None
+    if not isinstance(v, str) or "\n" in v or not re.match(SCREENSHOT_RE, v):
+        raise SystemExit(f"fm1.toml screenshot {v!r}: a path relative to the repository's root, with / between the "
+                         f"folders and no '..', of letters, digits, '.', '_' and '-', ending .png "
+                         f'(screenshot = "docs/img/screen.png")')
+    return v
+
+
+def png_size(path):
+    """(width, height) from a PNG's header (its signature and IHDR), None when the file is not a PNG"""
+    with open(path, "rb") as f:
+        head = f.read(24)
+    if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+
+
+def screenshot_problem(conf, app_dir, src=SRC):
+    """what is wrong with fm1.toml's screenshot, or None (also None when there is none: missing names that): it must
+    be a file in the repository (repo_root), a PNG, square, at least SCREENSHOT_MIN on a side, at most
+    SCREENSHOT_MAX bytes"""
+    rel = screenshot_path(conf)
+    if rel is None:
+        return None
+    f = repo_root(app_dir, src) / rel
+    if not f.is_file():
+        return f"{rel}: no such file in {repo_root(app_dir, src)}"
+    size = f.stat().st_size
+    if size > SCREENSHOT_MAX:
+        return f"{rel}: {size} bytes, at most {SCREENSHOT_MAX} (2 MiB)"
+    wh = png_size(f)
+    if wh is None:
+        return f"{rel}: not a PNG"
+    w, h = wh
+    if w != h:
+        return f"{rel}: {w} x {h}, not square"
+    if w < SCREENSHOT_MIN:
+        return f"{rel}: {w} x {h}, smaller than {SCREENSHOT_MIN} x {SCREENSHOT_MIN}"
+    return None
 
 
 def _url(conf, key):
@@ -134,10 +201,11 @@ def _url(conf, key):
     return v
 
 
-def make(conf, fid, name, have, flash=None):
+def make(conf, fid, name, have, flash=None, app_dir=None):
     """the file's content: conf (fm1.toml), fid (the build's NAME), name (display_name), have (parts). A key fm1.toml
-    leaves out (or leaves empty) is left out. Refuses a tag outside TAGS and a description that is not one paragraph
-    of at most DESCRIPTION_MAX characters"""
+    leaves out (or leaves empty) is left out, and so is a screenshot that fails screenshot_problem (given app_dir).
+    Refuses a tag outside TAGS, a description that is not one paragraph of at most DESCRIPTION_MAX characters and a
+    screenshot that is not a path in the repository"""
     d = {"schema": SCHEMA, "id": fid, "name": name}
     if not conf.get("author") and conf.get("authors"):     # the .rfm1's authors = ["..."], when there is no author
         conf = {**conf, "author": ", ".join(conf["authors"])}
@@ -171,6 +239,9 @@ def make(conf, fid, name, have, flash=None):
             d[key] = _url(conf, key)
     if d.get("source"):
         d["source"] = _url({"repo": d["source"]}, "repo")
+    shot = screenshot_path(conf)
+    if shot and (app_dir is None or screenshot_problem(conf, app_dir) is None):
+        d["screenshot"] = shot
     d["hardware"] = {"models": list(MODELS), "flash": flash_ids() if flash is None else list(flash),
                      "features": [f for f in FEATURE_NAMES if have.get(f)]}
     return {k: d[k] for k in KEYS if k in d}

@@ -24,6 +24,7 @@
     "install": { "type": "string", "pattern": "^https://" },
     "site": { "type": "string", "pattern": "^https://" },
     "source": { "type": "string", "pattern": "^https://" },
+    "screenshot": { "type": "string", "pattern": "^(?!(.*/)?\\.\\.?(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*\\.png$" },
     "hardware": {
       "type": "object",
       "properties": {

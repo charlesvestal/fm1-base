@@ -18,3 +18,4 @@ description = "The smallest complete firmware for the FM-1, made to be copied: a
 tags = ["synth", "utility"]    # from the list in docs/FIRMWARE-JSON.md; the build refuses another
 install = "https://charlesvestal.github.io/fm1-base/install/"   # the page that installs it
 site = "https://charlesvestal.github.io/fm1-base/"
+screenshot = "docs/img/screen-playing.png"   # for the hubs' cards: a square PNG, at least 240 x 240, in your repository

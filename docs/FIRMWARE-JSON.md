@@ -32,6 +32,7 @@ CTL-1's:
   "install": "https://charlesvestal.github.io/fm1-ctl/install/",
   "site": "https://charlesvestal.github.io/fm1-ctl/",
   "source": "https://github.com/charlesvestal/fm1-ctl",
+  "screenshot": "docs/img/screen-cc.png",
   "hardware": {
     "models": ["FM-1"],
     "flash": ["856014", "B36014"],
@@ -56,6 +57,7 @@ CTL-1's:
 | `install` | URL | `install` | The page that installs it. |
 | `site` | URL | `site` | Its site. |
 | `source` | URL | `repo` | Its source code. |
+| `screenshot` | path | `screenshot` | A picture of its screen for a hub's card: a PNG in its repository, relative to the repository's root (`docs/img/screen.png`). |
 | `hardware.models` | list of strings | | The models it runs on. A firmware on fm1-base says `FM-1`. |
 | `hardware.flash` | list of strings | device/fm1_flash_ok.h | The flash parts it can save to and update on, as their JEDEC IDs in upper-case hex. |
 | `hardware.features` | list of strings | the build's parts | What the build has, from the feature vocabulary. |
@@ -64,15 +66,33 @@ CTL-1's:
 URLs are `https://` addresses. The build writes the keys in this order, with a 2-space indent and each list of
 strings on one line, in UTF-8 with a newline at the end.
 
+## The screenshot
+
+A hub shows the screenshot on the firmware's card. It fetches it from the firmware's repository at the release's
+commit: `source`, the release's tag and the path (on GitHub,
+`https://raw.githubusercontent.com/OWNER/REPO/vX.Y/docs/img/screen.png`).
+
+In fm1.toml, `screenshot` is a path relative to the repository's root, which is the folder that holds `app/` (for
+fm1-base's template, the template's folder). It uses `/` between folders, letters, digits, `.`, `_` and `-`, ends in
+`.png`, and has no `..` and no leading `/`. The build refuses any other path. It also checks the file: it has to
+exist, be a PNG, be square, be at least 240 × 240 and be at most 2 MiB. The build reads only the PNG's header, so it
+needs nothing installed.
+
+The FM-1's screen is 240 × 240, so a screenshot from the host simulator (its `shot FILE` command) or from screen
+mirroring fits as it is. A hub should scale it up with nearest-neighbour (CSS `image-rendering: pixelated`) to keep
+the pixels sharp.
+
 ## What a release needs
 
 A release build (`tools/build.py APP_DIR --release X.Y`, as `./build.sh --release X.Y` and the release workflow run
 it) refuses until fm1.toml has all of these, and names the ones missing:
 
-`author` (or `authors`), `licence`, `tagline`, `description`, `tags`, `install` and `repo`.
+`author` (or `authors`), `licence`, `tagline`, `description`, `tags`, `install`, `repo` and `screenshot`.
 
-Any other build (a dev build, `--host`, `--web`, `--rfm1`) prints one warning line naming the missing keys and writes
-the file without them. `site` and `credits` are never required.
+It also refuses a screenshot that fails the checks above, and says which check.
+
+Any other build (a dev build, `--host`, `--web`, `--rfm1`) prints one warning line naming the missing keys, and one
+for a screenshot that fails a check, and writes the file without them. `site` and `credits` are never required.
 
 ## Tags
 
@@ -115,4 +135,4 @@ will never use such a key. A firmware not built on fm1-base may write the file b
 
 ## Changes
 
-Schema 1, 2026-11-05.
+Schema 1, 2026-11-05. `screenshot` added on 2026-11-05, before any release used the schema.

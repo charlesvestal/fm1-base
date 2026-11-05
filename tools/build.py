@@ -132,10 +132,13 @@ the site's (tools/make_site.py). A key left out is left out of the file.
   tags = ["synth", "fm"]     what it is, from a fixed list (tools/firmware_json.py TAGS; the build refuses another)
   install = "https://..."    the page that installs it
   site = "https://..."       its site
+  screenshot = "docs/img/x.png"  a picture for the hubs' cards: a square PNG, at least 240 x 240, at most 2 MiB,
+                             relative to the repository's root (the parent of an APP_DIR named app), / between
+                             folders, no ".."; the build checks it (a host simulator's screenshot fits as it is)
 The name is usb_manufacturer (else app.h's APP_NAME), the id fm1.toml's name in lower case; the hardware's features
 are the parts this build has (printed as "parts"). A --release build of the firmware refuses without author (or
-authors), licence, tagline, description, tags, install and repo; any other build warns and writes the file without
-them.
+authors), licence, tagline, description, tags, install, repo and a screenshot that passes the checks; any other
+build warns and writes the file without them.
 Outputs in APP_DIR/build/: NAME.bin (app), loader/ota.bin (update loader), NAME.fwsc (package), firmware.json
 (firmware-usb.json from --no-ble; every build writes it, --host, --web and --rfm1 too). An app in a firmware's
 repository (APP_DIR named app) also has the repository's firmware.json written, when it changes.
@@ -1224,11 +1227,12 @@ def main():
         VERSION = a.release.upper()
         name = f"{STEM}-{a.release}.fwsc"
     # a release package needs firmware.json's keys; the simulator, the emulator, the .rfm1 and dev builds only warn
-    firmware_json.require(CONF, bool(a.release) and not (a.host or a.web or a.rfm1), APP / "fm1.toml")
+    firmware_json.require(CONF, bool(a.release) and not (a.host or a.web or a.rfm1), APP / "fm1.toml", APP)
     touch = any(re.search(r"^#define APP_TOUCH\b", f.read_text(errors="ignore"), re.M) for f in APP.glob("*.h"))
     words = firmware_json.words_published(APP / CONF.get("words", "words.tsv"))
     have = firmware_json.parts(CONF, BLE, OWN, WIFI, CPU2, touch, words)
-    fw_json = firmware_json.dumps(firmware_json.make(CONF, NAME, firmware_json.display_name(CONF, APP), have))
+    fw_json = firmware_json.dumps(firmware_json.make(CONF, NAME, firmware_json.display_name(CONF, APP), have,
+                                                     app_dir=APP))
     for f in firmware_json.targets(APP, no_ble=bool(CONF.get("ble")) and not BLE):
         firmware_json.write(f, fw_json)        # (docs/FIRMWARE-JSON.md; a file already so is left alone)
     if a.host or a.web or a.rfm1:

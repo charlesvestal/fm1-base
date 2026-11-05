@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Charles Vestal
 """tools/firmware_json.py: firmware.json for a few fm1.toml files (no Bluetooth; every part; a key left out; an
 unknown tag or a long description refused), the keys a release needs (refused without them, a dev build warned),
-where a build writes it, the flash parts against device/fm1_flash_ok.h,
+the screenshot's checks (its path, a PNG, square, at least 240 x 240, at most 2 MiB), where a build writes it, the flash parts against device/fm1_flash_ok.h,
 and the vocabularies the same in the code, docs/firmware.schema.json and docs/FIRMWARE-JSON.md. The output is
 checked against the schema when jsonschema is there.
   python3 tests/firmware_json_test.py"""
@@ -11,6 +11,8 @@ import contextlib
 import io
 import json
 import re
+import struct
+import zlib
 import sys
 import tempfile
 from pathlib import Path
@@ -96,6 +98,7 @@ tags = ["synth", "sequencer",
         "experimental"]
 install = "https://example.org/full/install/"
 site = "https://example.org/full/"
+screenshot = "docs/img/screen.png"
 repo = "https://github.com/example/full"
 credits = "Built on fm1-base."
 ''')
@@ -138,7 +141,7 @@ ok(refused(lambda: F.make({**base, "install": "http://example.org/"}, "x", "X", 
    "an install page not https refused")
 
 # what a release needs: refused without, by name; any other build warned on one line
-full = {k: "x" for k in F.REQUIRED} | {"tags": ["synth"]}
+full = {k: "x" for k in F.REQUIRED} | {"tags": ["synth"], "screenshot": "docs/img/screen.png"}
 
 
 def warned(conf):
@@ -148,7 +151,8 @@ def warned(conf):
     return gone, out.getvalue()
 
 
-ok(F.REQUIRED == ("author", "licence", "tagline", "description", "tags", "install", "repo"), "the keys a release needs")
+ok(F.REQUIRED == ("author", "licence", "tagline", "description", "tags", "install", "repo", "screenshot"),
+   "the keys a release needs")
 ok(F.missing(full) == [] and F.require(full, True) == [], "a release with all of them: taken")
 ok(F.missing({**full, "author": "", "authors": ["A", "B"]}) == [], "  authors (the .rfm1's) for author")
 lacking = {k: v for k, v in full.items() if k not in ("tags", "install")} | {"description": ""}
@@ -162,8 +166,74 @@ ok(warned(full) == ([], ""), "a dev build with all of them: no warning")
 ok(warned({"name": "X"})[0] == list(F.REQUIRED), "  an fm1.toml with none: every one named")
 tmpl = B.read_conf(ROOT / "template" / "fm1.toml")
 ok(F.missing(tmpl) == [], "the template's fm1.toml: everything a release needs")
+ok(F.screenshot_problem(tmpl, ROOT / "template") is None, "  its screenshot passes the checks (template/)")
 ok(" and ".join([", ".join(f"`{k}`" + (" (or `authors`)" if k == "author" else "") for k in F.REQUIRED[:-1]),
                  f"`{F.REQUIRED[-1]}`"]) + "." in DOC, "doc: the keys a release needs")
+
+# the screenshot: a path in the repository; a PNG, square, at least 240 x 240, at most 2 MiB
+
+
+def png(path, w, h, pad=0):
+    """a PNG of w x h (grey; its header is all the build reads), padded with an ancillary chunk to grow it"""
+    def chunk(t, data):
+        return struct.pack(">I", len(data)) + t + data + struct.pack(">I", zlib.crc32(t + data))
+    raw = b"".join(b"\0" + b"\x80" * w for _ in range(h))
+    body = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0)) +
+            chunk(b"IDAT", zlib.compress(raw)) + (chunk(b"teXt", b"pad\0" + b"x" * pad) if pad else b"") +
+            chunk(b"IEND", b""))
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_bytes(body)
+
+
+for bad in ("../shot.png", "docs/../shot.png", "/abs/shot.png", "docs\\shot.png", "docs/shot.jpg", "./shot.png",
+            "docs//shot.png", "docs/shot png.png", "shot.png\n"):
+    ok(refused(lambda: F.screenshot_path({"screenshot": bad}), "relative to the repository's root") and
+       refused(lambda: F.make({"name": "X", "screenshot": bad}, "x", "X", {}), "screenshot"),
+       f"  a screenshot path {bad!r} refused")
+ok(F.screenshot_path({"screenshot": "docs/img/screen-1_a.png"}) == "docs/img/screen-1_a.png" and
+   F.screenshot_path({}) is None, "a screenshot path in the repository taken; none: None")
+with tempfile.TemporaryDirectory() as tmp:
+    repo = Path(tmp) / "fm1-thing"
+    app = repo / "app"
+    app.mkdir(parents=True)
+    ok(F.repo_root(app) == repo.resolve() and F.repo_root(ROOT / "template") == (ROOT / "template").resolve(),
+       "the repository's root: app/'s parent; the template's own folder")
+    png(repo / "docs" / "good.png", 240, 240)
+    png(repo / "docs" / "wide.png", 480, 240)
+    png(repo / "docs" / "small.png", 120, 120)
+    png(repo / "docs" / "big.png", 256, 256, pad=2 * 1024 * 1024)
+    (repo / "docs" / "fake.png").write_bytes(b"GIF89a" + b"\0" * 64)
+    (repo / "docs" / "short.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    ok(F.png_size(repo / "docs" / "wide.png") == (480, 240), "a PNG's size from its header")
+
+    def shot(name):
+        return {"name": "X", "screenshot": f"docs/{name}"}
+    ok(F.screenshot_problem(shot("good.png"), app) is None, "a square PNG of 240 x 240 passes")
+    for name, words in (("none.png", "no such file"), ("fake.png", "not a PNG"), ("short.png", "not a PNG"),
+                        ("wide.png", "480 x 240, not square"), ("small.png", "smaller than 240 x 240"),
+                        ("big.png", "at most 2097152")):
+        ok(words in (F.screenshot_problem(shot(name), app) or ""), f"  {name}: {words}")
+        ok(refused(lambda: F.require({**full, **shot(name)}, True, "fm1.toml", app), words) and
+           refused(lambda: F.require({**full, **shot(name)}, True, "fm1.toml", app), "a release needs a screenshot"),
+           f"    a release refused")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            gone = F.require({**full, **shot(name)}, False, "fm1.toml", app)
+        ok(gone == [] and out.getvalue().count("\n") == 1 and "warning: fm1.toml screenshot:" in out.getvalue() and
+           words in out.getvalue(), "    a dev build: one warning line, and on")
+        ok("screenshot" not in F.make(shot(name), "x", "X", {}, flash=[], app_dir=app), "    left out of the file")
+    ok(F.require({**full, **shot("good.png")}, True, "fm1.toml", app) == [], "a release with a good one: taken")
+    d = F.make({**full, **shot("good.png"), "install": "https://e.org/", "repo": "https://e.org/x"}, "x", "X", {},
+               flash=[], app_dir=app)
+    ok(d["screenshot"] == "docs/good.png" and list(d).index("screenshot") == list(d).index("source") + 1,
+       "in the file as fm1.toml has it, after source")
+    ok(valid(d), "  validates against the schema" + (" (skipped: no jsonschema)" if jsonschema is None else ""))
+    no_shot = {k: v for k, v in full.items() if k != "screenshot"}
+    ok(refused(lambda: F.require(no_shot, True, "fm1.toml", app), "a release needs screenshot"),
+       "no screenshot: a release refused, by name")
+    gone, said = warned(no_shot)
+    ok(gone == ["screenshot"] and said.count("\n") == 1 and "has no screenshot" in said,
+       "  a dev build: warned on one line")
 
 # the build: --release refuses before anything is built; --host, --web and --rfm1 do not ask
 with tempfile.TemporaryDirectory() as tmp:
@@ -197,6 +267,11 @@ props = SCHEMA["properties"]
 ok(tuple(props["tags"]["items"]["enum"]) == F.TAGS, "schema: the tag vocabulary")
 ok(tuple(props["hardware"]["properties"]["features"]["items"]["enum"]) == F.FEATURE_NAMES,
    "schema: the feature vocabulary")
+ok(props["screenshot"]["pattern"] == F.SCREENSHOT_RE, "schema: the screenshot's pattern")
+if jsonschema is not None:
+    with contextlib.redirect_stdout(io.StringIO()):          # (valid() prints why: expected here)
+        bad_shots = [valid({"schema": 1, "id": "x", "name": "X", "screenshot": p}) for p in ("../x.png", "x.jpg")]
+    ok(not any(bad_shots), "  schema: a bad screenshot path invalid")
 ok(", ".join(F.TAGS) + "." in " ".join(DOC.split()), "doc: the tag vocabulary")
 feats_doc = DOC[DOC.index("## Features"):DOC.index("## Rules")]
 ok(re.findall(r"^\| `([a-z0-9-]+)` \|", feats_doc, re.M) == list(F.FEATURE_NAMES), "doc: the feature vocabulary")
