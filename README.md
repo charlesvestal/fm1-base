@@ -207,6 +207,15 @@ reader (over SysEx) work as in the browser emulator. Saved objects and the data 
 state. There is no radio, no USB host and no environment (`getenv` returns nothing). `tests/rfm1_test.mjs FILE`
 drives a file as a host app does.
 
+## firmware.json: your firmware in hubs
+
+Every build writes `firmware.json`, a description of the firmware for the places that list and install FM-1
+firmwares (The Firmware Hub, RemoteFM1, M-Flasher): its name, author, licence, a paragraph on it, tags, the install
+page, and the hardware it needs (the flash parts it saves to, the parts the build has, such as Bluetooth MIDI or USB
+audio). It comes from fm1.toml (`author`, `description`, `tags`, `install`, `site`, with the site's `tagline`, `repo`,
+`licence` and `credits`) and lands in `APP_DIR/build/` and, for an app in `app/`, at the repository's root, to commit.
+The format, its fields and its vocabularies are in [docs/FIRMWARE-JSON.md](docs/FIRMWARE-JSON.md).
+
 ## Moving a Felucca-based firmware here
 
 A Felucca-based firmware (GPL-3.0) can move onto fm1-base and felucca-bsp and keep its licence: their MPL-2.0 files

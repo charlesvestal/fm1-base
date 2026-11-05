@@ -8,7 +8,7 @@ manual.
 | --- | --- |
 | `app.h` | The app's settings (name, block size, the store's objects) and its half of the contract with the platform |
 | `app.c` | The app: input, sound, screen, saving |
-| `fm1.toml` | Build and site settings: name, package identity, USB names, tagline, source, licence |
+| `fm1.toml` | Build and site settings: name, package identity, USB names, tagline, source, licence, and firmware.json's |
 | `words.tsv` | The screen reader's words (fm1-reader): the screen's text and how to say it |
 | `tests/basic.txt` | Host simulator checks: keys, MIDI, settings across a reboot, the sound, the screen reader |
 | `tests/screens.txt` | The manual's screenshots |
@@ -52,7 +52,9 @@ rebuilt. For the site, download that package and give it to `publish_site.sh`, s
 1. Copy `template/` to your firmware's repository, with fm1-base beside it as a git submodule.
 2. In `app.h`, set `APP_NAME`, and the store's objects and their flash offsets (`APP_STORE_MAP`).
 3. In `fm1.toml`, set the name, an `id_prefix` of your own (`FM-1_` and digits; each firmware has its own), the USB
-   names, and the site's tagline, source and credits.
+   names, the site's tagline, source and credits, and your name, a description, tags and your install page. The
+   build writes them to `firmware.json` at your repository's root, which firmware hubs read (fm1-base's
+   docs/FIRMWARE-JSON.md); commit it.
 4. In `words.tsv`, set the `# url:` line to where your site publishes its words.
 5. Write your app in `app.c`: `app_render` for the sound, `app_frame` for the screen and the controls, and the rest
    of the contract in `app.h`.

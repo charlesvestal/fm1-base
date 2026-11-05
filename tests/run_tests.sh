@@ -52,6 +52,9 @@ run installer "$PY" tests/install_test.py
 run ports "$PY" tests/ports_test.py
 # the screen reader's words file (tools/gen_words.py): made, and refused over the reader's limits
 run gen-words "$PY" tests/gen_words_test.py
+# firmware.json for firmware hubs (tools/firmware_json.py): the fields, the vocabularies, where it is written, the
+# schema (docs/firmware.schema.json, when jsonschema is there)
+run firmware-json "$PY" tests/firmware_json_test.py
 # the build's check that a function is in the RAM code run, _rt_start.._rt_end wherever app.ld puts it (tools/ram_run.py)
 run ram-run "$PY" tests/ram_run_test.py
 # the check that nothing calls the chip ROM or uses its addresses (tools/romref.py): a constant kept as a number passes
