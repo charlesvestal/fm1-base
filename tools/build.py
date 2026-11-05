@@ -9,9 +9,10 @@
   tools/build.py APP_DIR --web         the browser emulator instead: APP_DIR/build/emu/ (emcc); the page is the
                                        simulator alone (panel, screen, sound, screen reader), for a site to link or frame;
                                        an app may bring its own (APP_DIR/web/emu/index.html, worklet.js)
-  tools/build.py APP_DIR --rfm1        the app as an .rfm1 instead: APP_DIR/build/rfm1/ID-VERSION.rfm1 (emcc), the
+  tools/build.py APP_DIR --rfm1        the app as an .rfm1 instead: APP_DIR/build/rfm1/ID-dev+COMMIT.rfm1 (emcc), the
                                        host simulator in WebAssembly for host apps (RemoteFM1 for iOS: RemoteFM1IOS's
-                                       docs/RFM1-FORMAT.md); host/rfm1.c, tools/rfm1_pack.py
+                                       docs/RFM1-FORMAT.md); host/rfm1.c, tools/rfm1_pack.py. With --release X.Y:
+                                       APP_DIR/build/NAME-X.Y.rfm1, beside the release's package
 
 APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   name = "TEMPLATE"          the build's file names (lower case)
@@ -189,6 +190,7 @@ SDK_SHA256 = {
 
 PRODUCT = None                      # package identity (fm1.toml id_prefix; see main)
 VERSION = None                      # APP_VERSION for release builds (default: "DEV", device/unity.c)
+RELEASE = None                      # --release X.Y as given: the release's file names (NAME-X.Y.fwsc, NAME-X.Y.rfm1)
 BLE = False                         # fm1.toml ble = true, unless --no-ble
 OWN = False                         # with BLE: fm1.toml ble_stack = "own" (bt/, no JieLi library)
 WIFI = False                        # fm1.toml wifi = true
@@ -1176,7 +1178,8 @@ def build_rfm1():
     manifest = {k: v for k, v in manifest.items() if v}
     import json
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
-    dst = out / f"{rid}-{version}.rfm1"
+    # a release's beside its package, named as it is (NAME-X.Y.rfm1); a dev build's in rfm1/ with the commit
+    dst = OUT / f"{STEM}-{RELEASE}.rfm1" if RELEASE else out / f"{rid}-{version}.rfm1"
     r = subprocess.run([sys.executable, str(SRC / "tools" / "rfm1_pack.py"), str(wasm), str(dst),
                         "--manifest", str(out / "manifest.json"), "--credits", str(out / "credits.txt"),
                         *[a for n, f in lic for a in ("--license", f"{n}={f}")]], capture_output=True, text=True)
@@ -1188,7 +1191,7 @@ def build_rfm1():
 
 
 def main():
-    global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, OWN, WIFI, CPU2, STEM
+    global PRODUCT, VERSION, RELEASE, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, OWN, WIFI, CPU2, STEM
     ap = argparse.ArgumentParser()
     ap.add_argument("app", type=Path, help="the app's directory (with fm1.toml)")
     ap.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity id_prefix + XXYYZZ, version string X.Y[.Z]")
@@ -1226,6 +1229,7 @@ def main():
             raise SystemExit(f"--release {a.release}: use X.Y[.Z][-suffix], up to two digits each")
         PRODUCT = prefix + "%02d%02d%02d" % (int(m[1]), int(m[2]), int(m[3] or 0))
         VERSION = a.release.upper()
+        RELEASE = a.release
         name = f"{STEM}-{a.release}.fwsc"
     # a release package needs firmware.json's keys; the simulator, the emulator, the .rfm1 and dev builds only warn
     firmware_json.require(CONF, bool(a.release) and not (a.host or a.web or a.rfm1), APP / "fm1.toml", APP)

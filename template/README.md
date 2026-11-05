@@ -40,7 +40,8 @@ In a firmware's own repository, a release is built on GitHub from its tag by `.g
 calls the shared FM-1 builder ([`zvenson/fm1-build` at `v1`](https://github.com/zvenson/fm1-build/tree/v1)). The
 builder runs `./build.sh --release X.Y` and `tests/run_tests.sh` (a failing test stops the release) and signs build
 provenance for `NAME-X.Y.fwsc` and `NAME-X.Y-app.bin`; the FM-1 Firmware Hub shows such packages as built from
-source. The workflow makes a draft release (or keeps the one you wrote, with its notes), checks the sums and the
+source. It also builds `NAME-X.Y.rfm1` for host apps such as RemoteFM1, with Emscripten 6.0.10 from emsdk, and
+releases and signs it with `firmware.json`. The workflow makes a draft release (or keeps the one you wrote, with its notes), checks the sums and the
 signatures, then publishes it. A tag with a suffix (`v0.2-beta`) is a prerelease; a published release is never
 rebuilt. For the site, download that package and give it to `publish_site.sh`, so the site has the attested one:
 

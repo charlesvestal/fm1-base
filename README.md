@@ -195,9 +195,11 @@ manifest (name, version, licence, the source at its commit), your credits and th
 from your release and put it in the app's firmware folder. The format is RemoteFM1IOS's
 [docs/RFM1-FORMAT.md](https://github.com/Quixotic7/RemoteFM1IOS/blob/main/docs/RFM1-FORMAT.md).
 
-    tools/build.py APP_DIR --rfm1 [--release X.Y]    # APP_DIR/build/rfm1/ID-VERSION.rfm1 (emcc, as --web)
+    tools/build.py APP_DIR --rfm1                    # APP_DIR/build/rfm1/ID-dev+COMMIT.rfm1 (emcc, as --web)
+    tools/build.py APP_DIR --rfm1 --release X.Y      # APP_DIR/build/NAME-X.Y.rfm1, beside NAME-X.Y.fwsc
 
 The ID is fm1.toml's `name` in lower case. Without `--release` the version is `dev+` and the app repository's commit.
+The template's release workflow builds the release's `.rfm1` and attests it with the package.
 The manifest's `source_url` is fm1.toml's `repo` at that commit, so commit (and push) what you build. Its `license`
 is fm1.toml's `licence`, and its authors are `authors = ["..."]` or the repository's first author. The memory is fixed
 at 8 MiB (`rfm1_memory_mib`, at most 32). The build checks the module against the format before it writes the file.
