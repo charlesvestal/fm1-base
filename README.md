@@ -25,10 +25,11 @@ parts it has.
 
 | Part | How to include it | What the app calls |
 | --- | --- | --- |
-| Bluetooth MIDI with a computer or tablet | `ble = true` (`tools/build.py --no-ble` leaves it out of one build) | `TO_BLE`, `PORT_BLE`; `plat_ble_state`, `plat_ble_connected`; `plat_ble_enable` |
+| Bluetooth MIDI with a computer or tablet | `ble = true` (`tools/build.py --no-ble` leaves it out of one build) | `TO_BLE`, `PORT_BLE`; `plat_ble_state`, `plat_ble_connected`; `plat_ble_enable`; with `ble_stack = "own"` a stream of SysEx frames read by the radio at the link's rate (`plat_ble_stream`: a screen mirrored) and the link as agreed (`plat_ble_link_info`) |
 | Bluetooth MIDI devices (the FM-1 connects to a keyboard or controller) | `ble_central = true`, with `ble` | `plat_ble_scan`, `plat_ble_found`, `plat_ble_connect`, `plat_ble_disconnect`, `plat_ble_device`; `TO_BLE_HOST`, `TO_BLE_DEV`, `plat_midi_in_from` (one link at a time); `plat_ble_passkey` on the own stack |
 | Bluetooth on fm1-base's own stack instead of JieLi's libraries (below) | `ble_stack = "own"`, with `ble` | the same calls |
 | Pairing on the own stack (LE legacy pairing, the bond kept) | `ble_pairing = true`, with `ble_stack = "own"` | nothing |
+| Bluetooth MIDI in by the sender's time (for an app that follows a clock by time) | `ble_midi_time = true`, with `ble_stack = "own"` | `plat_midi_in_t24` after `plat_midi_in` |
 | Bluetooth audio to headphones and speakers (A2DP) | `bt_audio = true`, with `ble_stack = "own"`; `bt_log = true` puts its set-up on the radio's log | `plat_bta_on`, `plat_bta_scan`, `plat_bta_found`, `plat_bta_known`, `plat_bta_pick`, `plat_bta_reconnect`, `plat_bta_forget`, `plat_bta_hangup`, `plat_bta_state` |
 | USB audio: the FM-1 recorded over the cable | on unless `usb_audio_in = false` | nothing: the app's output at MASTER, without the computer's audio (taken before it is mixed in) |
 | USB audio: a computer plays through the FM-1 | on unless `usb_audio_out = false` (needs the input too) | nothing: mixed after the app and after the recording's tap, at MASTER; `plat_usb_play_gain` (0 muted .. 4096, the default) for the app's own setting |
@@ -40,6 +41,7 @@ parts it has.
 | Screen mirroring: the screen and panel live on a computer (web/mirror, a PNG with `tools/fm1_mirror.py`), the panel played from it | `mirror = true` | nothing; `APP_REDRAW` (what a slow link dropped, drawn again), `APP_MIRROR_TEST` (a test session from the remote) |
 | Backup and restore of the app's saved objects over USB, all or nothing (web/backup, `tools/fm1_backup.py`) | `backup = true` | app.h: `APP_BACKUP_OBJS`, `APP_BACKUP_MAGIC`, `APP_BACKUP_VERSION`, `APP_BACKUP_WHAT`; `app_backup_playing`, `_flush`, `_hold`, `_restored` |
 | The app's own commands over USB, in the update's framing, data pulled from the host | `#define APP_USB_CMD` in app.h | `app_usb_cmd`; `plat_host_read`, `plat_host_patience` |
+| The USB host's device by name (its product string), for the app's own page | `#define APP_USB_HOST_NAME` in app.h, with `usb_host` | `plat_usb_host_name` |
 | Lower case in the big fonts | `font_full = ["L"]` | the fonts as ever |
 | The firmware as an `.rfm1` for host apps (RemoteFM1 for iOS), below | `tools/build.py APP_DIR --rfm1` | nothing |
 | The browser emulator's own parts (`tools/build.py --web`): web/emu/parts, each file saying what it does; without any, the page and app.wasm are as before. One is on without asking: `resample`, the FM-1's 44.1 kHz played at the browser's rate (many computers run audio at 48 kHz), where the page takes parts (fm1-base's page and worklet) | `emu = ["name", ...]`, `"-resample"` to leave it out (or `FM1B_EMU="name ..."` for one build: those parts only) | nothing, unless a part says so |
@@ -49,7 +51,8 @@ Every firmware also counts each port's MIDI messages, in and out: `plat_midi_cou
 And: `plat_midi_out_room(to)` (room in the out queues, each Bluetooth link's its own, for a sequencer's note-offs),
 `plat_midi_in_from()` (where the last message in came from, as an out: for MIDI thru) and `plat_midi_out_link()` (a new
 USB connection); `plat_store_size` and `plat_store_head` (an object whole or not at all; its header only); big data in
-flash beyond the store with `plat_data*`, in the data area and two more windows (`PLAT_XDATA0`, `PLAT_XDATA1`).
+flash beyond the store with `plat_data*`, in the data area and two more windows (`PLAT_XDATA0`, `PLAT_XDATA1`), and a
+third on request (`xdata2 = true`: `PLAT_XDATA2`, 0xFC000..0xFEFFF).
 
 ## Bluetooth and WiFi
 
@@ -69,6 +72,11 @@ overwritten works the same. The own stack is smaller and does more:
 - Bluetooth MIDI with a computer or a phone, as on JieLi's.
 - With `ble_pairing = true` it pairs and encrypts the link (LE legacy pairing), and keeps the bond in `OBJ_BLE`.
   Without it a pairing is refused; macOS and iOS connect anyway.
+- `ble_diag = false` leaves out the link layer's diagnostics (its counters and event rings: about 2.4 KB of RAM
+  and some code; the radio log's `BT ll` line). They are kept by default.
+- With `ble_midi_time = true` each message from Bluetooth comes with the time it was sent, from its BLE-MIDI
+  timestamp (`plat_midi_in_t24`): the connection's bunching taken out, for an app that times a clock it follows
+  itself. Without it the clock and transport are held to the sender's time (spaced as sent, up to 0.12 s later).
 - With `ble_central = true` the FM-1 connects to Bluetooth MIDI devices, as on JieLi's. A device that asks for a
   code gets one on the FM-1's screen (`plat_ble_passkey`).
 - With `bt_audio = true` it sends its sound to headphones and speakers (A2DP, SBC), beside Bluetooth MIDI on the
@@ -94,7 +102,9 @@ headphones (AIAIAI TMA-2) and a speaker (Anker SoundCore 2), MIDI and audio at o
 1. In fm1.toml, `ble = true`. Add `ble_central = true` for the FM-1 to connect to MIDI devices too (a keyboard,
    a controller), beside a computer. For the own stack, add `ble_stack = "own"` and its options (above).
 2. In app.h, give it a store object: `OBJ_BLE` in the app's object enum, and its offset in `APP_STORE_MAP` (the
-   radio's address and pairing are kept there).
+   radio's address and pairing are kept there). On the own stack an app may keep them in its own saved data instead
+   (a settings record of its own): `#define APP_BLE_STORE` and `app_ble_load` / `app_ble_save` (plat.h `struct
+   plat_ble_rec`), and no `OBJ_BLE`.
 3. In the app: MIDI goes out with `TO_BLE` and comes in on `PORT_BLE`, as USB's does. For a page of devices, add
    `#define APP_BTDEV` to app.h and use lib/btdev.h (the template's REC does).
 4. With devices there are two links, the computer's and the device's. `TO_BLE` goes to both; `TO_BLE_HOST` or

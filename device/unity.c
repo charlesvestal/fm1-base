@@ -13,7 +13,8 @@
  *   APP_NAME "TEMPLATE"     on the splash, crash and safe-mode screens and for the screen reader
  *   APP_VERSION "DEV"       a release build passes its own (tools/build.py --release)
  *   APP_BLOCK 256           frames per audio half (5.8 ms at 44.1 kHz), the render's block
- *   FM1B_CDC 0              USB serial console (a second USB function)
+ *   FM1B_CDC 0              USB serial console (a second USB function; fm1.toml usb_console = true): the app's text over
+ *                           plat_console_* (console.c)
  *   FM1B_UAC 1              USB audio input: the master output, recordable over the cable at 44.1 kHz (checked on an
  *                           FM-1 2026-10-16: no lost frame); FM1B_UAC_48K 0 (48 kHz too: needs the resampler's filter)
  *   FM1B_UAC_DEEP 0         1: the USB audio input keeps a half more in hand, for renders that take most of
@@ -54,6 +55,7 @@
 #include "fm1_timer.h"
 #include "fm1_audio.h"
 #include "fm1_adc.h"
+#include "fm1_jack.h"               /* the headphone jack's switch (PB5): plat_headphones */
 #include "fm1_lcd_hw.h"
 #if FM1B_WIFI || FM1B_BLE
 #define FL_UID 1                          /* the flash's unique ID: the WiFi MAC, the Bluetooth name (plat_chip_uid) */
@@ -133,11 +135,32 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define FM1B_MSC 0
 #endif
 #define FELUCCA_MSC FM1B_MSC      /* disk mode: usb.c's mass-storage descriptors and EP3 (msc.c) */
+#ifndef FM1B_MIDI_STAMP
+#define FM1B_MIDI_STAMP 0         /* 1: MIDI in stamped where it lands, USB and the jack (fm1.toml midi_stamp = true;
+                                   * plat_midi_in_t24); 0: when the app read it */
+#endif
+#define FELUCCA_MIDI_STAMP FM1B_MIDI_STAMP
+#ifndef FM1B_CRASHLOG
+#define FM1B_CRASHLOG 0           /* 1: the crash history in flash, 0xE2000..0xE3FFF, and the stacks' room at a crash
+                                   * (fm1.toml crash_history = true: crashlog.c, stacks.c) */
+#endif
+#ifndef FM1B_DBGSTATS
+#define FM1B_DBGSTATS 0           /* 1: the debug stats in flash, 0xE4000..0xE4EFF (fm1.toml debug_stats = true:
+                                   * dbgstats.c; with FM1B_CRASHLOG) */
+#endif
+#ifndef FM1B_HEADPHONES
+#define FM1B_HEADPHONES 0         /* 1: the headphone jack read every main-loop pass (fm1.toml headphones = true;
+                                   * plat_headphones); 0: not read, plat_headphones -1 */
+#endif
+#if defined APP_USB_HOST_NAME && FM1B_USB_HOST
+#define FELUCCA_USB_HOST_NAME 1      /* the device's product string (plat_usb_host_name) */
+#endif
 #define SXQ 128u                  /* the SysEx send ring, in packets: a whole screen-reader SAY (ANN_MAX + 9 bytes) */
 #ifdef APP_SYSEX_BYTE
 #define FELUCCA_SYSEX_BYTE(b) app_sysex_byte(b)   /* the app's, every SysEx byte from USB (plat.h APP_SYSEX_BYTE) */
 #endif
 #include "usb.c"
+#include "console.c"              /* the USB serial console's bytes for the app (plat_console_*, FM1B_CDC) */
 #ifndef FM1B_TRS
 #define FM1B_TRS 1
 #endif

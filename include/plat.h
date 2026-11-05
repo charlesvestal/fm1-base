@@ -68,6 +68,11 @@ int32_t plat_battery_raw(void);        /* the reading plat_battery's bars come f
                                         * the main loop's slow average, in the converter's counts (the bars' thresholds
                                         * 531 / 561 / 591); 0 = not read yet. Whether USB powers the FM-1 or not. For an
                                         * app that shows the volts itself; built for an app with APP_BATTERY_RAW (below) */
+int plat_headphones(void);             /* the headphone jack's switch (PB5: 0 with a plug in), with fm1.toml headphones = true
+                                        * (FM1B_HEADPHONES; without it -1 on the device, never read), read by the main loop every
+                                        * pass and debounced (a state counts once the pin held it 100 ms: the contact
+                                        * bounces ~150 ms a plug): 1 headphones in, 0 nothing plugged; -1 not read yet (the
+                                        * host: its script's "jack"). The speaker mutes itself in hardware on a plug */
 
 /* lights: bright buttons and keys, and dim ones (a short pulse each scan frame; a bright bit wins); glow 0 the dim
  * ones off, 1 low, 2 high. Bit NB in buttons / dim_buttons is PLAY's second, green LED */
@@ -99,6 +104,11 @@ enum { PORT_USB, PORT_BLE, PORT_TRS, NPORTS };
 #define TO_BLE_DEV (1u << 3)           /* the Bluetooth MIDI device the FM-1 connected to (FM1B_BLE_CENTRAL) */
 #define TO_BLE (TO_BLE_HOST | TO_BLE_DEV)
 int plat_midi_in(uint32_t *pkt, int *port);   /* 1 = got one, from port PORT_* (port may be 0) */
+/* when the last message plat_midi_in gave came in, on plat_ticks24's clock (called where plat_midi_in is): USB's and the
+ * TRS jack's, with fm1.toml midi_stamp = true (FM1B_MIDI_STAMP; else when it was read), within 0.05 ms of landing on the FM-1 (a 10 kHz look at the endpoint and the jack's ring, inside the render
+ * too, while the 2 kHz poll that takes them may wait for it); Bluetooth's: when it was read, or with fm1.toml ble_midi_time (ble_stack = "own") when the sender stamped it, the connection's bunching taken out (the transport then comes at once, not held to the sender's time). For an app that follows a
+ * clock or places notes by time; host: when it was read */
+uint32_t plat_midi_in_t24(void);
 uint32_t plat_midi_in_from(void);      /* where the last one came from, as an out: TO_USB, TO_BLE_HOST or TO_BLE_DEV
                                         * (0: the TRS jack, which has no out); called where plat_midi_in is */
 void plat_midi_send(uint32_t pkt, uint32_t to);   /* to: TO_USB | TO_BLE, or one link; main loop, the render or the
@@ -123,6 +133,11 @@ void plat_usb_host(int on);
 int plat_usb_host_state(void);
 int plat_usb_host_msg(void);
 int plat_usb_lost(void);
+/* the connected device's product string, as it names itself ("Launchkey Mini MK3 MIDI"): ASCII, other characters as
+ * '?', at most 31; "" while nothing is connected, and for a device without one. Built for an app with
+ * APP_USB_HOST_NAME (below): felucca-bsp's FELUCCA_USB_HOST_NAME reads it at the connection (another app's image stays
+ * as it was, byte for byte). Main loop */
+const char *plat_usb_host_name(void);
 uint32_t plat_midi_count(int port, int out);   /* messages through port PORT_* since the start (out: sent), real-time (clock...) left out */
 uint32_t plat_midi_ago(int port, int out);     /* ms since the last one (0xFFFFFFFF: none yet) */
 
@@ -139,6 +154,24 @@ int plat_ble_connected(void);          /* a central is connected and listening *
 int plat_ble_linked(void);             /* a central is connected, listening or not yet (a Mac whose MIDI driver
                                         * never subscribed holds the link, and the FM-1 stops advertising) */
 void plat_ble_start(void);
+/* A stream of SysEx frames to the computer's link (ble_stack = "own"; a screen mirrored): the radio reads it in its own
+ * interrupts, a connection event at a time, as much as the link takes (full notifications, as many as the stack puts
+ * in an event), so it is never held to the main loop's pace or the out queue's 64 slots. peek: the next USB-MIDI
+ * SysEx packet (CIN 4..7) written whole, 0 none (asked again until pop); pop: it went; mid: a frame begun and not
+ * ended, which goes on before any message queued (plat_midi_send's) so none ends it; between frames those go
+ * first. All three run in the radio's interrupts while a computer listens (plat_ble_connected): short, no lock, a
+ * single-consumer ring the main loop fills. 1: taken; 0: not on this platform (the JieLi stack, no Bluetooth, the
+ * host), send by plat_midi_send. NULL: none again */
+struct plat_ble_stream {
+    int (*peek)(uint32_t *pkt);
+    void (*pop)(void);
+    int (*mid)(void);
+};
+int plat_ble_stream(const struct plat_ble_stream *s);
+/* the computer's link as agreed (ble_stack = "own"; 0 each when none, or another stack): v[0] the LL data length
+ * (octets), v[1] the ATT MTU, v[2] the connection interval (x 1.25 ms), v[3..6] the central's own LL_LENGTH values
+ * (MaxRxOctets, MaxRxTime, MaxTxOctets, MaxTxTime) */
+void plat_ble_link_info(uint32_t v[7]);
 uint32_t plat_ble_log_total(void);     /* lines written since the last start (survives a reset) */
 const char *plat_ble_log_line(int back);   /* 0 = the newest */
 /* Bluetooth MIDI devices (fm1.toml ble_central = true: FM1B_BLE_CENTRAL 1): the FM-1 connects to one (a keyboard,
@@ -156,10 +189,70 @@ void plat_ble_disconnect(void);
 int plat_ble_device(void);             /* BLE_DEV_*: READY is connected, MIDI both ways */
 int plat_ble_passkey(void);            /* a pairing with a device waits for its user to type this code (0..999999):
                                         * show it; -1: none (ble_stack = "own" only: an iPhone app asks for one) */
+/* The devices one by one, for an app that keeps a list of its own (remembered devices, their bonds: APP_BLE_PEERS in
+ * app.h; ble_stack = "own" only, else none of this does anything): every advertising report the scan hears goes to the
+ * app too (app_ble_scan_report, main loop; pdu: the advertising PDU, its 2-byte header, AdvA and data, n bytes; rssi:
+ * the radio's reading), plat_ble_connect_peer connects to one by its address with the bond the app kept, and the keys
+ * a pairing with it gave come to the app (app_ble_device_keys, main loop). The state is
+ * plat_ble_device's; the bytes are least significant first, as on the air. ble_central = 3: the central without pairing
+ * (no keys, no passkey; a device that asks for security fails with PLAT_BLE_CF_NEED_PAIR) */
+struct plat_ble_peer {
+    uint8_t addr[6], addr_rand;        /* its address as heard (addr_rand: TxAdd, a random one) */
+    uint8_t bonded;                    /* ltk / rand / ediv are its bond: the link is encrypted with them */
+    uint8_t sec;                       /* PLAT_BLE_PEER_* */
+    uint8_t ltk[16], rand[8];
+    uint16_t ediv;
+};
+#define PLAT_BLE_PEER_AUTH 1u          /* its bond is authenticated (a passkey pairing) */
+#define PLAT_BLE_PEER_MITM 2u          /* it needs an authenticated link: a pairing goes straight to the passkey */
+struct plat_ble_keys {
+    uint8_t has;                       /* PLAT_BLE_KEYS_* */
+    uint8_t ltk[16], rand[8];
+    uint16_t ediv;
+    uint8_t irk[16], id[6], id_rand;   /* its identity: behind a private address, plat_ble_rpa_resolve finds it */
+};
+#define PLAT_BLE_KEYS_LTK 1u           /* ltk / rand / ediv: the bond */
+#define PLAT_BLE_KEYS_ID 2u            /* irk / id / id_rand */
+#define PLAT_BLE_KEYS_AUTH 4u          /* the pairing was authenticated (a passkey) */
+enum { PLAT_BLE_CF_NONE, PLAT_BLE_CF_LOST, PLAT_BLE_CF_NO_MIDI, PLAT_BLE_CF_PAIRING, PLAT_BLE_CF_AUTH, PLAT_BLE_CF_GATT,
+       PLAT_BLE_CF_NEED_MITM, PLAT_BLE_CF_KEY, PLAT_BLE_CF_NEED_PAIR };   /* why a connection to a device ended: lost,
+                                        * no MIDI found, the pairing failed, the encryption refused, the GATT failed, it
+                                        * needs a passkey (connect again with PLAT_BLE_PEER_MITM, no unauthenticated
+                                        * bond), it refused our bond, it asked for security (ble_central = 3) */
+#define PLAT_BLE_DF_PAIRING 1u         /* plat_ble_device_flags: a pairing of ours runs on the link */
+#define PLAT_BLE_DF_PROMPTED 2u        /* one started on the last attempt's link (its user was asked) */
+#define PLAT_BLE_DF_MITM 4u            /* the last attempt's device needs an authenticated link (a passkey) */
+int plat_ble_connect_peer(const struct plat_ble_peer *p);   /* 0 = connecting (plat_ble_device), -1 not now */
+int plat_ble_device_fail(uint32_t *code);   /* why the last connection to a device ended (PLAT_BLE_CF_*); code: its
+                                        * code (the link layer's reason, the ATT error or the SMP reason) */
+uint32_t plat_ble_device_flags(void);  /* PLAT_BLE_DF_* */
+int plat_ble_rpa_resolve(const uint8_t irk[16], const uint8_t addr[6]);   /* 1: addr is a private address made from irk */
+void app_ble_scan_report(const uint8_t *pdu, uint32_t n, uint32_t rssi);
+void app_ble_device_keys(const struct plat_ble_keys *k);
 /* Bluetooth on or off, as the player asks: off ends every link, stops advertising and scanning (the radio quiet);
  * on starts it (or advertises again). Whether it starts at power-on: APP_BLE_AT_BOOT (app.h, e.g. a saved setting;
  * default 1) */
 void plat_ble_enable(int on);
+/* What Bluetooth keeps (the own stack, ble_stack = "own"), by default in the app's store object OBJ_BLE. An app that
+ * keeps it in its own saved data instead (a settings record it has, with these fields at its own places) defines
+ * APP_BLE_STORE in app.h and gives the two calls below; it then needs no OBJ_BLE. app_ble_load: at Bluetooth's start
+ * (main loop), 1 with r filled, 0 none kept (the platform makes the address then, and saves it); app_ble_save: main
+ * loop, once something changed (a new address, a pairing, a remembered audio device), 0 kept (the app may write it
+ * to the flash later, with its own data) */
+struct plat_ble_rec {
+    uint8_t addr[6];                   /* our BLE address (static random: the top two bits 1) */
+    uint8_t bonded, rsv;               /* the computer's bond (ble_pairing): bonded, ediv, rand, ltk */
+    uint16_t bond_ediv;
+    uint8_t bond_rand[8], bond_ltk[16];
+    uint8_t bta_addr[6], bta_addr_set;   /* Bluetooth audio (bt_audio): our BR/EDR address, once made */
+    uint8_t bta_n;                     /* the remembered audio devices, the last one first */
+    struct plat_bta_dev {
+        uint8_t addr[6], bonded, link_key[16];   /* link_key: from its pairing (air order), when bonded */
+        char name[17];
+    } bta[4];
+};
+int app_ble_load(struct plat_ble_rec *r);
+int app_ble_save(const struct plat_ble_rec *r);
 
 /* Bluetooth audio out (fm1.toml bt_audio = true, with ble_stack = "own": FM1B_BT_AUDIO 1): an A2DP source to headphones
  * and speakers (SBC), beside Bluetooth MIDI on the one radio. While it streams, the render goes to the device and the
@@ -171,7 +264,8 @@ void plat_ble_enable(int on);
 enum { PLAT_BTA_OFF, PLAT_BTA_SCANNING, PLAT_BTA_FOUND, PLAT_BTA_NONE, PLAT_BTA_PAGING, PLAT_BTA_LINKED, PLAT_BTA_SETUP,
        PLAT_BTA_STREAMING, PLAT_BTA_REFUSED, PLAT_BTA_NO_LAST, PLAT_BTA_FAILED, PLAT_BTA_READY };
 void plat_bta_on(int on);              /* on: the radio up (Bluetooth MIDI's start, if not yet), ready to scan / connect */
-void plat_bta_scan(int on);            /* look for devices (about 10 s) */
+void plat_bta_scan(int on);            /* look for devices (about 10 s): 1 a fresh list, 2 again with the list kept
+                                        * (only when nothing else is under way: a page goes on), 0 stop */
 int plat_bta_found(int i, char *name); /* found device i: its name (17 bytes) -> 0: none */
 int plat_bta_known(int i, char *name); /* remembered device i (0 the last one) -> 0: none */
 void plat_bta_pick(int i);             /* connect found device i (pairing if new; it becomes the last one) */
@@ -179,6 +273,33 @@ int plat_bta_reconnect(int i);         /* connect remembered device i -> 0 pagin
 void plat_bta_forget(int i);
 void plat_bta_hangup(void);
 int plat_bta_state(void);              /* PLAT_BTA_* */
+/* while it streams, where the sound goes: 1 the device, 0 the FM-1's own output (the stream suspended, the link
+ * kept: back to the device at once, without a new connection) */
+void plat_bta_output(int to_device);
+int plat_bta_out_device(void);         /* 1: the sound goes to the device (the default) */
+/* a link that ended by itself (the device left, or refused): where it had got to, once (then PLAT_BTA_LOST_NONE) */
+enum { PLAT_BTA_LOST_NONE, PLAT_BTA_LOST_LINK, PLAT_BTA_LOST_PAIRING, PLAT_BTA_LOST_ENCRYPTION, PLAT_BTA_LOST_SETUP,
+       PLAT_BTA_LOST_STREAMING, PLAT_BTA_LOST_REFUSED };
+int plat_bta_lost(void);
+int plat_bta_timed_out(void);          /* PLAT_BTA_REFUSED because the set-up timed out (the device never said no) */
+int32_t plat_bta_latency_us(void);     /* what the stream adds on the FM-1's side (its queue), us; -1: not streaming.
+                                        * An app that follows a clock may play that much earlier (the device's own
+                                        * buffer comes on top and is not known) */
+/* Bluetooth audio's big buffers in the app's memory (fm1.toml bt_audio_mem = "app": FM1B_BTA_MEM 1): the audio packets'
+ * queue and the receptions' ring, which only a run of the Classic radio uses (a scan, a page, a link), are a block the
+ * app lends while an AUDIO mode is on, instead of static RAM: an app that switches Bluetooth audio off has that RAM
+ * back. Without it (FM1B_BTA_MEM 0) they are static and these say so (bytes 0, the block refused).
+ *   plat_bta_mem_bytes()  the block's size (4-aligned), 0: static buffers
+ *   plat_bta_mem(p)       p: the block lent (before plat_bta_on(1), which does nothing without one) -> 0;
+ *                         0: taken back -> 0 done (the radio's code and interrupts no longer read it), -1 still in use
+ *                         (an AUDIO mode on, or its run not over yet: plat_bta_on(0) first, then again later) */
+#ifndef FM1B_BTA_MEM
+#define FM1B_BTA_MEM 0
+#endif
+uint32_t plat_bta_mem_bytes(void);
+int plat_bta_mem(void *p);
+int plat_bta_streams(void);            /* 1: the last render went to Bluetooth (the FM-1's own output muted for it); for the
+                                        * render (the audio interrupt) to plan its block by. 0 without Bluetooth audio */
 
 /* WiFi (fm1.toml wifi = true: FM1B_WIFI 1): a station on JieLi's WiFi libraries and the SDK's lwIP, on the same shim.
  * Off until the app turns it on; then it joins the networks it joined before (kept in the app's store object OBJ_WIFI,
@@ -229,16 +350,31 @@ void plat_log(const char *line);
  * a sector there (bsp/loader/ldr_core.c: "AT" at bytes 0xF06..0xF07, a nonzero CRC-16 at 0xF00 over the 78 bytes
  * from 0xF02), so in these two an app keeps bytes 0xF00..0xF07 of every sector erased (0xFF), or else makes sure
  * those bytes never read as a record: never "AT" at 0xF06 (LOOM-8's sample bank moves its data so, and refuses a
- * bank that has it) */
+ * bank that has it).
+ * A fourth, on request (fm1.toml xdata2 = true: FM1B_XDATA2): PLAT_XDATA2, the three sectors 0xFC000..0xFEFFF
+ * (12 KiB) between the SDK's last area (USR, up to 0xFBFFF) and its key_mac sector (0xFF000, never written), where
+ * Felucca keeps its globals: an app that was a Felucca firmware reads and writes its own bytes there. The update loader
+ * looks for records below 0xFC000 only, so no 0xF00 rule here. Store objects may sit there too (the template's
+ * settings pair is 0xFC000 / 0xFD000): with the window on, plat_data_erase and plat_data_write refuse a store
+ * object's sectors in it, so an app with this window puts its objects elsewhere (or keeps to the rest) */
 #define PLAT_DATA_LO 0x97000u
 #define PLAT_DATA_HI 0xE0000u
 #define PLAT_XDATA0_LO 0x93000u
 #define PLAT_XDATA0_HI 0x97000u
 #define PLAT_XDATA1_LO 0xE5000u
 #define PLAT_XDATA1_HI 0xFC000u
+#define PLAT_XDATA2_LO 0xFC000u
+#define PLAT_XDATA2_HI 0xFF000u
+#if FM1B_XDATA2
+#define PLAT_DATA_OK(off, n) (plat_in((off), (n), PLAT_DATA_LO, PLAT_DATA_HI) || \
+                              plat_in((off), (n), PLAT_XDATA0_LO, PLAT_XDATA0_HI) || \
+                              plat_in((off), (n), PLAT_XDATA1_LO, PLAT_XDATA1_HI) || \
+                              plat_in((off), (n), PLAT_XDATA2_LO, PLAT_XDATA2_HI))
+#else
 #define PLAT_DATA_OK(off, n) (plat_in((off), (n), PLAT_DATA_LO, PLAT_DATA_HI) || \
                               plat_in((off), (n), PLAT_XDATA0_LO, PLAT_XDATA0_HI) || \
                               plat_in((off), (n), PLAT_XDATA1_LO, PLAT_XDATA1_HI))
+#endif
 static inline int plat_in(uint32_t off, uint32_t n, uint32_t lo, uint32_t hi)   /* [off, off + n) in [lo, hi) */
 {
     return off >= lo && off <= hi && n <= hi - off;
@@ -279,6 +415,18 @@ uint32_t plat_usb_session(void);       /* 0: no computer has set the FM-1 up; el
  * yet written after an update, torn, another build's): the app does without. The host writes it
  * (tools/fm1_resources.py; the installer after an update); a sound reading it is stopped first (app_panic) */
 const uint8_t *plat_res(uint32_t *len);
+
+/* the USB serial console (fm1.toml usb_console = true: FM1B_CDC 1): a CDC-ACM function beside USB MIDI, for the app's
+ * own text (logs, a command line): the platform carries the bytes, the app says what they mean. Main loop only. Not with
+ * usb_audio_out_feedback or usb_audio_split (they take the console's endpoint, EP3). Without it, and on the host: never
+ * open, nothing read, nothing written */
+int plat_console_open(void);              /* a computer has the port open (its DTR) */
+int plat_console_read(void);              /* the next byte from the computer; -1 none */
+uint32_t plat_console_room(void);         /* the bytes plat_console_write takes now (0 while not open) */
+uint32_t plat_console_write(const void *p, uint32_t n);   /* -> the bytes taken (at most the room: never waits) */
+void plat_console_present(int on);        /* the console presented (the default) or not, e.g. from a setting: in app_init
+                                           * before USB starts; later, the FM-1 leaves the bus and comes back as the
+                                           * other device */
 
 /* the app's own commands in the update's SysEx framing (F0 pack7(00 59 cmd len24 body ~sum) F7: felucca-bsp ota.c),
  * an app with APP_USB_CMD: app_usb_cmd(d, n) gets each frame whose cmd the platform does not take (d: the decoded
@@ -387,7 +535,8 @@ int plat_cpu2_gave_up(void);           /* why it is off: 0 no, 1 it misread a jo
                                         * faulted, 5 it did not answer at its start */
 uint32_t plat_cpu2_bad(void);          /* the jobs it misread */
 int plat_cpu2_barred(void);            /* 1: one core until power-off (given up, or the first core crashed beside it) */
-uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B; fm1.toml cpu2_stack) has gone, in bytes */
+uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B; fm1.toml cpu2_stack) has gone, in bytes; 0: not
+                                       * marked this start (it never started, or was barred) */
 /* which core runs the caller: 0 the first, 1 the second (a job plat_cpu2_run handed it). For state a job keeps per core
  * (a scratch buffer each core renders into). No lock, no state: any core, any context; from code that runs from RAM
  * through a pointer, as any flash function. Device: the core's number register (felucca-bsp's fm1_cnum); host: 1
@@ -412,11 +561,41 @@ struct plat_cache_ram {
 const struct plat_cache_ram *plat_cache_ram(void);
 
 
+/* Debug stats (device/dbgstats.c; fm1.toml debug_stats = true, FM1B_DBGSTATS): a 64-byte snapshot of the platform's counters (the audio's halves, late ones and
+ * longest render, the timer's gaps, the longest interrupts-off and main-loop pass, the second core's and the radios'
+ * state, starts and crashes) and the app's own PLAT_STATS_APP bytes, kept in flash every 5 minutes of uptime while
+ * on, and one with every crash whatever the switch; the last 60 (5 hours) read over USB-MIDI (F0 7D 4C 53 F7,
+ * tools/fm1_remote.py stats). Off at every start: an app with a setting for it turns it on after loading it. The
+ * flash is the update's staging's last sector: every install starts the stats again. The app's side (app.h):
+ *   APP_STATS        void app_stats(uint8_t out[PLAT_STATS_APP])   its bytes, once a second (main loop; zeroed before)
+ *   APP_STATS_LAYOUT "name width ..."   what they are, for the readout: each field a name and its width in bytes (1,
+ *                    2 or 4, little-endian), in order ("c10 1 drops 2"); without it the bytes are printed raw
+ *   APP_STATS_QUIET  int app_stats_quiet(void)   1: a flash write now disturbs nothing (the transport stopped). A
+ *                    snapshot waits for it up to 4 minutes, then is written anyway (one 64-byte page); without it a
+ *                    snapshot is written at once
+ * The host simulator keeps them too (its flash dump has the sector) */
+#define PLAT_STATS_APP 7u
+/* The stacks' room (device/stacks.c, fm1.toml crash_history = true or debug_stats = true; without them plat_stack_left
+ * and plat_stack_least_ever are -1 on the device, and the stats are off): CPU0's main and interrupt stacks are painted
+ * at every start, the second core's marked by felucca-bsp; the bytes never used. plat_stack_left: since this start (-1: not measured, the second core
+ * off or not built). plat_stack_least_ever: the least ever seen, across restarts (.noinit) and power-offs (the debug
+ * stats' newest record in flash, and the crash records' room at each crash); -1 not known yet. Main loop. Each crash
+ * record keeps every stack's room at the crash (F0 7D 4C 48 F7's "stk" line) */
+enum { PLAT_STK_MAIN, PLAT_STK_IRQ, PLAT_STK_C1 };
+int32_t plat_stack_left(int k);
+int32_t plat_stack_least_ever(int k);
+void plat_stats_enable(int on);        /* the snapshots every 5 minutes on (1) or off (0) */
+int plat_stats_on(void);
+void app_stats(uint8_t out[PLAT_STATS_APP]);
+int app_stats_quiet(void);
+
 /* the app's optional hooks (app.h defines the macro when it has the function):
  *   APP_TICK        void app_tick(void)           1 kHz, in the timer interrupt (a clock, a sequencer)
  *   APP_BOOT        void app_boot(void)           once, after the platform is up, before app_ui_init (a radio)
  *   APP_LOOP        void app_loop(void)           every pass of the main loop (a radio's tasks)
  *   APP_YIELD       void app_yield(void)          from plat_yield, inside long work
+ *   APP_BLE_PEERS   app_ble_scan_report, app_ble_device_keys   the devices one by one (plat_ble_connect_peer, above):
+ *                   each advertising report a scan hears, a pairing's keys
  *   APP_OVERLOAD    void app_overload(void)       the render took over 90 % of its time (shed voices)
  *   APP_SPLASH      void app_splash(void)         the first screen at boot, instead of the name
  *   APP_GAIN(m)     the render's gain from MASTER's position m (0..4096; default the square, m * m >> 12)
@@ -435,11 +614,16 @@ const struct plat_cache_ram *plat_cache_ram(void);
  *                   left out; another status inside ends the frame, unseen here), as it comes: an app's own frames longer
  *                   than APP_SYSEX's (640 bytes between F0 and F7; a DX7 bank is 4104). In the USB interrupt: keep it short
  *   APP_USB_CMD     void app_usb_cmd(const uint8_t *d, uint32_t n)   a frame in the update's framing (above). Main loop
+ *   APP_USB_HOST_NAME (no function) plat_usb_host_name is built (the USB host reads the device's product string)
  *   APP_REDRAW      void app_redraw(void)        draw the whole screen again at the next frame (the mirror lost a part)
  *   APP_MIRROR_TEST int app_mirror_test(int on)  the mirror's remote asks for a test session (on 1, off 0): 1 done
  *   APP_CSTART      void app_cstart(void)         first thing at a start, before the RAM is cleared and with nothing
  *                   set up (registers only, no RAM): an app's own second core that a reset left running, held
  *                   (fm1-base's own, cpu2 = true, needs none of these)
+ *   APP_BT_FRAMES   const int32_t *app_bt_frames(const int32_t *lr, uint32_t n)   the frames Bluetooth audio takes from
+ *                   the render just made (lr, n frames, 24-bit; 0 = silence): for an app whose own output differs from
+ *                   what Bluetooth should get. Audio interrupt, after each render (Bluetooth audio built). Without it
+ *                   Bluetooth takes the output
  *   APP_FAULT       void app_fault(const fm1_crash_t *c)   a crash, before the crash screen (c: the record): an app's
  *                   own second core given up; or the crash is on that core (c->sp on its stacks): it stops there
  *   APP_LOG         void app_log(void (*line)(const char *t))   the development readout over USB-MIDI (F0 7D 4C 47 F7,

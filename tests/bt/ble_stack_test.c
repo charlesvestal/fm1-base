@@ -139,6 +139,22 @@ static unsigned out_r, out_w;
 static uint32_t in_pkt[512];
 static uint16_t in_ts[512], in_last[512];
 static unsigned in_n, state_calls;
+#if BLE_STREAM_TEST
+/* the queue as bt_own.c's own_out, the app's stream merged in by device/bt_own_stream.h (the firmware's own code) */
+#include "../../include/plat.h"
+static int own_q_peek(uint32_t *pkt, uint32_t *t)
+{
+    if (out_r == out_w)
+        return 0;
+    *pkt = out_q[out_r % 512];
+    *t = out_t[out_r % 512];
+    return 1;
+}
+static void own_q_pop(void) { out_r++; }
+static int own_stream_on(void) { return ble_midi_ready(); }
+static uint32_t own_stream_ms(void) { return now_us / 1000u; }
+#include "../../device/bt_own_stream.h"
+#else
 int ble_app_midi_peek(uint32_t *pkt, uint32_t *t)
 {
     if (out_r == out_w)
@@ -148,6 +164,7 @@ int ble_app_midi_peek(uint32_t *pkt, uint32_t *t)
     return 1;
 }
 void ble_app_midi_pop(void) { out_r++; }
+#endif
 void ble_app_midi_in(uint32_t pkt, uint16_t ts, uint16_t last)
 {
     in_pkt[in_n % 512] = pkt;
@@ -725,6 +742,154 @@ static void test_midi(void)
           c_frame(4, &n) == 0);
     c_att((const uint8_t[]){0x12, 15, 0, 1, 0}, 5, &n);
 }
+
+#if BLE_STREAM_TEST
+/* ---- the app's stream (plat_ble_stream: Optimist's screen mirror, ed_mirror.c's Bluetooth ring): a byte ring of
+ * whole SysEx frames, read packet by packet as ed_mirror.c mir_ble_peek / pop / mid do */
+static uint8_t sq[16384];
+static uint32_t sq_w, sq_r, sq_pk, sq_peeks;
+static uint8_t sq_mid;
+static int sq_peek(uint32_t *pkt)
+{
+    uint32_t i, b[3] = {0, 0, 0}, n = 0;
+    sq_peeks++;
+    if (sq_r == sq_w)
+        return 0;
+    for (i = 0; i < 3u && sq_r + i != sq_w; i++) {
+        b[i] = sq[(sq_r + i) % sizeof sq];
+        n = i + 1u;
+        if (b[i] == 0xF7u)
+            break;
+    }
+    sq_pk = n;
+    *pkt = (b[n - 1u] == 0xF7u ? 4u + n : 4u) | b[0] << 8 | b[1] << 16 | b[2] << 24;
+    return 1;
+}
+static void sq_pop(void)
+{
+    sq_mid = sq[(sq_r + sq_pk - 1u) % sizeof sq] != 0xF7u;
+    sq_r += sq_pk;
+    sq_pk = 0;
+}
+static int sq_midf(void) { return sq_mid && sq_r != sq_w; }
+static const struct plat_ble_stream SQ = {sq_peek, sq_pop, sq_midf};
+static uint8_t sent_b[16384];                  /* what the central decoded: the SysEx bytes, and the notes as 90 n v */
+static uint32_t sent_n;
+static void sq_sink(void *ctx, uint32_t pkt, uint16_t ts)
+{
+    uint32_t cin = pkt & 15u, k = cin == 4u || cin == 7u ? 3u : cin == 6u ? 2u : cin == 5u ? 1u : 3u, i;
+    (void)ctx, (void)ts;
+    for (i = 0; i < k && sent_n < sizeof sent_b; i++)
+        sent_b[sent_n++] = (uint8_t)(pkt >> (8u + 8u * i));
+}
+static void sq_frame(uint32_t len, uint32_t seed)   /* F0 7D 46 4C 6A 02, data, F7: len bytes in all */
+{
+    uint32_t i;
+    for (i = 0; i < len; i++)
+        sq[(sq_w + i) % sizeof sq] = (uint8_t)(i == 0 ? 0xF0u : i == len - 1u ? 0xF7u : i < 6u ? "\xF0\x7D\x46\x4C\x6A\x02"[i]
+                                               : (i * 7u + seed) & 0x7Fu);
+    sq_w += len;
+}
+static struct ble_midi_dec sq_dec;
+static int sq_notes(int from, int *big)       /* decode the MIDI notifications from frame index from on */
+{
+    int i, k = 0;
+    for (i = from; i < C.fr_n; i++) {
+        uint8_t *f = C.fr[i % C_FRAMES];
+        uint32_t n = C.fr_len[i % C_FRAMES];
+        if ((f[2] | f[3] << 8) != 4 || f[4] != 0x1B)
+            continue;
+        k++;
+        if (big && n - 7u > 230u)
+            (*big)++;
+        ble_midi_dec(&sq_dec, f + 7, (uint16_t)(n - 7u), sq_sink, 0);
+    }
+    return k;
+}
+static void test_stream(void)
+{
+    uint8_t want[16384];
+    uint32_t total = 0, i, r0;
+    int from, events = 0, notes, big = 0, two = 0, n, ok;
+    ble_midi_dec_reset(&sq_dec);
+    sent_n = 0;
+    c_events(4);
+    c_frames_done();
+    check("stream: plat_ble_stream takes the app's stream", plat_ble_stream(&SQ) == 1);
+    for (i = 0; i < 20u; i++)                  /* 20 frames of 250 bytes: a page drawn whole, 5 KB */
+        sq_frame(250, i);
+    total = sq_w;
+    memcpy(want, sq, total);
+    from = C.fr_n;
+    while (sq_r != sq_w && events < 100) {
+        int before = C.fr_n;
+        c_event();
+        events++;
+        two += C.fr_n - before >= 2;
+    }
+    c_events(2);
+    notes = sq_notes(from, &big);
+    check("stream: 5 KB of frames sent intact, in order", sent_n == total && !memcmp(sent_b, want, total));
+    printf("stream: %u bytes in %d events, %d notifications, %d of them over 230 octets of MIDI\n", total, events,
+           notes, big);
+    check("stream: full notifications, two an event (5 KB in 12 events at most)",
+          events <= 12 && big >= notes - 2 && two >= events - 2);
+    {   /* as before: the frames through the queue, which holds 64 packets (bt_own.c OQ) and is filled between events */
+        int qev = 0;
+        plat_ble_stream(0);
+        for (i = 0; i < 20u; i++)
+            sq_frame(250, i);
+        while ((sq_r != sq_w || out_r != out_w) && qev < 200) {
+            uint32_t pkt;
+            while (out_w - out_r < 64u && sq_peek(&pkt)) {
+                app_out(pkt, now_us / 1000u);
+                sq_pop();
+            }
+            c_event();
+            qev++;
+        }
+        c_events(2);
+        printf("stream: the same 5 KB through the 64-packet queue: %d events\n", qev);
+        check("stream: ... at least twice the events through the queue", qev >= 2 * events);
+        plat_ble_stream(&SQ);
+        c_frames_done();
+    }
+    /* a note queued between frames goes first; one queued while a frame is under way waits for its F7 */
+    ble_midi_dec_reset(&sq_dec);
+    sent_n = 0;
+    r0 = sq_r;
+    app_out(0x09 | 0x90 << 8 | 60 << 16 | 100 << 24, now_us / 1000u);
+    sq_frame(250, 1);
+    sq_frame(250, 2);
+    memcpy(want, "\x90\x3C\x64", 3);
+    memcpy(want + 3, sq + (r0 % sizeof sq), 500);
+    memcpy(want + 503, "\x90\x3E\x64", 3);
+    from = C.fr_n;
+    c_event();                                 /* (the end of the event: the notifications queued for the next) */
+    ok = sq_mid && sq_r != sq_w && out_r == out_w;
+    app_out(0x09 | 0x90 << 8 | 62 << 16 | 100 << 24, now_us / 1000u);
+    c_events(4);
+    sq_notes(from, 0);
+    ok = ok && sent_n == 506u && !memcmp(sent_b, want, 506) && out_r == out_w && sq_r == sq_w;
+    check("stream: a note between frames goes first, one queued inside a frame after its F7", ok);
+    /* nobody listening: the stream is not read (the app's ring keeps its frames for the app to drop) */
+    c_att((const uint8_t[]){0x12, 15, 0, 0, 0}, 5, &n);
+    sq_frame(250, 3);
+    r0 = sq_r;
+    sq_peeks = 0;
+    c_events(3);
+    check("stream: MIDI CCCD off: the stream not read", sq_r == r0 && sq_peeks == 0);
+    c_att((const uint8_t[]){0x12, 15, 0, 1, 0}, 5, &n);
+    c_events(3);
+    check("stream: CCCD on again: it goes", sq_r == sq_w);
+    plat_ble_stream(0);
+    sq_frame(250, 4);
+    c_events(3);
+    check("stream: plat_ble_stream(NULL): none read", sq_r != sq_w);
+    sq_r = sq_w;
+    c_frames_done();
+}
+#endif
 
 /* Bluetooth audio streaming (op_bt.c bt_poll -> ble_sig_audio): the slower interval asked for, the fast one after */
 static void test_audio_interval(void)
@@ -1327,6 +1492,9 @@ int main(void)
     test_connect_ll();
     test_gatt();
     test_midi();
+#if BLE_STREAM_TEST
+    test_stream();
+#endif
     test_audio_interval();
     test_l2cap();
     test_endings();

@@ -21,6 +21,10 @@ struct fm1b_dbg {
     uint32_t magic, halves, max_us, nested, in_audio, late, timer_irqs, ui_frames;
     uint32_t last_us, cpu_q12, boots, stage;
     uint32_t crash_seen;                            /* the crash count already reported at a boot */
+#if FM1B_CRASHLOG
+    uint32_t crash_kept, crash_saving;              /* the crash count already in the flash history; a boot's save of it
+                                                     * under way (crashlog.c cl_boot: one cut short is not tried again) */
+#endif
 } fm1b_dbg __attribute__((section(".noinit")));
 static uint8_t safe_mode;                           /* two failed boots: no audio, USB on (safe_main) */
 int8_t clock_fix;                                   /* fm1_clock_stock() at the start: 0 stock already, 1 set, -1 failed */
@@ -31,7 +35,7 @@ static uint8_t rails_boot[2], rails_tries;          /* VDC14's and SYSVDD's regi
                                                      * the raises it took to read back M-VAVE's levels (the log) */
 static uint32_t wdt_stage __attribute__((section(".noinit")));   /* the main loop's step when the watchdog fired:
                                                                   * 2 Bluetooth, 3 the app's loop, 4 USB, 5 a frame,
-                                                                  * 6 input (fm1b_dbg.stage) */
+                                                                  * 6 input, 7 the debug stats (fm1b_dbg.stage) */
 
 #if FM1B_BT_AUDIO
 static int own_bta_feed(const int32_t *o, uint32_t n);   /* bt_own_audio.c */
@@ -42,6 +46,12 @@ static int dev_frame(const uint8_t *p, uint32_t n);   /* bt_own_central.c */
 #endif
 #include "uac_mix.h"                                /* the USB recording, the computer's audio, in that order */
 #include "fm1_flash_ok.h"                          /* the flash parts the storage may use (FM1B_FLASH_JEDEC_OK) */
+#if FM1B_BT_AUDIO
+static volatile uint8_t bta_streamed;               /* the last render went to Bluetooth (plat_bta_streams) */
+int plat_bta_streams(void) { return bta_streamed; }
+#else
+int plat_bta_streams(void) { return 0; }
+#endif
 static void render_block(int32_t *o)                /* ALNK0: one half, measured */
 {
     uint32_t t0 = fm1_ticks(), us, budget = HALF_FRAMES * 1000000u / FS;
@@ -77,7 +87,13 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
             uac_mix(o + 2u * k, REND_FRAMES, gain, master_pos, full, usb_play_q12);   /* the USB
                                                      * recording, then the computer's audio, then MASTER if full */
 #if FM1B_BT_AUDIO
-            if (own_bta_feed(o + 2u * k, REND_FRAMES)) {   /* Bluetooth audio streams: the FM-1's own output muted */
+#ifdef APP_BT_FRAMES
+            bta_streamed = (uint8_t)own_bta_feed(app_bt_frames(o + 2u * k, REND_FRAMES), REND_FRAMES);   /* (the app's
+                                                     * frames for Bluetooth: 0 silence) */
+#else
+            bta_streamed = (uint8_t)own_bta_feed(o + 2u * k, REND_FRAMES);
+#endif
+            if (bta_streamed) {                     /* Bluetooth audio streams: the FM-1's own output muted */
                 uint32_t i;
                 for (i = 0; i < 2u * REND_FRAMES; i++)
                     o[2u * k + i] = 0;
@@ -149,6 +165,18 @@ void fm1_timer5_irq(void)
             if (gap > 300u)
                 t5_late++;
         }
+#if FM1B_MIDI_STAMP
+        /* what came in since the last tick came in, on the average, half way since: within 0.05 ms at 10 kHz (a tick
+         * held up by a lock: half the gap). Every tick, the render's too: the poll below waits for the render, the
+         * stamps do not. One SIE read and a look at the jack's ring */
+        {
+            uint32_t t = t5_prev ? now - (now - t5_prev) / 2u : now;
+            usb_midi_peek(t);
+#if FM1B_TRS
+            uart_midi_peek(t);
+#endif
+        }
+#endif
         t5_prev = now;
     }
     fm1b_dbg.timer_irqs++;
@@ -213,6 +241,196 @@ static void hexs(char *b, uint32_t v)
         b[i] = "0123456789ABCDEF"[(v >> (28u - 4u * i)) & 15u];
     b[8] = 0;
 }
+
+#if FM1B_DBGSTATS && !FM1B_CRASHLOG
+#error "debug_stats: with the crash history (tools/build.py turns both on)"
+#endif
+#if FM1B_CRASHLOG
+#include "stacks.c"                                 /* the stacks' room: painted at the start, read at a crash */
+
+/* a sector of the crash history or the debug stats, main loop only: one window, the sound silenced, as plat_data_erase
+ * (Henri's crashlog.c / dbgstats.c call his data_erase, felucca-bsp's sliced erase from w0ts/fm1-base
+ * feat/sliced-erase, which is not taken here) */
+static int data_erase(uint32_t off)
+{
+    uint32_t took;
+    audio_silence();
+    return fl_erase4k(off, &took);
+}
+
+/* the crash history in flash (crashlog.c: the staging area's 0xE2000..0xE3FFF), the boot's save and the readouts */
+#ifndef FM1B_BUILD
+#define FM1B_BUILD 0u                               /* (tools/build.py's build_id) */
+#endif
+#include "crashlog.c"
+_Static_assert(CL_LO >= OTA_AREA + 0x2000u && CL_LO + CL_SECTORS * 0x1000u <= (OTA_RES & ~0xFFFu),
+               "the crash history: in ota.c's staging, past the loader's head and backup.c's journal, before its record");
+#if FM1B_BACKUP
+_Static_assert(RS_REC + 0x1000u <= CL_LO, "the crash history: off backup.c's journal record");
+#endif
+static int cl_in(uint32_t off, uint32_t n) { return flash_ok && off >= CL_LO && n <= CL_SECTORS * 0x1000u - (off - CL_LO); }
+static int cl_read(uint32_t off, void *dst, uint32_t n) { return cl_in(off, n) ? st_read(off, dst, n) : -1; }
+static int cl_erase(uint32_t off)                   /* (the main loop's too: the clear, sliced as plat_data_erase's) */
+{
+    int rc;
+    if (!cl_in(off, 0x1000u) || (off & 0xFFFu))
+        return -1;
+    fm1_wdt_feed();
+    rc = data_erase(off);
+    fm1_wdt_feed();
+    return rc;
+}
+static int cl_prog(uint32_t off, const void *src, uint32_t n)
+{
+    return cl_in(off, n) ? fl_write(off, (const uint8_t *)src, n) : -1;   /* (src: a record on the stack, RAM) */
+}
+static int cl_send(const uint8_t *f, uint32_t n) { return ota_wire_send(f, n); }
+static void crash_keep(void)                        /* the boot: a crash since the last one into the flash history */
+{
+    cl_rec_t r;
+    const fm1_crash_ctx_t *x = &fm1_crash_ctx[fm1_crash.count % FM1_CRASH_CTX_N];
+    uint32_t i;
+    if (fm1_crash.magic != FM1_CRASH_MAGIC || !flash_ok)
+        return;
+    memset(&r, 0, sizeof r);
+    r.count = fm1_crash.count, r.vec = fm1_crash.vec, r.pc = fm1_crash.pc, r.rets = fm1_crash.rets;
+    r.sp = fm1_crash.sp, r.uptime_ms = fm1_crash.uptime_ms, r.emu = fm1_crash.emu, r.dbg = fm1_crash.dbg;
+    r.psr = fm1_crash.psr, r.build = FM1B_BUILD;
+    if (x->count == fm1_crash.count) {              /* (its registers, when the ring still holds them) */
+        r.flags = CL_CTX;
+        for (i = 0; i < 16u; i++)
+            r.r[i] = x->r[i];
+        r.usp = x->usp, r.ssp = x->ssp;
+    }
+    if (pst_crash.count == fm1_crash.count)         /* (the stacks' room fm1_fault read at this crash: stacks.c) */
+        r.flags |= cl_stk_pack(pst_crash.left);
+    (void)cl_boot(&r, &fm1b_dbg.crash_kept, &fm1b_dbg.crash_saving);
+}
+#else
+int32_t plat_stack_left(int k) { (void)k; return -1; }   /* (fm1.toml crash_history = true measures them) */
+#endif
+#if FM1B_DBGSTATS
+
+/* the debug stats in flash (dbgstats.c: the staging area's last sector, 0xE4000..0xE4EFF), the snapshots and the
+ * readouts. Read through the plain window (plat_data's: no window with the interrupts off, the second core's flash
+ * left alone), written by fl_write's page programs, each one's window measured (prog_us: the cost while playing) */
+#define DS_NOINIT __attribute__((section(".noinit")))
+#ifdef APP_STATS_LAYOUT
+#define DS_LAYOUT APP_STATS_LAYOUT
+#else
+#define DS_LAYOUT 0
+#endif
+#include "dbgstats.c"
+_Static_assert(DS_LO == (OTA_RES & ~0xFFFu) && DS_LO + DS_SLOTS * DS_REC <= OTA_RES && DS_LO >= CL_LO + CL_SECTORS * 0x1000u,
+               "the debug stats: ota.c's staging's last sector, below its record, past the crash history");
+static int ds_in(uint32_t off, uint32_t n) { return flash_ok && off >= DS_LO && n <= DS_SLOTS * DS_REC - (off - DS_LO); }
+static int ds_read(uint32_t off, void *dst, uint32_t n)
+{
+    if (!ds_in(off, n))
+        return -1;
+    memcpy(dst, (const void *)FL_XIP(off), n);   /* (the plain window: fl_plain_window_init) */
+    return 0;
+}
+static int ds_erase(uint32_t off)                   /* (sliced, as plat_data_erase's: the sound plays on) */
+{
+    int rc;
+    if (!flash_ok || off != DS_LO)
+        return -1;
+    fm1_wdt_feed();
+    rc = data_erase(off);
+    fm1_wdt_feed();
+    return rc;
+}
+static int ds_prog(uint32_t off, const void *src, uint32_t n)
+{
+    uint32_t t0, us;
+    int rc;
+    if (!ds_in(off, n))
+        return -1;
+    t0 = fm1_ticks();
+    rc = fl_write(off, (const uint8_t *)src, n);   /* (src: the .noinit queue, RAM; one page, one window) */
+    us = (fm1_ticks() - t0) / FM1_TICKS_PER_US;
+    if (us > ds_prog_us)
+        ds_prog_us = (uint16_t)(us < 0xFFFFu ? us : 0xFFFFu);
+    return rc;
+}
+static int ds_send(const uint8_t *f, uint32_t n)   /* (120 frames, ~20 KB: half a second of the main loop) */
+{
+    fm1_wdt_feed();
+    return ota_wire_send(f, n);
+}
+static int ds_staged(void)                          /* an update staged (or no flash): the area is not the stats' */
+{
+    uint32_t w[2];
+    if (!flash_ok)
+        return 1;
+    memcpy(&w[0], (const void *)FL_XIP(OTA_AREA), 4u);   /* (the plain window, as ds_read) */
+    memcpy(&w[1], (const void *)FL_XIP(OTA_RES), 4u);
+    return (w[0] & w[1]) != 0xFFFFFFFFu;
+}
+static uint8_t ds_u8(uint32_t v) { return (uint8_t)(v < 255u ? v : 255u); }
+static uint16_t ds_u16(uint32_t v) { return (uint16_t)(v < 65535u ? v : 65535u); }
+static void ds_fill(ds_rec_t *r)
+{
+    extern uint32_t lock_max;
+    uint32_t c2 = (bootguard.failed < 7u ? bootguard.failed : 7u) << 5;
+#if FM1B_CPU2
+    c2 |= (uint32_t)(plat_cpu2_on() != 0) | (uint32_t)(plat_cpu2_barred() != 0) << 1 |
+          ((uint32_t)plat_cpu2_gave_up() & 7u) << 2;
+#endif
+    r->up_s = fm1_ms / 1000u, r->halves = fm1b_dbg.halves, r->nested = fm1b_dbg.nested;
+    r->late = ds_u16(fm1b_dbg.late), r->max_us = ds_u16(fm1b_dbg.max_us);
+    r->gap_us = ds_u16(t5_gap_max), r->t5_late = ds_u8(t5_late), r->lock_us = ds_u16(lock_max);
+    r->boots = ds_u8(fm1b_dbg.boots);
+    r->crashes = fm1_crash.magic == FM1_CRASH_MAGIC ? ds_u8(fm1_crash.count) : 0u;
+    r->stage = (uint8_t)((fm1b_dbg.stage & 15u) | (wdt_stage & 15u) << 4);
+    r->cpu2 = (uint8_t)c2;
+#if FM1B_BLE
+    r->radio = (uint8_t)(((uint32_t)plat_ble_state() & 3u) | (uint32_t)(plat_ble_connected() != 0) << 2 |
+                         (uint32_t)(plat_ble_linked() != 0) << 3);
+#endif
+#if FM1B_WIFI
+    r->radio |= (uint8_t)(((uint32_t)plat_wifi_state() & 15u) << 4);
+#endif
+#ifdef APP_STATS
+    app_stats(r->app);
+#endif
+}
+static int ds_quiet(void)
+{
+#ifdef APP_STATS_QUIET
+    return app_stats_quiet();
+#else
+    return 1;
+#endif
+}
+static int32_t ds_stack(int k) { return plat_stack_left(k); }
+void plat_stats_enable(int on) { ds_enable(on); }
+int plat_stats_on(void) { return ds_on; }
+int32_t plat_stack_least_ever(int k) { return ds_least_ever(k); }
+static void stats_keep(void)                        /* the boot: the queue's left, a crash's snapshot (dbgstats.c), the
+                                                     * stacks' least ever (the flash's, the crash's room) */
+{
+    uint32_t count = fm1_crash.magic == FM1_CRASH_MAGIC ? fm1_crash.count : 0u;
+    ds_init();
+    if (flash_ok)
+        (void)ds_boot(count, count && pst_crash.count == count ? pst_crash.left : 0);
+}
+#else
+void plat_stats_enable(int on) { (void)on; }     /* (fm1.toml debug_stats = true keeps them) */
+int plat_stats_on(void) { return 0; }
+int32_t plat_stack_least_ever(int k) { (void)k; return -1; }
+#endif
+#if FM1B_CRASHLOG
+#define CL_REQUEST(p, n) cl_request((p), (n))     /* F0 7D 4C 48 ..: the crash history's readout and clear */
+#else
+#define CL_REQUEST(p, n) 0
+#endif
+#if FM1B_DBGSTATS
+#define DS_REQUEST(p, n) ds_request((p), (n))     /* F0 7D 4C 53 ..: the debug stats' */
+#else
+#define DS_REQUEST(p, n) 0
+#endif
 #if FM1B_BLE
 static char *log_dec(char *b, uint32_t v)            /* v in decimal at b; the end */
 {
@@ -229,10 +447,27 @@ static char *log_dec(char *b, uint32_t v)            /* v in decimal at b; the e
 #endif
 
 /* a readout for development over USB-MIDI: F0 7D 4C 47 F7 ("LG") asks; the answer is one frame per line,
- * F0 7D 4C 47 <ASCII> F7: the last crash (count, vector, pc, rets, sp, uptime), the supplies' registers (rails), the
+ * F0 7D 4C 47 <ASCII> F7: the last crash (count, vector, pc, rets, sp, uptime), the crash history kept in flash (its
+ * records, the oldest first, in crashlog.c's form: it survives a power-off), the supplies' registers (rails), the
  * power setup's and the clock's as the boot loader left them, then
  * Bluetooth's log, the oldest first (it survives a reset), the cache RAM's test (FM1B_CACHE_RAM) and the app's own
- * lines (APP_LOG); "end" last */
+ * lines (APP_LOG); "end" last.
+ * The crash history alone, for a program: F0 7D 4C 48 F7 ("LH") asks; one frame a record, F0 7D 4C 48 <ASCII> F7,
+ *   crash I/N n COUNT vec HEX pc HEX rets HEX sp HEX ms DEC emu HEX dbg HEX psr HEX build HEX seq DEC
+ *   regs I/N r0 HEX .. r15 HEX usp HEX ssp HEX (when the record has the registers)
+ *   stk I/N main DEC irq DEC c1 DEC guard 0|1 (each stack's bytes left at the crash, -1 not known; guard: EMU_MSG bit 3
+ *     or DBG_MSG bit 13, a stack into its guard; crashlog.c)
+ * the oldest first (I of N, at most 8), then "end N". F0 7D 4C 48 43 4C 52 F7 ("LHCLR") erases it and answers
+ * "cleared" (or "clear failed"); a boot never clears it (an install does: the update's staging, crashlog.c).
+ * The debug stats (dbgstats.c: every 5 minutes while the app has them on, and one with every crash; the record's
+ * layout there): F0 7D 4C 53 F7 ("LS") asks; three frames a record, F0 7D 4C 53 <ASCII> F7, the oldest first (at most 60),
+ *   stat I/N seq DEC up DEC build HEX flags HEX boots DEC crashes DEC halves DEC nested DEC late DEC maxus DEC
+ *     gap DEC t5late DEC lock DEC pass DEC pstage DEC prog DEC stage DEC wdt DEC cpu2 HEX bt HEX wifi DEC
+ *   stk I/N main DEC irq DEC ever main DEC irq DEC c1 DEC (bytes left since the start, then the least ever)
+ *   app I/N NAME DEC ... (the app's fields, APP_STATS_LAYOUT) or app I/N raw HEX (14 digits)
+ * then "end N". F0 7D 4C 53 43 4C 52 F7 ("LSCLR") erases them: "cleared", or "clear failed" (an update staged). Up and
+ * the times in seconds and microseconds; flags 1 periodic, 2 a crash's, 4 written while playing, 8 the switch on.
+ * Both answer in safe mode too */
 static void log_line_send(const char *t)
 {
     uint8_t f[48];
@@ -309,6 +544,14 @@ static int log_frame(const uint8_t *p, uint32_t n)
     } else {
         log_line_send("no crash recorded");
     }
+#if FM1B_CRASHLOG
+    {   /* the crash history in flash (crashlog.c: it survives a power-off): its records, the oldest first, as the
+         * history's own request (F0 7D 4C 48 F7) gives them */
+        log_line_send("saved in flash, the oldest first:");
+        if (!cl_print(0x47))
+            log_line_send("saved none");
+    }
+#endif
     {   /* the supplies: as the boot loader left them, the raises, and now (raw registers: a broken read shows) */
         static const char H[] = "0123456789ABCDEF";
         uint8_t v[4] = {rails_boot[0], rails_boot[1], fm1_p33_read(FM1_P3_ANA_CON6), fm1_p33_read(FM1_P3_ANA_CON9)};
@@ -381,12 +624,17 @@ static int log_frame(const uint8_t *p, uint32_t n)
         }
     }
     if (wdt_stage) {
+#if FM1B_DBGSTATS
+        static const char *const ST[8] = {"?", "?", "Bluetooth", "the app's loop", "USB", "a frame", "input",
+                                          "the debug stats"};
+#else
         static const char *const ST[7] = {"?", "?", "Bluetooth", "the app's loop", "USB", "a frame", "input"};
+#endif
         char *q = b;
         const char *t = "last watchdog reset in ";
         while (*t)
             *q++ = *t++;
-        t = ST[wdt_stage < 7u ? wdt_stage : 0];
+        t = ST[wdt_stage < sizeof ST / sizeof ST[0] ? wdt_stage : 0];
         while (*t)
             *q++ = *t++;
         *q = 0;
@@ -435,6 +683,7 @@ static int log_frame(const uint8_t *p, uint32_t n)
         shim_off_max = 0;
     }
 #if FM1B_BLE_OWN
+#if BLE_DIAG                                         /* (fm1.toml ble_diag = false: the counters not kept, no line) */
     {   /* the own stack's link layer: advertising events, connections taken / refused, packets good / CRC bad,
          * links closed : the last reason, the longest BLE interrupt (us) */
         q = b;
@@ -458,6 +707,7 @@ static int log_frame(const uint8_t *p, uint32_t n)
         *q = 0;
         log_line_send(b);
     }
+#endif
 #else
     {   /* the radio's tasks' deepest stacks and its heap's most, now (the "stacks" lines may have scrolled away) */
         extern int shim_stack_depth(int task);
@@ -798,6 +1048,9 @@ static void fm1_fault(const fm1_crash_t *c)
 {
     char b[12];
     uint32_t t0;
+#if FM1B_CRASHLOG
+    pst_at_crash(c->count);                         /* the stacks' room before anything here draws on one (stacks.c) */
+#endif
 #ifdef APP_FAULT
     app_fault(c);                                   /* the app's first (its second core: given up, or this is it) */
 #endif
@@ -895,7 +1148,7 @@ static void safe_main(void)
         {   /* the log readout works here too: what crashed is the question safe mode raises */
             const uint8_t *p;
             uint32_t n;
-            if (ota_frame_get(&p, &n) && log_frame(p, n))
+            if (ota_frame_get(&p, &n) && (log_frame(p, n) || CL_REQUEST(p, n) || DS_REQUEST(p, n)))
                 ota_frame_done();
             else
                 ota_service();                      /* (only at a frame the log didn't take) */
@@ -938,6 +1191,10 @@ static void fm1_main(void)
     int took;                                       /* a SysEx frame taken this pass (not the updater's) */
     {
         uint32_t f = irq_save();
+#if FM1B_CRASHLOG
+        pst_boot(&knob);                            /* the stacks painted below what is live (stacks.c: the room a crash
+                                                     * finds; the last run's marks were read at its fault, if any) */
+#endif
         rails_boot[0] = fm1_p33_read(FM1_P3_ANA_CON6);
         rails_boot[1] = fm1_p33_read(FM1_P3_ANA_CON9);
         for (rails_tries = 1; ; rails_tries++) {
@@ -986,6 +1243,15 @@ static void fm1_main(void)
     }
     fm1b_dbg.in_audio = 0;                          /* (.noinit: a crash inside the render left it set, and safe mode,
                                                      * with no render to clear it, then never polled USB) */
+#if FM1B_CRASHLOG
+    crash_keep();                                   /* a crash since the last boot into the flash history (crashlog.c):
+                                                     * before safe mode, whose crashes at the start matter most; the
+                                                     * staging cleaned up above first (ota_boot_cleanup erases it) */
+#endif
+#if FM1B_DBGSTATS
+    stats_keep();                                   /* the debug stats' queue into the flash, a crash's snapshot
+                                                     * (dbgstats.c): beside it, for the same reasons */
+#endif
     if (safe_mode)
         safe_main();                                /* never returns */
     if (fm1_crash.magic == FM1_CRASH_MAGIC && fm1_crash.count != fm1b_dbg.crash_seen) {
@@ -1043,6 +1309,19 @@ static void fm1_main(void)
     app_ui_init();
 
     for (;;) {
+#if FM1B_HEADPHONES
+        plat_hp_read();                             /* the headphone jack, every pass (plat_headphones) */
+#endif
+#if FM1B_DBGSTATS
+        {   /* the debug stats (dbgstats.c): the last pass's length and where it ended, the second's snapshot, a due
+             * one queued, a queued one written when the app is quiet (or has kept it waiting 4 minutes) */
+            static uint32_t t_ds;
+            uint32_t now = fm1_ticks(), st = fm1b_dbg.stage;
+            fm1b_dbg.stage = 7;
+            ds_poll(fm1_ms, t_ds ? (now - t_ds) / FM1_TICKS_PER_US : 0u, st);
+            t_ds = now;
+        }
+#endif
         fm1_wdt_feed();
 #if FELUCCA_USB_HOST
         usb_host_task(fm1_ms);                      /* the host's mode change and connecting (plat_usb_host) */
@@ -1085,7 +1364,8 @@ static void fm1_main(void)
             const uint8_t *p;
             uint32_t n;
             took = 0;
-            if (ota_frame_get(&p, &n) && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || remote_frame(p, n)
+            if (ota_frame_get(&p, &n) && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || CL_REQUEST(p, n) ||
+                                          DS_REQUEST(p, n) || remote_frame(p, n)
 #if FM1B_WIFI
                                           || wifi_frame(p, n)
 #endif
@@ -1122,9 +1402,6 @@ static void fm1_main(void)
         }
         if (usb.uboot_req)
             enter_uboot("UBOOT (USB)");
-#if FM1B_CDC
-        cdc_task();
-#endif
         if (fm1_ms - last_frame >= 16u) {           /* ~60 frames/s at most; input in between */
             last_frame = fm1_ms;
             fm1b_dbg.ui_frames++;

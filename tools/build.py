@@ -57,7 +57,14 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   ble_trim = true            Bluetooth as a MIDI peripheral only: JieLi's central, classic and test code cut (flash and
                              RAM: Melodee's measure ~18 KB and ~4 KB); not with ble_central
   ble_no_pairing = true      with ble_trim: no pairing or encryption either (~19 KB more flash; iOS and macOS connect)
-  ble_central = true         and the FM-1 connects to Bluetooth MIDI devices too (FM1B_BLE_CENTRAL), beside a computer
+  ble_central = true         and the FM-1 connects to Bluetooth MIDI devices too (FM1B_BLE_CENTRAL), beside a computer;
+                             with ble_stack = "own", 3: without pairing (no bonds, no passkey: smaller)
+  bt_audio_mem = "app"       with bt_audio: its audio packets' queue and the receptions' ring (17.7 KB) lent by the app
+                             while an AUDIO mode is on, not static RAM (FM1B_BTA_MEM; plat.h plat_bta_mem): an app
+                             whose arena gets them back while Bluetooth audio is off. Default "static"
+  bt_audio_sim = true        with bt_audio: the host simulator and the browser emulator built with FM1B_BT_AUDIO, on
+                             fm1-base's stand-in for plat_bta_* (the script's "bta add NAME"); off by default, so an
+                             app keeps its own stand-in there (without FM1B_BT_AUDIO)
   usb_audio_in = true        the FM-1 recordable over USB (FM1B_UAC; the default: true)
   usb_audio_out = true       a computer plays through the FM-1 over USB (FM1B_UAC_OUT; the default: true)
   usb_audio_first = true     the USB audio streaming interfaces listed first in the audio control collection
@@ -72,6 +79,20 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              2: MIDI left out of the collection too (a test build: no USB MIDI on Linux)
   usb_iad = true             without the USB console, an interface association descriptor over the audio function, the
                              device then misc / IAD (felucca-bsp FELUCCA_UAC_IAD; the default: false); bcdDevice +2.00
+  usb_console = true         a USB serial console beside USB MIDI (FM1B_CDC: felucca-bsp's CDC-ACM function, device/
+                             console.c): the app's text over plat_console_* (plat.h); FM1B_CDC=0 / 1 in the
+                             environment over it
+  midi_stamp = true          MIDI in from USB and the TRS jack stamped where it lands (FM1B_MIDI_STAMP: felucca-bsp's
+                             FELUCCA_MIDI_STAMP, usb_midi_peek and midi_uart.c's uart_midi_peek from TIMER5's 10 kHz
+                             tick, the render's ticks too): plat_midi_in_t24 within 0.05 ms of the arrival instead of
+                             when the app read it; off by default; FM1B_MIDI_STAMP=0 / 1 in the environment over it
+  crash_history = true       the crash records kept in flash across power-offs (FM1B_CRASHLOG: device/crashlog.c, the
+                             update's staging area's 0xE2000..0xE3FFF, which an install erases; read with F0 7D 4C 48 F7,
+                             tools/fm1_remote.py crashes), and each stack's room at a crash (stacks.c: plat_stack_left;
+                             the stacks painted at every start); off by default
+  debug_stats = true         and the debug stats (FM1B_DBGSTATS: device/dbgstats.c, a snapshot every 5 minutes while the
+                             app has plat_stats_enable on, and one at each crash, in the staging's last sector
+                             0xE4000..0xE4EFF; F0 7D 4C 53 F7, fm1_remote.py stats); with the crash history
   usb_host = true            the USB port as a MIDI host when the app asks (FM1B_USB_HOST: felucca-bsp's
                              FELUCCA_USB_HOST, docs/USB_HOST.md; plat_usb_host in plat.h): a USB-MIDI controller or
                              synth, directly or behind one powered hub (the FM-1 gives no power). Boot is a device
@@ -82,6 +103,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              "packed"; 2048 B of the pool with WiFi; a demo build may spend it)
   msc = true                 disk mode: the FM-1 as a USB drive of the app's blocks (FM1B_MSC: device/msc.c, plat_disk_* in
                              plat.h; felucca-bsp usb.c FELUCCA_MSC), no USB MIDI or audio meanwhile
+  lcd_panel = true           the M-VAVE panel's own ST7789V setup after the reset (FM1B_LCD_PANEL: porch, gate voltages, VCOM
+                             0x18, supplies, 60 Hz, gammas; device/lcd.c LCD_SEQ). Off: the init is byte-identical
   backup = true              backup and restore of the app's saved objects over USB (FM1B_BACKUP: device/backup.c;
                              tools/fm1_backup.py); app.h gives APP_BACKUP_OBJS, _MAGIC, _VERSION and the app_backup_* hooks
   resources = "FILE"         the resource region (FM1B_RES: device/res.c, plat_res in plat.h; with backup): FILE (relative
@@ -125,6 +148,12 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              an app's own that load app_worklet.js and call fm1App); "-resample" leaves it out.
                              FM1B_EMU="midi data" in the environment instead: those parts and no others ("" for
                              none). Without any, the page, the worklet and app.wasm are what they were
+  xdata2 = true              a fourth plat_data window, PLAT_XDATA2 0xFC000..0xFEFFF (FM1B_XDATA2: plat.h; Felucca's
+                             globals' sectors, for an app that was a Felucca firmware); the store's objects there are
+                             refused to plat_data_erase / plat_data_write
+  headphones = true          the headphone jack read every main-loop pass, debounced (FM1B_HEADPHONES: device/plat_hp.c,
+                             felucca-bsp's boards/fm1/fm1_jack.h, PB5): plat_headphones 1 / 0; without it -1 on the
+                             device, nothing read (the host simulator's script jack in / jack out either way)
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
 app.h); the build prints what it has.
   boot_pack = true           .ram_text and .data stored LZMA-packed (tools/boot_pack.py, Melodee's; device/boot_lzma.h): the
@@ -134,6 +163,11 @@ app.h); the build prints what it has.
                              FM1B_BLE_OWN) instead of JieLi's libraries: nothing of the SDK's linked, no shim
   ble_pairing = true         with ble_stack = "own": pairing and an encrypted link (LE legacy pairing, Just Works),
                              the bond kept in OBJ_BLE; without it a pairing is refused (macOS and iOS connect anyway)
+  ble_diag = false           with ble_stack = "own": the link layer's diagnostics left out (bt/ble/ble_diag.h BLE_DIAG 0:
+                             its counters and event rings, ~2.4 KB of RAM, and the radio log's "BT ll" line); kept by default
+  ble_midi_time = true       with ble_stack = "own": Bluetooth MIDI in by the sender's time (FM1B_BLE_MIDI_TIME): each
+                             message's time sent, from its BLE-MIDI timestamp (bt/ble/ble_time.c), for plat_midi_in_t24;
+                             the transport then comes at once instead of held to the sender's time
   ble = true                 Bluetooth MIDI (FM1B_BLE): ble/ on JieLi's BT libraries, from the AC79 SDK ($AC79_SDK);
                              --no-ble builds without it (NAME-usb.fwsc), and the build checks nothing of JieLi's is in
   wifi = true                WiFi (FM1B_WIFI): a station on JieLi's WiFi libraries and the SDK's lwIP (built from its
@@ -171,6 +205,7 @@ The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it; on
 macOS (or with JIELI_DOCKER=1) each tool runs in a linux/amd64 container.
 """
 import argparse
+import functools
 import hashlib
 import os
 import platform
@@ -573,6 +608,21 @@ BLE_CF = ["-integrated-as", f"-mcpu={CPU}", "-mfprev1", "-fno-common", "-Oz", "-
           "-DCONFIG_BT_ENABLE=1", "-mllvm", "-pi32v2-large-program=true"]
 
 
+def bta_sim():
+    """fm1.toml bt_audio_sim = true (with bt_audio, ble_stack = "own"): the host simulator and the browser emulator build
+    with FM1B_BT_AUDIO, fm1-base's stand-in for Bluetooth audio (host/plat_host.c: the script's devices). Off by default:
+    an app with Bluetooth audio keeps its own stand-in there (LOOM-8's and Polly's bt.c: without FM1B_BT_AUDIO)"""
+    return bool(BLE and OWN and CONF.get("bt_audio") and CONF.get("bt_audio_sim"))
+
+
+def bta_mem_flags():
+    """fm1.toml bt_audio_mem -> flags: "app" lends Bluetooth audio's buffers (plat.h plat_bta_mem), "static" (the default)"""
+    v = CONF.get("bt_audio_mem", "static")
+    if v not in ("app", "static"):
+        raise SystemExit(f'build: fm1.toml bt_audio_mem = "{v}": "app" or "static"')
+    return ["-DFM1B_BTA_MEM=1"] if v == "app" and CONF.get("bt_audio") else []
+
+
 def radio_units():
     """copy what the Bluetooth or WiFi build needs from the SDK into build/ble (the container sees only this tree);
     return the compile commands, the objects and the link's libraries"""
@@ -692,12 +742,18 @@ def build_app():
         flags += ["-DFM1B_BLE=1", "-DFM1B_BLE_OWN=1", *inc(SRC / "bt" / "ble", SRC / "bt" / "br")]
         if CONF.get("ble_central"):
             flags.append("-DFM1B_BLE_CENTRAL=1")
+            if CONF.get("ble_central") == 3:      # the central without pairing (bt/ble/ble_cfg.h BLE_CENTRAL 3)
+                flags.append("-DBLE_CENTRAL=3")
         if CONF.get("bt_audio"):                   # Bluetooth audio out (A2DP source, bt/br)
-            flags.append("-DFM1B_BT_AUDIO=1")
+            flags += ["-DFM1B_BT_AUDIO=1", *bta_mem_flags()]
             if CONF.get("bt_log"):                 # its step-by-step lines on the radio's log (fm1_remote.py log)
                 flags.append("-DFM1B_BT_LOG=1")
+        if CONF.get("ble_midi_time"):              # BLE MIDI in by the sender's time (plat_midi_in_t24), transport not held
+            flags.append("-DFM1B_BLE_MIDI_TIME=1")
         if CONF.get("ble_pairing"):                # pairing and an encrypted link (LE legacy, Just Works; the bond kept)
             flags += ["-DBLE_LL_ENC=1", "-DBLE_SMP_LEGACY=1"]
+        if CONF.get("ble_diag") is False:          # the link layer's diagnostics left out (bt/ble/ble_diag.h)
+            flags.append("-DBLE_DIAG=0")
         GEN.mkdir(parents=True, exist_ok=True)    # the radio's start-up program (fm1_ble_rf.h includes it)
         tables = (BSP / "chip" / "ble_rf_tables_v15.h").read_bytes()   # (Apache-2.0: JieLi's rf_init, from V15)
         if not (GEN / "ble_rf_tables.h").exists() or (GEN / "ble_rf_tables.h").read_bytes() != tables:
@@ -720,7 +776,15 @@ def build_app():
     flags.append(f"-DFELUCCA_UAC_MIDI_LAST={int(midi_last)}")
     if CONF.get("usb_iad"):
         flags.append("-DFELUCCA_UAC_IAD=1")
-    for flag in ("FM1B_CDC", "FM1B_UAC", "FM1B_UAC_OUT", "FM1B_TRS"):
+    if CONF.get("usb_console") and "FM1B_CDC" not in os.environ:
+        flags.append("-DFM1B_CDC=1")              # the USB serial console (device/console.c)
+    if CONF.get("crash_history") or CONF.get("debug_stats"):
+        flags.append("-DFM1B_CRASHLOG=1")         # the crash history in flash (device/crashlog.c, stacks.c)
+    if CONF.get("debug_stats"):
+        flags.append("-DFM1B_DBGSTATS=1")         # the debug stats in flash (device/dbgstats.c)
+    if CONF.get("midi_stamp") and "FM1B_MIDI_STAMP" not in os.environ:
+        flags.append("-DFM1B_MIDI_STAMP=1")       # MIDI in stamped where it lands (plat_midi_in_t24; unity.c)
+    for flag in ("FM1B_CDC", "FM1B_UAC", "FM1B_UAC_OUT", "FM1B_TRS", "FM1B_MIDI_STAMP"):
         v = os.environ.get(flag)    # unset: fm1.toml's, the app's (app.h) or the platform's default (device/unity.c)
         if v in ("0", "1"):
             flags.append(f"-D{flag}={v}")
@@ -730,8 +794,9 @@ def build_app():
             flags.append(f'-D{macro}="{CONF[key]}"')
     if VERSION:
         flags.append(f'-DAPP_VERSION="{VERSION}"')
+    flags.append(f"-DFM1B_BUILD={build_id():#010x}u")   # (the crash history's records carry it: device/crashlog.c)
     if CPU2:
-        flags += ["-DFM1_CPU1=1", f"-DFM1B_BUILD={build_id():#010x}u", f"-DFM1_CPU1_FALLBACK={int(bool(CONF.get('cpu2_fallback')))}"]
+        flags += ["-DFM1_CPU1=1", f"-DFM1_CPU1_FALLBACK={int(bool(CONF.get('cpu2_fallback')))}"]
         flags += cpu2_stack_flags()
     o2 = [f if f != "-Os" else "-O2" for f in flags]
     unity_opt = CONF.get("unity_opt", "s")        # the unity build's level: -Os, or -Oz (the o2 units stay -O2)
@@ -1164,9 +1229,11 @@ def web_objects(base_flags, out):
     return [str(o) for _, o in jobs]
 
 
+@functools.cache
 def build_id():
     """this build's sources (the app's, fm1-base's, felucca-bsp's chip/) and version, hashed: the second core's bar
-    (fm1_cpu1_bar_build) is lifted for a new build"""
+    (fm1_cpu1_bar_build) is lifted for a new build, and each crash record in the flash history names the build that
+    kept it (device/crashlog.c; printed by every build: tools/fm1_remote.py crashes shows it)"""
     h = hashlib.sha1((VERSION or "").encode())
     for d in (APP, SRC / "device", SRC / "include", BSP / "chip"):
         for f in sorted(d.rglob("*")):
@@ -1179,7 +1246,8 @@ def build_id():
 def opt_flags():
     """the optional parts an fm1.toml turns on that need no SDK: the same on the device, the host and the web"""
     flags = [f"-D{flag}=1" for key, flag in (("mirror", "FM1B_MIRROR"), ("backup", "FM1B_BACKUP"), ("cpu2", "FM1B_CPU2"), ("usb_host", "FM1B_USB_HOST"), ("msc", "FM1B_MSC"),
-                                           ("resources", "FM1B_RES"))
+                                           ("resources", "FM1B_RES"), ("lcd_panel", "FM1B_LCD_PANEL"), ("xdata2", "FM1B_XDATA2"),
+                                           ("headphones", "FM1B_HEADPHONES"))
             if (CONF.get(key) and os.environ.get(flag) != "0") or os.environ.get(flag) == "1"]   # (FM1B_MIRROR=1: a build with it, fm1.toml as it is; FM1B_BACKUP=0: without)
     if cache_ram_ways():
         flags.append(f"-DFM1B_CACHE_RAM={cache_ram_ways()}")   # (the host and the web: plat_cache_ram's stand-in)
@@ -1193,10 +1261,10 @@ def build_host():
     out.mkdir(parents=True, exist_ok=True)
     exe = out / (STEM + "_host")                  # NAME_host; NAME-usb_host with --no-ble
     inc_dirs = [f"-I{d}" for d in (SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))]
-    o2_objs = o2_objects(os.environ.get("CC", "cc"), ["-O2", "-ffp-contract=off", "-std=c99", "-w", "-DPLAT_HOST", *inc_dirs],
+    o2_objs = o2_objects(os.environ.get("CC", "cc"), ["-O2", "-ffp-contract=off", "-std=c99", "-w", "-DPLAT_HOST", *opt_flags(), *inc_dirs],
                          out / "o2")
     cmd = [os.environ.get("CC", "cc"), "-O2", "-ffp-contract=off", "-std=c99", "-Wall", "-Wextra",
-           "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *opt_flags(), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI,
+           "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *opt_flags(), f"-DFM1B_BUILD={build_id():#010x}u", *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_BT_AUDIO=1"] * bta_sim(), *(bta_mem_flags() if bta_sim() else []), *["-DFM1B_WIFI=1"] * WIFI,
            *(f"-I{d}" for d in (SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            "-o", str(exe), str(SRC / "host" / "plat_host.c"), *o2_objs, "-lm"]
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -1319,13 +1387,13 @@ def build_web():
     emu.mkdir(parents=True, exist_ok=True)
     web_inc = [f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))]
     wf = CONF.get("web_cflags", [])
-    o2_objs = o2_objects("emcc", ["-O2", "-ffp-contract=off", "-std=gnu99", "-w", "-DPLAT_HOST", "-DPLAT_WEB", *wf, *web_inc],
+    o2_objs = o2_objects("emcc", ["-O2", "-ffp-contract=off", "-std=gnu99", "-w", "-DPLAT_HOST", "-DPLAT_WEB", *wf, *opt_flags(), *web_inc],
                          emu / "o2")
-    o2_objs += web_objects(["-O2", "-ffp-contract=off", "-std=gnu99", "-w", "-DPLAT_HOST", "-DPLAT_WEB", *wf, *web_inc],
+    o2_objs += web_objects(["-O2", "-ffp-contract=off", "-std=gnu99", "-w", "-DPLAT_HOST", "-DPLAT_WEB", *wf, *opt_flags(), *web_inc],
                            emu / "web")
     parts = emu_parts()
     cmd = ["emcc", "-O2", "-ffp-contract=off", "-std=gnu99", "-Wall", "-Wno-unused-function", "-Wno-unused-parameter",
-           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *opt_flags(), *(f"-DFM1B_EMU_{p.upper()}=1" for p in parts), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
+           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *opt_flags(), *(f"-DFM1B_EMU_{p.upper()}=1" for p in parts), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_BT_AUDIO=1"] * bta_sim(), *(bta_mem_flags() if bta_sim() else []), *["-DFM1B_WIFI=1"] * WIFI, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
            *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            *wf, "--no-entry", "-sSTANDALONE_WASM", "-sSTACK_SIZE=1048576", "-sINITIAL_MEMORY=33554432", "-sFILESYSTEM=0",
            "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *o2_objs,
@@ -1549,6 +1617,7 @@ def main():
         print(f"res      {res}  {res.stat().st_size} B (written after an update: tools/fm1_resources.py)")
     print(f"loader   {LDR / 'ota.bin'}  {len(ota)} B")
     print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}")
+    print(f"build    {build_id():08X}  (FM1B_BUILD: the build a crash record names, fm1_remote.py crashes)")
     return 0
 
 

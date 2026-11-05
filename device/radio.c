@@ -263,8 +263,14 @@ static void radio_boot_note(void)
 static void radio_clean_exit(void) { blog.running = 0; }
 
 /* the radio's address and pairing: the app's store object OBJ_BLE (app.h) */
+#ifdef APP_BLE_STORE
+#if !FM1B_BLE_OWN
+#error "APP_BLE_STORE: with the own stack only (fm1.toml ble_stack = \"own\"): JieLi's keeps its records in OBJ_BLE"
+#endif
+#else
 int shim_store_load(void *dst, uint32_t max) { return plat_store_load(OBJ_BLE, dst, max); }
 int shim_store_save(const void *src, uint32_t len) { return plat_store_save(OBJ_BLE, src, len); }
+#endif
 
 #if !FM1B_BLE_OWN
 extern int syscfg_read(uint16_t id, void *buf, uint16_t len);
@@ -443,6 +449,21 @@ static uint8_t ble_conn;                          /* bit l: ble_midi_connected(l
 #define BQ 64u
 static uint32_t ble_in_q[BQ];
 static uint32_t bi_w, bi_r;
+#if FM1B_BLE_MIDI_TIME
+/* fm1.toml ble_midi_time: every message goes in at once with the time it was sent, on plat_ticks24's clock (the own
+ * stack's ble_in_time, bt/ble/ble_time.c: the sender's own timestamps, the connection's bunching taken out), for
+ * plat_midi_in_t24; the transport is not held to the sender's time (ble_midi_receive, ble_transport: unused) */
+static uint32_t ble_in_t[BQ], ble_in_t_last;
+void ble_midi_receive_at(uint32_t pkt, uint32_t t24)   /* from the stack (in ble_poll): for plat_midi_in */
+{
+    if (bi_w - bi_r < BQ) {
+        ble_in_q[bi_w % BQ] = pkt & ~0xE0u;
+        ble_in_t[bi_w % BQ] = t24;
+        bi_w++;
+        ble_rx_count++;
+    }
+}
+#endif
 /* The transport (clock, start, continue, stop) by the sender's time: the radio bunches messages into its
  * connection events (7.5..30 ms apart), so ticks would come in clumps and a sequencer stepping on them would clump
  * too (LOOM-8 on a Mac's clock: its sixteenths 60..180 ms apart at 140 BPM, against 104..112 over USB). Each BLE
@@ -533,6 +554,9 @@ static int ble_midi_in(uint32_t *pkt, uint32_t *from)   /* from: its link's out,
         return 0;
     else {
         p = ble_in_q[bi_r % BQ];
+#if FM1B_BLE_MIDI_TIME
+        ble_in_t_last = ble_in_t[bi_r % BQ];
+#endif
         bi_r++;
     }
     *from = (p >> 4 & 0xFu) == 1u ? TO_BLE_DEV : TO_BLE_HOST;
@@ -758,6 +782,13 @@ static uint8_t ble_off;                           /* switched off by the player 
 int plat_ble_state(void) { return ble_off ? BLE_OFF : ble_state; }
 int plat_ble_connected(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_connected(); }
 int plat_ble_linked(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_linked(); }
+int plat_ble_stream(const struct plat_ble_stream *s) { (void)s; return 0; }   /* (send by plat_midi_send) */
+void plat_ble_link_info(uint32_t v[7])
+{
+    int i;
+    for (i = 0; i < 7; i++)
+        v[i] = 0;
+}
 void plat_ble_enable(int on)
 {
     ble_off = (uint8_t)!on;
@@ -788,6 +819,7 @@ void plat_ble_disconnect(void)
 }
 int plat_ble_device(void) { return ble_state == BLE_READY ? ble_midi_central_state() : BLE_DEV_OFF; }
 int plat_ble_passkey(void) { return -1; }
+#include "ble_peers_none.c"
 #else
 void plat_ble_scan(int on) { (void)on; }
 int plat_ble_found(int i, char *name, int *rssi) { (void)i, (void)name, (void)rssi; return 0; }
@@ -795,6 +827,7 @@ int plat_ble_connect(int i) { (void)i; return -1; }
 void plat_ble_disconnect(void) {}
 int plat_ble_device(void) { return BLE_DEV_OFF; }
 int plat_ble_passkey(void) { return -1; }
+#include "ble_peers_none.c"
 #endif
 void plat_ble_start(void) { ble_start(); }
 #endif                                            /* (FM1B_BLE_OWN) */

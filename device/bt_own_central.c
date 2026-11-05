@@ -8,10 +8,21 @@
 static struct ble_scan_tab own_scan;
 static uint32_t own_scan_aged;
 
+_Static_assert(sizeof(struct plat_ble_peer) == sizeof(struct ble_peer) && sizeof(struct plat_ble_keys) ==
+               sizeof(struct ble_keys), "plat.h plat_ble_peer / plat_ble_keys: bt/ble/ble.h ble_peer / ble_keys");
 #if BLE_CEN_PAIR
+#ifdef APP_BLE_PEERS
+static struct ble_keys own_keys;                  /* a pairing's keys, for the app (own_central_poll, the main loop) */
+static volatile uint8_t own_keys_new;
+#endif
 BLE_API void ble_app_central_keys(const struct ble_keys *k)
 {
-    (void)k;                                      /* (a device's bond is not kept yet: it pairs again next time) */
+#ifdef APP_BLE_PEERS
+    own_keys = *k;                                /* (the BLE interrupts' context: handed over in the main loop) */
+    own_keys_new = 1;
+#else
+    (void)k;                                      /* (a device's bond is not kept: it pairs again next time) */
+#endif
 }
 #endif
 
@@ -20,8 +31,22 @@ static void own_central_poll(void)                /* ble_poll: the scan's report
     uint8_t pdu[40];
     uint16_t rssi;
     uint8_t n;
-    while ((n = ble_ll_scan_take(pdu, &rssi)) != 0)
+    while ((n = ble_ll_scan_take(pdu, &rssi)) != 0) {
         ble_scan_add(&own_scan, pdu, n, rssi, shim_ms());
+#ifdef APP_BLE_PEERS
+        app_ble_scan_report(pdu, n, rssi);        /* (the app's own list of the devices: plat.h) */
+#endif
+    }
+#if BLE_CEN_PAIR && defined(APP_BLE_PEERS)
+    if (own_keys_new) {
+        struct plat_ble_keys k;
+        uint32_t f = irq_save();                  /* (a copy the interrupts do not write meanwhile) */
+        ble_cpy((uint8_t *)&k, (const uint8_t *)&own_keys, sizeof k);
+        own_keys_new = 0;
+        irq_restore(f);
+        app_ble_device_keys(&k);
+    }
+#endif
     if (shim_ms() - own_scan_aged > 1000u) {
         own_scan_aged = shim_ms();
         ble_scan_age(&own_scan, own_scan_aged);
@@ -73,6 +98,46 @@ int plat_ble_connect(int i)
         shim_log("device: connecting");
     return ok ? 0 : -1;
 }
+#ifdef APP_BLE_PEERS                              /* (the devices one by one: an app that keeps its own, plat.h) */
+int plat_ble_connect_peer(const struct plat_ble_peer *p)
+{
+    struct ble_peer q;
+    int ok;
+    if (ble_state != BLE_READY)
+        return -1;
+    ble_cpy((uint8_t *)&q, (const uint8_t *)p, sizeof q);
+    own_held(1);
+    ok = ble_central_connect(&q);
+    own_held(0);
+    if (ok)
+        shim_log("device: connecting");
+    return ok ? 0 : -1;
+}
+int plat_ble_device_fail(uint32_t *code)
+{
+    if (code)
+        *code = ble_central_code();
+    return ble_central_fail();
+}
+uint32_t plat_ble_device_flags(void)
+{
+#if BLE_CEN_PAIR
+    return (ble_central_pairing() ? PLAT_BLE_DF_PAIRING : 0u) | (ble_central_prompted() ? PLAT_BLE_DF_PROMPTED : 0u) |
+           (ble_central_mitm() ? PLAT_BLE_DF_MITM : 0u);
+#else
+    return 0;
+#endif
+}
+int plat_ble_rpa_resolve(const uint8_t irk[16], const uint8_t addr[6])
+{
+#if BLE_CEN_PAIR
+    return ble_rpa_resolve(irk, addr);
+#else
+    (void)irk, (void)addr;
+    return 0;
+#endif
+}
+#endif
 void plat_ble_disconnect(void)
 {
     if (ble_state != BLE_READY)

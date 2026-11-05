@@ -45,9 +45,19 @@ run layout "$PY" tests/layout_test.py
 run cache-ram sh -c "$CC -std=c11 -O1 -Wall -Wextra -Werror -Ibsp/chip -o $OUT/cache_ram_test bsp/tests/cache_ram_test.c && $OUT/cache_ram_test"
 # the static stack check (tools/stack_depth.py, stack_ir.py): frames, the interrupts nested, indirect calls on the IR
 run stack_depth "$PY" tests/stack_depth_test.py
+# plat_console_* (device/console.c) over the CDC rings, the interrupt's side simulated; and without the console
+run console sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/console_test tests/console_test.c && \
+    $OUT/console_test && $CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -DFM1B_CDC=0 -o $OUT/console_test0 \
+    tests/console_test.c && $OUT/console_test0"
+run trs-stamp sh -c "$CC -O2 -w -DFELUCCA_MIDI_STAMP=1 -Ibsp/chip -Ibsp/boards/fm1 -Idevice -o $OUT/trs_test_stamp tests/trs_test.c && $OUT/trs_test_stamp"
+# the MIDI-in stamps (FELUCCA_MIDI_STAMP): USB and the jack against a model of their registers on the TIMER5 schedule,
+# each stamp against its message's landing (within +-0.05 ms; the poll's and the read's stamps beside it)
+run midi-stamp sh -c "$CC -std=c11 -O2 -Wall -Wextra -Werror -Wno-unused-function -Ibsp/chip -Ibsp/boards/fm1 -Idevice -o $OUT/midi_stamp_test tests/midi_stamp_test.c && $OUT/midi_stamp_test"
 run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/storage_test"
 run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts
+# plat_headphones' debounce (device/plat_hp.c) over a simulated jack: a plug's bounce gives one change, 100 ms on
+run hp sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/hp_test tests/hp_test.c && $OUT/hp_test"
 run fastmath sh -c "$CC -O2 -w -o $OUT/fastmath_test tests/fastmath_test.c -lm && $OUT/fastmath_test"
 run flash-ok sh -c "$CC -std=c99 -Wall -Wextra -Werror -o $OUT/flash_ok_test tests/flash_ok_test.c && $OUT/flash_ok_test"   # device/fm1_flash_ok.h: the flash parts the storage may use
 run midi-rel sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -o $OUT/midi_rel_test tests/midi_rel_test.c && $OUT/midi_rel_test"   # include/midi_rel.h
@@ -96,6 +106,8 @@ run backup sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -o
 run backup-pool sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -DBACKUP_TEST_POOL \
     -o $OUT/backup_pool_test tests/backup_test.c && $OUT/backup_pool_test"   # restore with a pooled store
 run backup-tool "$PY" tests/backup_tool_test.py $OUT/backup.bin
+# fm1.toml lcd_panel: device/lcd.c's init table walked with and without the panel's setup, and the build's flag
+run lcd-panel "$PY" tests/lcd_panel_test.py
 if command -v node >/dev/null 2>&1; then
     run backup-page sh -c "$PY tests/backup_record.py $OUT/backup.bin $OUT/backup_transcript.json && \
         node tests/backup_page_test.mjs $OUT/backup_transcript.json"
@@ -153,6 +165,12 @@ run font-cache sh -c "mkdir -p $OUT/font/full $OUT/font/pack && \
     $OUT/font/cache_test $OUT/font/cache.bin && cmp $OUT/font/full.bin $OUT/font/cache_small.bin && \
     cmp $OUT/font/full.bin $OUT/font/cache.bin"
 run template template/build/host/template_host template/tests/basic.txt template/build/host
+# Bluetooth audio's calls (plat_bta_*) on the host simulator's stand-in, from a test app's buttons
+run bta sh -c "$PY tools/build.py tests/bta_app --host && tests/bta_app/build/host/bta_test_host tests/bta_app/tests/bta.txt tests/bta_app/build/host"
+# the same with the buffers lent by the app (fm1.toml bt_audio_mem = "app", plat_bta_mem): on only with the block lent, refused back while on
+run bta-mem sh -c "$PY tools/build.py tests/bta_mem_app --host && tests/bta_mem_app/build/host/bta_mem_test_host tests/bta_mem_app/tests/bta.txt tests/bta_mem_app/build/host"
+# the headphone jack: the script's jack in / out in the simulator (tests/hp.txt)
+run headphones template/build/host/template_host tests/hp.txt template/build/host
 # the own Bluetooth stack (bt/, Optimist's: ble_stack = "own"): its link layer, host, pairing, BLE-MIDI, central, the
 # radio driver against a fake engine, FM-1 to FM-1, and BR/EDR (A2DP) pieces; UBSan, and ASan where its runtime runs
 if sh tests/bt/run.sh; then :; else FAIL=1; fi
@@ -210,5 +228,45 @@ fi
 # emulator's part "backup" has its own test, emu_backup_test.mjs, on the same app)
 run backup-app sh -c "$PY tools/build.py tests/backup_app --host && mkdir -p tests/backup_app/build/out && \
     tests/backup_app/build/host/bktest_host tests/backup_app/tests/backup.txt tests/backup_app/build/out"
+# an app with APP_BLE_PEERS (its own list: the scan's reports, plat_ble_connect_peer) in the host simulator
+run peers-app sh -c "$PY tools/build.py tests/peers_app --host && \
+    tests/peers_app/build/host/peertest_host tests/peers_app/tests/peers.txt tests/peers_app/build/host"
+# the fourth window on request (xdata2 = true, FM1B_XDATA2): the template's host build with it (kept apart, the plain
+# build put back after), the window the app's, the store's sectors in it refused (tests/data_xdata2.txt)
+run host-xdata2 sh -c "FM1B_XDATA2=1 $PY tools/build.py template --host >/dev/null && \
+    cp template/build/host/template_host $OUT/template_host_xdata2 && $PY tools/build.py template --host >/dev/null && \
+    $OUT/template_host_xdata2 tests/data_xdata2.txt template/build/host"
+# the whole flash as a 1 MiB image (flash_dump / flash_load, FM1B_FLASH): out of the simulator, read and saved again by
+# device/storage.c (tests/flash_image_test.c), back into a new run, and a power-on with it; the round trip byte for byte
+H=template/build/host
+run host-flash-dump sh -c "printf '\\022\\064\\126\\170' > $OUT/data4.bin && $H/template_host tests/flash_dump.txt $H"
+run flash-image sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -o $OUT/flash_image_test \
+    tests/flash_image_test.c && $OUT/flash_image_test $H/flash.bin $H/flash2.bin"
+run host-flash-load sh -c "$H/template_host tests/flash_load.txt $H && \
+    FM1B_FLASH=$H/flash2.bin $H/template_host tests/flash_boot.txt $H && \
+    cmp $H/flash.bin $H/flash3.bin"
+# the USB port as a MIDI host (usb_host, plat_usb_host, plat_usb_host_name) in the host simulator's model of it: tests/usbh_app
+run usbh-app sh -c "$PY tools/build.py tests/usbh_app --host && \
+    tests/usbh_app/build/host/usbhtest_host tests/usbh_app/tests/usbh.txt tests/usbh_app/build/host"
+# the crash history in flash (device/crashlog.c): the ring against a simulated NOR (filled past both sectors, a power
+# cut at every program and in an erase, the boot's dedup across restarts and power-offs, a save cut short not tried
+# again, the frames, the clear); then in the template's simulator (crash, restart, power, the request's frames and
+# "end N", the clear, a power-on with the dumped flash) read through tools/fm1_remote.py's parser and its --elf symbols
+run crashlog sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -o $OUT/crashlog_test tests/crashlog_test.c && \
+    $OUT/crashlog_test"
+run host-crashlog sh -c "mkdir -p $OUT/crashlog && $H/template_host tests/crashlog.txt $OUT/crashlog && \
+    $PY tests/crashlog_host_test.py $H/template_host $OUT/crashlog"
+# the debug stats in flash (device/dbgstats.c): the ring against a simulated NOR (the switch, the 5-minute snapshots,
+# the wrap's erase and write-back, a power cut at every program and inside the erase and the write-back, a staged update
+# refused, the quiet moment and the forced write, the crash's snapshot, the frames, the clear; nothing written outside
+# 0xE4000..0xE4EFF); then in the template's simulator (26 simulated minutes, a restart, a crash, a power-off, a staged
+# update, a power-on with the dumped flash) read through tools/fm1_remote.py's parser
+run dbgstats sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -o $OUT/dbgstats_test tests/dbgstats_test.c && \
+    $OUT/dbgstats_test"
+# the second core's stack room (plat_stack_left(PLAT_STK_C1)) on a host model of felucca-bsp's fm1_cpu1.h: -1 when CPU1 never started
+run stack-c1 sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -Itests/stack_c1 -o $OUT/stack_c1_test tests/stack_c1_test.c && \
+    $OUT/stack_c1_test"
+run host-dbgstats sh -c "mkdir -p $OUT/dbgstats && $H/template_host tests/dbgstats.txt $OUT/dbgstats && \
+    $PY tests/dbgstats_host_test.py $H/template_host $OUT/dbgstats"
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL
