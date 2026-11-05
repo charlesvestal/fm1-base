@@ -268,6 +268,12 @@ def installs():
     dev = FakeFM1(image, identity="FM-1_015", name="FM-1")
     rc, out, err = cli(["--info"], dev)
     ok(rc == 0 and "FM-1_015" in out and dev.hs_full == 1, "--info: M-VAVE's firmware doesn't answer HS_FULL: its plain answer")
+    dev = FakeFM1(image, identity="FM-1_6010000", name="FM-1", new_ota={"FM-1_6010000"}, jedec=0xB36014)
+    rc, out, err = cli(["--info"], dev)
+    ok(rc == 0 and "FM-1_6010000" in out and "flash: UC25HQ80 (B36014)" in out, "--info: the flash chip from bytes 24..26")
+    dev = FakeFM1(image, identity="FM-1_600", name="FM-1", new_ota={"FM-1_600"})
+    rc, out, err = cli(["--info"], dev)
+    ok(rc == 0 and "flash:" not in out, "--info: no flash ID sent (bytes 24..26 zero): nothing said")
 
 
 def errors():

@@ -169,6 +169,7 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #endif
 
 static uint8_t flash_ok;          /* JEDEC id matched at boot */
+static uint32_t flash_jedec;      /* the JEDEC id read at boot (its identity reply carries it: ota.c OTA_FLASH_ID) */
 #if FM1B_WIFI || FM1B_BLE
 static uint8_t flash_uid[16];     /* the flash's factory unique ID (plat_chip_uid), read at boot */
 #endif
@@ -206,6 +207,7 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
 
 struct bootguard_s { uint32_t magic, failed, pending; };
 extern struct bootguard_s bootguard;
+#define OTA_FLASH_ID() flash_jedec        /* bytes 24..26 of the identity reply: which flash an FM-1 has */
 #include "ota.c"
 static uint32_t ota_now_ms(void) { return fm1_ms; }
 static void ota_idle(void) { fm1_wdt_feed(); }
