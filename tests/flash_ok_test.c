@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MPL-2.0
- * Copyright (C) 2026 Charles Vestal */
+ * Copyright (C) 2026 Laurens (@profikid) */
 /* device/fm1_flash_ok.h: the flash parts the FM-1's storage may use.
  *
  * The stock part (the Puya P25Q80) and the newer units' part (the UC25HQ80) are accepted; anything else

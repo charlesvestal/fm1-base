@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MPL-2.0
- * Copyright (C) 2026 Charles Vestal */
+ * Copyright (C) 2026 Laurens (@profikid) */
 /* Which flash parts the FM-1's storage may use (main_fm1.c's boot, plat_fm1.c's data area).
  *
  * The stock FM-1 carries a Puya P25Q80 (JEDEC 85 60 14, 1 MiB). Units sold since autumn 2026 (mostly
