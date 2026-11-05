@@ -132,10 +132,11 @@ the site's (tools/make_site.py). A key left out is left out of the file.
   tags = ["synth", "fm"]     what it is, from a fixed list (tools/firmware_json.py TAGS; the build refuses another)
   install = "https://..."    the page that installs it
   site = "https://..."       its site
+  title = "..."              the name people see, when it is not usb_manufacturer (Radio's is fm1-radio)
   screenshot = "docs/img/x.png"  a picture for the hubs' cards: a square PNG, at least 240 x 240, at most 2 MiB,
                              relative to the repository's root (the parent of an APP_DIR named app), / between
                              folders, no ".."; the build checks it (a host simulator's screenshot fits as it is)
-The name is usb_manufacturer (else app.h's APP_NAME), the id fm1.toml's name in lower case; the hardware's features
+The name is title (else usb_manufacturer, else app.h's APP_NAME), the id fm1.toml's name in lower case; the hardware's features
 are the parts this build has (printed as "parts"). A --release build of the firmware refuses without author (or
 authors), licence, tagline, description, tags, install, repo and a screenshot that passes the checks; any other
 build warns and writes the file without them.

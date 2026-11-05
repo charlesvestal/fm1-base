@@ -48,7 +48,7 @@ CTL-1's:
 |---|---|---|---|
 | `schema` | number | | The format's version: 1. |
 | `id` | string | `name`, in lower case | The firmware's short name, the same as its package's file name (`ctl`). |
-| `name` | string | `usb_manufacturer`, else app.h's `APP_NAME` | The name people see (`CTL-1`). |
+| `name` | string | `title`, else `usb_manufacturer`, else app.h's `APP_NAME` | The name people see (`CTL-1`). |
 | `author` | string | `author`, else `authors` joined | Who made it. |
 | `license` | string | `licence` | Its licence, an SPDX expression (`MPL-2.0`). |
 | `tagline` | string | `tagline` | One line on what it is. |
@@ -62,6 +62,9 @@ CTL-1's:
 | `hardware.flash` | list of strings | device/fm1_flash_ok.h | The flash parts it can save to and update on, as their JEDEC IDs in upper-case hex. |
 | `hardware.features` | list of strings | the build's parts | What the build has, from the feature vocabulary. |
 | `credits` | string | `credits` | A sentence on what it is built from. |
+
+`title` is for a firmware whose USB name is not the name people know it by (Radio's USB name is `fm1-radio`);
+most leave it out.
 
 URLs are `https://` addresses. The build writes the keys in this order, with a 2-space indent and each list of
 strings on one line, in UTF-8 with a newline at the end.
@@ -135,4 +138,4 @@ will never use such a key. A firmware not built on fm1-base may write the file b
 
 ## Changes
 
-Schema 1, 2026-11-05. `screenshot` added on 2026-11-05, before any release used the schema.
+Schema 1, 2026-11-05. `screenshot` and fm1.toml's `title` added on 2026-11-05, before any release used the schema.

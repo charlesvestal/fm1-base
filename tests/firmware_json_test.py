@@ -76,6 +76,9 @@ ok(d["hardware"]["features"] == [], "no Bluetooth, USB audio off: no features")
 ok(list(d) == ["schema", "id", "name", "license", "hardware"], "missing keys (and an empty credits) left out")
 ok(d["name"] == "QUIET-1" and d["id"] == "quiet" and d["schema"] == 1, "name from usb_manufacturer, id from name")
 ok(valid(d), "  validates against the schema" + (" (skipped: no jsonschema)" if jsonschema is None else ""))
+c2 = conf_of('name = "Radio"\nusb_manufacturer = "fm1-radio"\ntitle = "Radio"\n')
+ok(F.display_name(c2, ROOT) == "Radio", "name from title, before usb_manufacturer")
+ok(refused(lambda: F.display_name({"title": ["Radio"]}, ROOT), "title"), "a title that is not a name refused")
 
 # every part, and the tags; the keys in order
 c = conf_of('''name = "Full"

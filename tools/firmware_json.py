@@ -101,8 +101,12 @@ def words_published(path):
 
 
 def display_name(conf, app_dir):
-    """the product's name as people see it: fm1.toml usb_manufacturer (the name the computer shows: "CTL-1"), else
-    app.h's APP_NAME, else fm1.toml name"""
+    """the product's name as people see it: fm1.toml title, else usb_manufacturer (the name the computer shows:
+    "CTL-1"), else app.h's APP_NAME, else fm1.toml name"""
+    if conf.get("title"):
+        if not isinstance(conf["title"], str) or "\n" in conf["title"]:
+            raise SystemExit("fm1.toml title: a name on one line")
+        return conf["title"]
     if conf.get("usb_manufacturer"):
         return conf["usb_manufacturer"]
     for h in sorted(Path(app_dir).glob("*.h")):
