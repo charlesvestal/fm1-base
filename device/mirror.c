@@ -47,7 +47,7 @@
  * SysEx ring (updates, backups, this file's input reports) and after the notes and clock, whole (nothing in the middle
  * of a SysEx message). A rectangle that does not fit in the ring now is dropped and its rows marked dirty; the
  * screen has no framebuffer to send them from later, so the app is asked to draw everything again (APP_REDRAW), and
- * what the viewer already has is skipped: a 32-bit hash of each 30-pixel segment of each full-width row sent is kept;
+ * what the viewer already has is skipped: a 32-bit hash of each MR_SEGW-pixel segment of each full-width row sent is kept;
  * a row drawn again sends only its segments that changed (a playhead moving: a narrow rect, not the band). So a busy
  * screen on a slow link loses frames, never the picture (with APP_REDRAW; without it, until the app draws there again).
  *
@@ -81,8 +81,12 @@
 #define MR_REDRAW_MS 50u                              /* dirty rows: the UI asked to draw again this often at most, */
 #define MR_REDRAW_ROOM (MRQ * 3u / 4u)                /* once the ring has this much room */
 #define MR_HASH(c) ((((uint32_t)(c)) * 40503u) >> 10 & 63u)
-#define MR_SEGW 30u                                   /* a row's segments: only the changed ones are sent */
+#ifndef MR_SEGW
+#define MR_SEGW 30u                                   /* a row's segments: only the changed ones are sent (app.h may widen
+                                                       * them: 4 B a segment of each row in the pool, 240 x 8 = 7.5 KB at 30) */
+#endif
 #define MR_NSEG (MR_W / MR_SEGW)
+_Static_assert(MR_W % MR_SEGW == 0, "MR_SEGW divides the row");
 #define MR_MROWS 32u                                  /* rows a rect frame takes at most */
 #define MR_NIN 21u
 

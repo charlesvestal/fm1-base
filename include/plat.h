@@ -355,6 +355,10 @@ uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B) has gone, 
  *   APP_BACKUP_OBJS {OBJ_PROJ, ...}   the objects, in order (not OBJ_PANEL: the calibration is the unit's)
  *   APP_BACKUP_MAGIC 0x...u           its image's magic (4 ASCII bytes, little-endian), APP_BACKUP_VERSION its format
  *   APP_BACKUP_WHAT "replaces all songs"   the restore question's second line
+ *   APP_BACKUP_BUF io_buf             optional: the app's own buffer of at least 3840 B (uint8_t name[], not static,
+ *                                     4-aligned) lent to a restore, which then needs none of its own (3840 B of the
+ *                                     pool); a scratch buffer the app fills and empties within a call (a restore runs
+ *                                     with the app's frame stopped and reloads everything after)
  * and these: int app_backup_playing(void) (1: no restore now, STOP FIRST), void app_backup_flush(void) (what is not
  * saved yet, saved: a backup starts), void app_backup_hold(int on) (no saving while a backup streams),
  * void app_backup_restored(void) (everything from the flash again) */

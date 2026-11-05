@@ -72,6 +72,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              tools/fm1_mirror.py), the panel played from the host; FM1B_MIRROR=1 in the environment
                              builds it in whatever fm1.toml says (an app's demo build), FM1B_POOL_SPARE=N the
                              pool spare the build insists on (8192 B; a demo build may spend it)
+  pool_spare = 2048          the pool spare this app's builds insist on (8192 B: the margin for what comes next; an app
+                             that spent it on purpose says how much it keeps)
   msc = true                 disk mode: the FM-1 as a USB drive of the app's blocks (FM1B_MSC: device/msc.c, plat_disk_* in
                              plat.h; felucca-bsp usb.c FELUCCA_MSC), no USB MIDI or audio meanwhile
   backup = true              backup and restore of the app's saved objects over USB (FM1B_BACKUP: device/backup.c;
@@ -861,6 +863,8 @@ def check(img, syms, dis, rt):
     bss = sym("_bss_end") - 0x01C08000
     pool = sym("_pool_end") - sym("_pool_start")
     ram, pool_max, spare = (128 * 1024, 0x4C000, 2048) if WIFI else (96 * 1024, 0x54000, 8192)   # (app_wifi.ld)
+    if isinstance(CONF.get("pool_spare"), int):   # an app that has spent the margin knowingly (fm1.toml)
+        spare = CONF["pool_spare"]
     if os.environ.get("FM1B_POOL_SPARE", "").isdigit():   # an app's own build for itself (a demo build with mirror)
         spare = int(os.environ["FM1B_POOL_SPARE"])
     notes.append(f"image {len(img)} B; RAM .data+.bss {bss} B of {ram}; pool {pool} B of {pool_max}")

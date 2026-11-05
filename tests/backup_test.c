@@ -103,6 +103,10 @@ static void ota_show(uint32_t step, int32_t code) { (void)step; (void)code; }
 static void ota_commit(const uint8_t *parm) { (void)parm; }
 #include "../bsp/chip/ota.c"
 
+#ifdef BACKUP_TEST_APPBUF                /* the app lends its scratch buffer to a restore (plat.h APP_BACKUP_BUF) */
+#define APP_BACKUP_BUF app_io_buf
+uint8_t app_io_buf[ST_PAYLOAD_MAX] __attribute__((aligned(4)));
+#endif
 #include "../device/backup.c"
 
 static int in_store(uint32_t off, uint32_t n)     /* the 18 objects' sectors, the journal record's */
@@ -244,6 +248,9 @@ static int backup(int play)
     while (bu.on && passes < 100000) {
         frames_this_pass = 0;
         room = passes % 3 != 1;                   /* the ring busy now and then */
+#ifdef BACKUP_TEST_APPBUF
+        memset(app_io_buf, passes & 0xFF, sizeof app_io_buf);   /* the app's loads meanwhile: the stream needs none of it */
+#endif
         bu_step();
         if (frames_this_pass > 1)
             gap = 1;

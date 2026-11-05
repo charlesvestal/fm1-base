@@ -79,6 +79,8 @@ run backup sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -o
     $OUT/backup_test $OUT/backup.bin"
 run backup-pool sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -DBACKUP_TEST_POOL \
     -o $OUT/backup_pool_test tests/backup_test.c && $OUT/backup_pool_test"   # restore with a pooled store
+run backup-appbuf sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -DBACKUP_TEST_POOL -DBACKUP_TEST_APPBUF \
+    -o $OUT/backup_appbuf_test tests/backup_test.c && $OUT/backup_appbuf_test"   # the app's buffer lent (APP_BACKUP_BUF)
 run backup-tool "$PY" tests/backup_tool_test.py $OUT/backup.bin
 if command -v node >/dev/null 2>&1; then
     run backup-page sh -c "$PY tests/backup_record.py $OUT/backup.bin $OUT/backup_transcript.json && \
