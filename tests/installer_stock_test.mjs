@@ -30,19 +30,26 @@ check(productOf(fwsc("FM-1_015", 2000)) === "FM-1_015", "the synthetic file says
   check(code(() => stockChecksum("FM-1_015", pin.size - 1, pin.sha256)) === "modified", "FM-1_015 with the right checksum, another size: refused");
   check(stockChecksum("FM-1_015", pin.size, pin.sha256) === true, "FM-1_015 with the pinned size and checksum: passes");
 }
+// V16 is pinned too (M-VAVE's FM-1_016, as felucca-bsp tools/fm1_rescue.py's STOCK)
+{
+  const pin = STOCK_FILES["FM-1_016"];
+  check(!!pin && pin.size === 718196 && pin.sha256.startsWith("d017fb65"), "FM-1_016 is pinned (size and SHA-256)");
+  check(code(() => stockChecksum("FM-1_016", pin.size, "0".repeat(64))) === "modified", "FM-1_016 with another checksum: refused");
+  check(stockChecksum("FM-1_016", pin.size, pin.sha256) === true, "FM-1_016 with the pinned size and checksum: passes");
+}
 // a version without a pinned checksum: not refused, not vouched for
-check(stockChecksum("FM-1_016", 700000, "0".repeat(64)) === false, "a version with no pinned checksum: false, not refused");
+check(stockChecksum("FM-1_017", 700000, "0".repeat(64)) === false, "a version with no pinned checksum: false, not refused");
 check(stockChecksum("FM-1_099", 1000, "0".repeat(64)) === false, "another unpinned product: false");
 // the whole path with a synthetic file whose digest is pinned for the test
 {
-  const f = fwsc("FM-1_016", 5000);
+  const f = fwsc("FM-1_017", 5000);
   const hex = await sha256hex(f);
-  STOCK_FILES["FM-1_016"] = { size: f.length, sha256: hex };
-  check(productOf(f) === "FM-1_016" && stockChecksum(productOf(f), f.length, await sha256hex(f)) === true, "a file with its pinned digest passes");
+  STOCK_FILES["FM-1_017"] = { size: f.length, sha256: hex };
+  check(productOf(f) === "FM-1_017" && stockChecksum(productOf(f), f.length, await sha256hex(f)) === true, "a file with its pinned digest passes");
   const g = f.slice(); g[1000] ^= 1;
   const hexG = await sha256hex(g);
   check(hexG !== hex && code(() => stockChecksum(productOf(g), g.length, hexG)) === "modified", "one changed byte: refused");
-  delete STOCK_FILES["FM-1_016"];
+  delete STOCK_FILES["FM-1_017"];
 }
 console.log(fails ? "INSTALLER STOCK TEST FAILED" : "installer stock test passed");
 process.exit(fails ? 1 : 0);

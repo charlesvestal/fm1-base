@@ -80,11 +80,12 @@ export function ufwEntries(image) {
   return out;
 }
 
-// M-VAVE's stock files (the .fwsc as downloaded) whose SHA-256 is pinned, by the product they carry. A file that says it is
+// M-VAVE's stock files (the .fwsc as downloaded) whose SHA-256 is pinned, by the product they carry (V15 and V16, as felucca-bsp's tools/fm1_rescue.py pins them). A file that says it is
 // one of these must be that very file, byte for byte: the digest covers every file in it, the loader and the layout, so
 // nothing else needs parsing. Other versions of M-VAVE's firmware are not pinned (checkUfw and the FM-1 itself check them)
 export const STOCK_FILES = {
-  "FM-1_015": { size: 699956, sha256: "db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7edb8a" },
+  "FM-1_015": { size: 699956, sha256: "db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7edb8a" },   // V15
+  "FM-1_016": { size: 718196, sha256: "d017fb65e70aca97ee29d944470c3515a74581df5c0576bf70de917c7b2b61d5" },   // V16 (felucca-bsp tools/fm1_rescue.py's STOCK)
 };
 
 export async function sha256hex(bytes) {
