@@ -169,7 +169,8 @@ static uint32_t mirror_in_keys(void) { return 0; }
 static int32_t mirror_in_enc(int role) { (void)role; return 0; }
 static uint32_t mirror_in_master(uint32_t pot) { return pot; }
 static void mirror_enc(int role, int32_t n) { (void)role, (void)n; }
-static void mirror_leds(uint32_t buttons, uint32_t keys) { (void)buttons, (void)keys; }
+static void mirror_leds(uint32_t buttons, uint32_t keys, uint32_t db, uint32_t dk) { (void)buttons, (void)keys, (void)db, (void)dk; }
+static void mirror_mid(uint32_t buttons, uint32_t keys) { (void)buttons, (void)keys; }
 #endif
 static uint32_t now_ms, held_btn, held_keys, master = 2048;
 static int32_t enc_acc[NE];
@@ -207,15 +208,15 @@ void plat_lights(uint32_t b, uint32_t k, uint32_t db, uint32_t dk, int glow)
     {   /* the mirror's view: PLAY lit (either LED), and bit 15 PLAY lit red */
         uint32_t play = 1u << B_PLAY;
         mirror_leds((b & ((1u << NB) - 1u) & ~play) | (b & (play | LED_PLAY_GREEN) ? play : 0u) |
-                    (b & play ? 1u << 15 : 0u), k);
+                    (b & play ? 1u << 15 : 0u), k, dim_btn, dim_keys);
     }
 }
 static uint32_t mid_keys;               /* plat_lights_mid's keys: "leds" (and the browser's web_dim_keys) shows them as
                                          * the glow */
 void plat_lights_mid(uint32_t b, uint32_t k)
 {
-    (void)b;
     mid_keys = k & ~lit_keys;
+    mirror_mid(b & ((1u << NB) - 1u), k);
 }
 static int glow_on = 1;                 /* the device's button glow (plat_glow) */
 void plat_glow(int on) { glow_on = on; }

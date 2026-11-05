@@ -279,7 +279,11 @@ static uint32_t mirror_in_keys(void) { return 0; }
 static int32_t mirror_in_enc(int role) { (void)role; return 0; }
 static uint32_t mirror_in_master(uint32_t pot) { return pot; }
 static void mirror_enc(int role, int32_t n) { (void)role, (void)n; }
-static void mirror_leds(uint32_t buttons, uint32_t keys) { (void)buttons, (void)keys; }
+static void mirror_leds(uint32_t buttons, uint32_t keys, uint32_t dim_buttons, uint32_t dim_keys)
+{
+    (void)buttons, (void)keys, (void)dim_buttons, (void)dim_keys;
+}
+static void mirror_mid(uint32_t buttons, uint32_t keys) { (void)buttons, (void)keys; }
 #endif
 #include "plat_fm1.c"
 #if FM1B_CPU2

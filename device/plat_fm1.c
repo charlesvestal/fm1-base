@@ -107,10 +107,11 @@ void plat_lights(uint32_t buttons, uint32_t keys, uint32_t dim_buttons, uint32_t
         fm1_led[c] = nl[c];
         fm1_led_dim[c] = dl[c];
     }
-    {   /* the mirror's view: PLAY lit (either LED), and bit 15 PLAY lit red */
+    {   /* the mirror's view: PLAY lit (either LED), and bit 15 PLAY lit red; the dim ones the same way */
         uint32_t play = 1u << B_PLAY, lit = buttons & ((1u << NB) - 1u);
+        uint32_t db = glow > 0 ? dim_buttons : 0u, dk = glow > 0 ? dim_keys : 0u;
         mirror_leds((lit & ~play) | (buttons & (play | LED_PLAY_GREEN) ? play : 0u) | (buttons & play ? 1u << 15 : 0u),
-                    keys);
+                    keys, (db & ((1u << NB) - 1u) & ~play) | (db & (play | LED_PLAY_GREEN) ? play : 0u), dk);
     }
 }
 void plat_lights_mid(uint32_t buttons, uint32_t keys)   /* felucca-bsp's steady mid level (fm1_led_mid) */
@@ -125,6 +126,7 @@ void plat_lights_mid(uint32_t buttons, uint32_t keys)   /* felucca-bsp's steady 
     }
     for (c = 0; c < FM1_NCOL; c++)
         fm1_led_mid[c] = (uint8_t)(ml[c] & ~fm1_led[c]);
+    mirror_mid(buttons & ((1u << NB) - 1u), keys);
 }
 static uint8_t glow_on = 1, play_red;
 void plat_glow(int on) { glow_on = (uint8_t)(on != 0); }

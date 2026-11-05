@@ -1041,6 +1041,7 @@ def build_web():
            for f in ("index.html", "worklet.js")}
     page = web["index.html"].read_text()
     page = page.replace("{{NAME}}", CONF.get("name", NAME)).replace("{{ID}}", NAME)
+    page = page.replace("{{PANEL_JS}}", re.sub(r"^export\s+", "", (SRC / "web" / "fm1panel.js").read_text(), flags=re.M))
     (emu / "index.html").write_text(page)
     shutil.copy(web["worklet.js"], emu / "worklet.js")
     for f in ("app.js", "app_worklet.js"):        # the app's own part of the page and of the worklet, if any
