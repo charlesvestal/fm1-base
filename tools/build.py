@@ -238,7 +238,11 @@ app.h); the build prints what it has.
                              the firmware as a whole is GPL-3.0 (LICENSING.md)
   wifi_ap = true             with wifi_stack = "own": MODE AP, the FM-1 as the access point (device/wifi_own_ap.c,
                              wifi/wifi_ap.c, wifi_ap_dhcp.c; FM1B_WIFI_AP, plat_wifi_ap_*): WPA2-PSK, up to 4 clients,
-                             DHCP on 192.168.4.0/24, Link (with link) over it; WIFI_MODE_AP / WIFI_MODE_AP_MAN
+                             DHCP on 192.168.4.0/24, Link (with link) over it; WIFI_MODE_AP / WIFI_MODE_AP_MAN. With no
+                             typed password, one made for the FM-1 at random and kept (plat_wifi_ap_default_key)
+  wifi_jam = true            with wifi_stack = "own": MODE JAM (joins another FM-1's access point by itself) and, with
+                             wifi_ap, MODE JAM HOST (FM1B_WIFI_JAM). A JAM HOST's password is a function of its name, so
+                             anyone with this source can join it: off by default
   wifi_mem = "app"          with wifi_stack = "own": Link's node (1.8 KB) and the access point's state (1.7 KB) lent by
                              the app while they may run, not static RAM (FM1B_WIFI_MEM; plat.h plat_link_mem,
                              plat_wifi_ap_mem): an app whose arena gets them back while Wi-Fi is off. Default "static"
@@ -852,6 +856,8 @@ def wifi_own_flags(host=False):
         f += ["-DFM1B_LINK=1", *inc(SRC / "link")]
     if WIFI_AP:
         f.append("-DFM1B_WIFI_AP=1")
+    if CONF.get("wifi_jam"):                        # MODE JAM, JAM HOST: a public key (plat.h FM1B_WIFI_JAM)
+        f.append("-DFM1B_WIFI_JAM=1")
     v = CONF.get("wifi_mem", "static")
     if v not in ("app", "static"):
         raise SystemExit(f'build: fm1.toml wifi_mem = "{v}": "app" or "static"')
@@ -1784,7 +1790,7 @@ def main():
             raise SystemExit("wifi_stack = \"own\" needs the own Bluetooth stack's radio: not with --no-ble")
         if CONF.get("net"):
             raise SystemExit("fm1.toml net: lwIP's sockets, not with wifi_stack = \"own\" (plat_net_udp_* instead)")
-    for key in ("link", "wifi_ap"):
+    for key in ("link", "wifi_ap", "wifi_jam"):
         if CONF.get(key) and not WIFI_OWN:
             raise SystemExit(f"fm1.toml {key} = true: with wifi = true and wifi_stack = \"own\"")
     LINK = WIFI_OWN and bool(CONF.get("link"))
@@ -1849,7 +1855,8 @@ def main():
     if errors:
         raise SystemExit("build: checks failed")
     parts = [(label, have[f]) for f, label in firmware_json.FEATURES]
-    parts += [("WiFi (own stack)", WIFI_OWN), ("Ableton Link (GPL-3.0-only)", LINK), ("WiFi access point (MODE AP)", WIFI_AP)]
+    parts += [("WiFi (own stack)", WIFI_OWN), ("Ableton Link (GPL-3.0-only)", LINK), ("WiFi access point (MODE AP)", WIFI_AP),
+              ("WiFi MODE JAM (a public key)", WIFI_OWN and bool(CONF.get("wifi_jam")))]
     print("parts    " + ", ".join(n for n, x in parts if x) + "  (not built in: " +
           (", ".join(n for n, x in parts if not x) or "none") + ")")
     region = res_file(res_payload()) if CONF.get("resources") else None

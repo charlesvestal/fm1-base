@@ -126,13 +126,14 @@ static void air_net(const char *name, const char *pass, uint32_t ch)   /* the ac
     air.name_len = (uint8_t)n;
     air.ch = (uint8_t)(ch >= 1u && ch <= 13u ? ch : 6u);
     memcpy(air.bssid, BSSID, 6);
+#if FM1B_WIFI_JAM
     if (!strcmp(pass, "default")) {               /* an Optimist access point: its default password (wifi_ap_default_key) */
         char k[WIFI_AP_KEY_LEN + 1u];
         wifi_ap_default_key(air.name, n, k);
         wc_pmk(k, air.name, n, pmk);
-    } else {
+    } else
+#endif
         wc_pmk(pass, air.name, n, pmk);
-    }
     wifi_ap_init(&air.ap, air.bssid, pmk, own_rand);
     wifi_ap_set_net(&air.ap, air.name, n, air.ch);
     wifi_ap_dhcp_init(&air.dhcp, SRV);

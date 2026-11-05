@@ -19,6 +19,25 @@ static int wn_entry_ok(const struct wn_net *e)
     return e->used == 1u && e->ssid_len >= 1u && e->ssid_len <= WN_SSID_MAX;
 }
 
+/* a kept password made for the FM-1 (wn_apcfg set 2): WN_AP_GEN_LEN of wn_gen_chars, then zeros */
+static const char wn_gen_chars[] = "abcdefghjkmnpqrstuvwxyz23456789";   /* 31: no i l o 0 1 */
+int wn_gen_ok(const uint8_t p[32])
+{
+    uint32_t i, k;
+    for (i = 0; i < 32u; i++) {
+        if (i >= WN_AP_GEN_LEN) {
+            if (p[i])
+                return 0;
+            continue;
+        }
+        for (k = 0; wn_gen_chars[k] && (uint8_t)wn_gen_chars[k] != p[i]; k++)
+            ;
+        if (!wn_gen_chars[k])
+            return 0;
+    }
+    return 1;
+}
+
 int wn_load(struct wn_store *s, const uint8_t raw[WN_STORE_SIZE])
 {
     uint32_t i, j = 0;
@@ -32,8 +51,8 @@ int wn_load(struct wn_store *s, const uint8_t raw[WN_STORE_SIZE])
     for (i = 0; i < WN_SLOTS; i++)
         if (wn_entry_ok(&t.n[i]))
             s->n[j++] = t.n[i];                         /* (damaged ones dropped, the rest closed up in order) */
-    if (t.ver >= 2u && t.ap.set == 1u && t.ap.ssid_len <= WN_SSID_MAX) {
-        s->ap = t.ap;                                   /* (a name longer than 32 or a flag that is not 1: no key kept) */
+    if (t.ver >= 2u && (t.ap.set == 1u || (t.ap.set == 2u && wn_gen_ok(t.ap.pmk))) && t.ap.ssid_len <= WN_SSID_MAX) {
+        s->ap = t.ap;                                   /* (a name longer than 32 or a flag that is not 1 or 2: no key kept) */
         s->ap.rsv = 0;
         if (s->ap.ch > 13u)
             s->ap.ch = 0;

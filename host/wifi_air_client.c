@@ -185,9 +185,9 @@ static void cli_start(const char *name, const char *pass)   /* the client on (na
     }
     cli.name_len = (uint8_t)n;
     memcpy(cli.mac, MAC, 6);
-    if (pass && !strcmp(pass, "default")) {           /* the Optimist default password of that name (wifi_ap_default_key) */
-        char k[WIFI_AP_KEY_LEN + 1u];
-        wifi_ap_default_key(cli.name, n, k);
+    if (pass && !strcmp(pass, "default")) {           /* the password the FM-1 shows when none is typed (as read off its screen) */
+        char k[PLAT_WIFI_AP_KEY_MAX];
+        (void)plat_wifi_ap_default_key(k);
         wc_pmk(k, cli.name, n, cli.pmk);
     } else {
         wc_pmk(pass, cli.name, n, cli.pmk);
@@ -255,9 +255,9 @@ static int cli_expect(const char *what, int *got)
     else if (!strcmp(what, "ap_key"))             /* a typed key is kept */
         *got = plat_wifi_ap_has_key();
     else if (!strcmp(what, "ap_key_default"))     /* 1: the default password is the one in use */
-        *got = plat_wifi_ap_default_key((char[WIFI_AP_KEY_LEN + 1u]){0});
+        *got = plat_wifi_ap_default_key(0);
     else if (!strcmp(what, "ap_key_sum")) {       /* the default password's characters added (a stand-in for its text) */
-        char k[WIFI_AP_KEY_LEN + 1u];
+        char k[PLAT_WIFI_AP_KEY_MAX];
         int i;
         (void)plat_wifi_ap_default_key(k);
         for (*got = 0, i = 0; k[i]; i++)

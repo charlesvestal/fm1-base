@@ -175,8 +175,10 @@ linked, no lwIP, no task. It is a WPA2-PSK station (CCMP, the MAC's) with a smal
    clock, `plat_link_now`; `plat_link_t24` turns a time into a `plat_ticks24` value for the tick or the render).
 6. MODE AP (`wifi_ap = true`): the FM-1 is the access point, where there is no router (on stage, a phone with Ableton
    Note). `plat_wifi_ap_set(name, len, password)` makes the WPA2 key (len 0: the name FM1- and the last four digits
-   of the radio's address) and keeps it with the networks; `plat_wifi_mode(WIFI_MODE_AP)` runs the access point
-   whenever a key is kept, from power-on, `WIFI_MODE_AP_MAN` only once `plat_wifi_ap_run(1)` starts it. Up to four
+   of the radio's address) and keeps it with the networks. With none typed, the access point uses a password made
+   for that FM-1 at random and kept, which the app shows (`plat_wifi_ap_default_key`).
+   `plat_wifi_mode(WIFI_MODE_AP)` runs the access point from power-on, `WIFI_MODE_AP_MAN` only once
+   `plat_wifi_ap_run(1)` starts it. Up to four
    clients (WPA2-PSK, CCMP at their own key in the MAC), DHCP on 192.168.4.0/24 (the FM-1 is 192.168.4.1, which
    answers a ping), Link and the app's ports as on a network joined; `plat_wifi_ap_clients` counts the clients. The
    station rests meanwhile. No web server, no internet behind it.

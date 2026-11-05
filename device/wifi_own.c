@@ -34,8 +34,9 @@
 #if defined(PLAT_HOST) || FM1B_WIFI_AP
 #include "wifi_ap.c"                         /* (MODE AP: wifi_own_ap.c; the host: its simulated access point too, host/wifi_air.c) */
 #include "wifi_ap_dhcp.c"
-#else
-#include "wifi_ap_key.c"                     /* (MODE JAM: an Optimist access point's default password, no MODE AP built) */
+#endif
+#if FM1B_WIFI_JAM
+#include "wifi_ap_key.c"                     /* (MODE JAM, JAM HOST: an Optimist access point's default password; wifi_jam only) */
 #endif
 
 _Static_assert(sizeof(struct plat_wifi_ap) == sizeof(struct wn_ap), "plat.h plat_wifi_ap: wifi_nets.h wn_ap");
@@ -124,6 +125,8 @@ static void own_store_load(void)
             wn_reset(&wn_st);
     }
 #endif
+    if (!FM1B_WIFI_JAM && (wn_st.mode == WN_MODE_JAM || wn_st.mode == WN_MODE_JAM_HOST))   /* (a record from a build with */
+        wn_st.mode = wn_st.mode == WN_MODE_JAM ? WN_MODE_AUTO : WN_MODE_AP;          /* wifi_jam: its mode, without the public key) */
 }
 static void own_store_changed(void)
 {
@@ -654,6 +657,7 @@ static int wc_auto_pick(int *slot)                /* AUTO: the strongest AP of t
     }
     return -1;
 }
+#if FM1B_WIFI_JAM
 /* MODE JAM: an Optimist access point is named FM1- and four capital hex digits (the automatic name of device/wifi_own_ap.c wa_name) */
 static int wc_is_optimist_name(const uint8_t *s, uint32_t n)
 {
@@ -688,6 +692,7 @@ static int wc_jam_pick(void)
     }
     return -1;
 }
+#endif
 static void wc_scan_step(void)
 {
     uint32_t now = own_ms();
@@ -736,6 +741,7 @@ static void wc_scan_step(void)
         wc_join(&wc_tab.ap[a], wn_st.n[slot].pmk, 0);
         return;
     }
+#if FM1B_WIFI_JAM
     if (wn_st.mode == WN_MODE_JAM && !wl.joined && (a = wc_jam_pick()) >= 0) {   /* no saved network heard: an Optimist access point */
         char k[WIFI_AP_KEY_LEN + 1u];
         struct wn_ap ap = wc_tab.ap[a];
@@ -745,6 +751,7 @@ static void wc_scan_step(void)
         memset(k, 0, sizeof k);
         return;
     }
+#endif
     if (wc.scan_want) {                           /* the app's list is on screen: another sweep, the table kept */
         wc.ch = 1;
         fm1_wifi_set_channel(wc.ch);
@@ -924,8 +931,10 @@ void plat_wifi_on(int on)                        /* (JieLi's API: on = AUTO unle
 void plat_wifi_mode(int mode)
 {
     own_store_load();
-    if (mode < WIFI_MODE_OFF || (mode > (FM1B_WIFI_AP ? WIFI_MODE_AP_MAN : WIFI_MODE_MAN) && mode != WIFI_MODE_JAM) || wn_st.mode == (uint8_t)mode)
-        return;
+    if (mode < WIFI_MODE_OFF || (mode > (FM1B_WIFI_AP ? WIFI_MODE_AP_MAN : WIFI_MODE_MAN) &&
+                                 !(FM1B_WIFI_JAM && (mode == WIFI_MODE_JAM || (FM1B_WIFI_AP && mode == WIFI_MODE_JAM_HOST)))) ||
+        wn_st.mode == (uint8_t)mode)
+        return;                                   /* (JAM, JAM HOST: wifi_jam only, plat.h FM1B_WIFI_JAM) */
     wn_st.mode = (uint8_t)mode;
     own_store_changed();
 }

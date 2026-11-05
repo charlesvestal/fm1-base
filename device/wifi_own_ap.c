@@ -25,8 +25,10 @@
  *   - a ping to the access point is answered (wifi_ip.c, as an access point only).
  * The access point is 192.168.4.1, its clients 192.168.4.2 to .5. Its network (the name, the channel, the WPA2 key made
  * from the password, never the password) is the record's (wifi_nets.h struct wn_apcfg), kept with the networks:
- * The password is the typed one (the record keeps its key), else the default one, a function of the name alone
- * (wifi_ap_default_key: another Optimist that hears the name knows it); forgetting the typed one gives the default back.
+ * The password is the typed one (the record keeps its key), else one made for this FM-1 from the radio's random source
+ * (wa_gen_pass: 12 characters, kept in the record and shown by plat_wifi_ap_default_key; never a function of the name,
+ * which anyone could work out); forgetting the typed one makes a new one. MODE JAM HOST (fm1.toml wifi_jam = true only)
+ * is the exception: its password is the name's public one (wifi_ap_default_key), so that MODE JAM can join it.
  *   MODE AP      (WIFI_MODE_AP, "AP AUTO") runs from power-on
  *   MODE AP_MAN  (WIFI_MODE_AP_MAN, "AP MAN") the same, but started by plat_wifi_ap_run(1) or a password set, and off at
  *                power-on
@@ -436,6 +438,31 @@ static uint32_t wa_pick_channel(const struct wn_scan *t)
 static int wa_mode_ap(void) { return wn_st.mode == WN_MODE_AP || wn_st.mode == WN_MODE_AP_MAN || wn_st.mode == WN_MODE_JAM_HOST; }
 static int wa_wanted(void) { return wn_st.mode == WN_MODE_AP || wn_st.mode == WN_MODE_JAM_HOST || (wn_st.mode == WN_MODE_AP_MAN && wa.user_on); }
 static void wa_pmk_start(const char *pass, uint32_t pl);
+static uint32_t wa_pass_len(const char *pass);
+/* the password of the access point when none is typed: WN_AP_GEN_LEN characters (31 of them, no i l o 0 1: about 59 bits)
+ * from the radio's random source (own_rand: ble_hw_rand), made the first time one is needed and kept in the record
+ * (wn_apcfg set 2), so it stays the same across power-offs and the screen can show it (plat_wifi_ap_default_key). A
+ * typed password replaces it; plat_wifi_ap_forget makes the next one. Never a function of the name or the address: the
+ * default key of 92510c5 was, and anyone with the source could compute every FM-1's (the user, 2026-11-05) */
+static void wa_gen_pass(char out[WN_AP_GEN_LEN + 1u])
+{
+    if (wn_st.ap.set != 2u || !wn_gen_ok(wn_st.ap.pmk)) {
+        uint8_t r[16];
+        uint32_t i, k = 0;
+        memset(wn_st.ap.pmk, 0, sizeof wn_st.ap.pmk);
+        while (k < WN_AP_GEN_LEN) {
+            own_rand(r, (uint8_t)sizeof r);
+            for (i = 0; i < sizeof r && k < WN_AP_GEN_LEN; i++)
+                if (r[i] < 248u)                        /* (248 = 8 x 31: each character equally likely) */
+                    wn_st.ap.pmk[k++] = (uint8_t)wn_gen_chars[r[i] % 31u];
+        }
+        memset(r, 0, sizeof r);
+        wn_st.ap.set = 2u;
+        own_store_changed();
+    }
+    memcpy(out, wn_st.ap.pmk, WN_AP_GEN_LEN);
+    out[WN_AP_GEN_LEN] = 0;
+}
 static void wa_begin_mode(void)                         /* the record's network: no key job, the radio next */
 {
     wa.by_mode = 1;
@@ -447,10 +474,15 @@ static void wa_begin_mode(void)                         /* the record's network:
         wa.st = WA_RADIO;
         return;
     }
-    {                                                   /* none typed: the default one, a function of the name (not kept) */
-        char k[WIFI_AP_KEY_LEN + 1u];
-        wifi_ap_default_key(wa.ssid, wa.ssid_len, k);
-        wa_pmk_start(k, WIFI_AP_KEY_LEN);
+    {                                                   /* none typed: the one made for this FM-1 (JAM HOST: the name's) */
+        char k[PLAT_WIFI_AP_KEY_MAX];
+#if FM1B_WIFI_JAM
+        if (wn_st.mode == WN_MODE_JAM_HOST)
+            wifi_ap_default_key(wa.ssid, wa.ssid_len, k);
+        else
+#endif
+            wa_gen_pass(k);
+        wa_pmk_start(k, wa_pass_len(k));
         memset(k, 0, sizeof k);
     }
 }
@@ -641,12 +673,28 @@ int plat_wifi_ap_name(char *name)
 int plat_wifi_ap_has_key(void) { own_store_load(); return wn_st.ap.set == 1u && wn_st.mode != WN_MODE_JAM_HOST; }
 int plat_wifi_ap_default_key(char *out)
 {
-    uint8_t b[WN_SSID_MAX];
-    uint32_t n;
+    char k[PLAT_WIFI_AP_KEY_MAX];
     own_store_load();
-    n = wa.st != WA_OFF && !wa.by_mode ? wa.ssid_len : wa_name(b);
-    wifi_ap_default_key(wa.st != WA_OFF && !wa.by_mode ? wa.ssid : b, n, out);
-    return wn_st.ap.set != 1u || wn_st.mode == WN_MODE_JAM_HOST;   /* (JAM HOST: the default one, whatever is kept) */
+#if FM1B_WIFI_JAM
+    if (wn_st.mode == WN_MODE_JAM_HOST) {               /* (JAM HOST: the name's public one, whatever is kept) */
+        uint8_t b[WN_SSID_MAX];
+        uint32_t n = wa_name(b);
+        wifi_ap_default_key(b, n, k);
+        if (out)
+            memcpy(out, k, WIFI_AP_KEY_LEN + 1u);
+        return 1;
+    }
+#endif
+    if (wn_st.ap.set == 1u) {                           /* a typed one is in use: it is never shown */
+        if (out)
+            out[0] = 0;
+        return 0;
+    }
+    wa_gen_pass(k);
+    if (out)
+        memcpy(out, k, WN_AP_GEN_LEN + 1u);
+    memset(k, 0, sizeof k);
+    return 1;
 }
 void plat_wifi_ap_forget(void)
 {

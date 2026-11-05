@@ -352,6 +352,12 @@ int plat_net_task(void (*fn)(void *), void *arg, const char *name);   /* a task 
 #endif
 #define PLAT_WIFI_STORE_SIZE 336u
 enum { WIFI_MODE_OFF, WIFI_MODE_AUTO, WIFI_MODE_MAN, WIFI_MODE_AP, WIFI_MODE_AP_MAN, WIFI_MODE_JAM, WIFI_MODE_JAM_HOST };   /* JAM_HOST: AP with the automatic name and its default password only, for JAM to join */   /* JAM: AUTO, and an Optimist access point (FM1-xxxx, its password wifi_ap_default_key's) is joined when no saved network is heard */
+/* MODE JAM and JAM HOST only with fm1.toml wifi_jam = true (FM1B_WIFI_JAM; JAM HOST also needs wifi_ap): a JAM HOST's
+ * password is a function of its name, which anyone with this source can work out, so its network keeps out no one who
+ * looks. Without wifi_jam plat_wifi_mode refuses them, and a record that has one reads as AUTO (JAM) or AP (JAM HOST). */
+#ifndef FM1B_WIFI_JAM
+#define FM1B_WIFI_JAM 0
+#endif
 void plat_wifi_mode(int mode);         /* OFF: nothing runs (the radio, once started, stays up); MAN: joins when asked;
                                         * AUTO: and the best saved network heard, at the start and whenever none is
                                         * joined; AP, AP_MAN: the FM-1 is the access point (wifi_ap = true, below).
@@ -436,7 +442,8 @@ int plat_wifi_tune_info(struct plat_wifi_tune *t);   /* 1: the Wi-Fi side is up 
  * its clients 192.168.4.2.. by DHCP; a ping to it is answered; the app's UDP ports and Link run on it as on a network
  * joined (plat_wifi_addr is 192.168.4.1). Its network is kept in the record with the networks: the name (none: FM1- and
  * the last four digits of the radio's address), the channel and the WPA2 key made from the password (never the
- * password). WIFI_MODE_AP runs it from power-on (the password: the typed one, else wifi_ap_default_key's); WIFI_MODE_AP_MAN only once started
+ * password). WIFI_MODE_AP runs it from power-on (the password: the typed one, else one made for this FM-1 at random and
+ * kept: plat_wifi_ap_default_key shows it); WIFI_MODE_AP_MAN only once started
  * (plat_wifi_ap_run, or a password set), off again at power-on. The station's manager rests meanwhile. No web server,
  * no internet behind it. (Declared in every build; defined only with wifi_ap = true.) */
 #ifndef FM1B_WIFI_AP
@@ -459,8 +466,13 @@ int plat_wifi_ap_channel_auto(void);   /* 1: CHANNEL is AUTO */
 int plat_wifi_ap_name(char *name);     /* the network's name (33 bytes, may be 0): its length */
 int plat_wifi_jam(void);               /* MODE JAM: 0 not joined that way, 1 joining / joined an Optimist access point (plat_wifi_ssid), 2 the last one tried refused its default password (it has a typed one) */
 int plat_wifi_ap_has_key(void);        /* a typed password's key is kept */
-int plat_wifi_ap_default_key(char *out);   /* the default password of the current name (wifi_ap_default_key, 9 bytes): 1 when it is the one in use (none typed), 0 a typed one replaces it */
-void plat_wifi_ap_forget(void);        /* the typed key goes (the name and channel stay): the default password again, the access point starts again on it */
+#define PLAT_WIFI_AP_KEY_MAX 13u          /* plat_wifi_ap_default_key's out: the password and its 0 */
+int plat_wifi_ap_default_key(char *out);   /* the password in use when none is typed, for the screen (out: PLAT_WIFI_AP_KEY_MAX
+                                        * bytes, may be 0): 12 characters made for this FM-1 from the radio's random
+                                        * source the first time one is needed, and kept; MODE JAM HOST: the name's public
+                                        * one (8). 1 it is the one in use; 0 a typed one is (out ""; a typed one is never shown) */
+void plat_wifi_ap_forget(void);        /* the typed key, or the password made for this FM-1, goes (the name and channel stay):
+                                        * a new one is made, and the access point starts again on it */
 int plat_wifi_ap_run(int on);          /* AP_MAN: start / stop. 0, -1 not AP_MAN */
 int plat_wifi_ap_start(const uint8_t *ssid, uint32_t len, const char *pass, int ch);   /* one not kept, with MODE OFF
                                         * (until a mode is chosen): 0, -1 not MODE OFF or a bad name / password / channel */
