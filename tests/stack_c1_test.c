@@ -13,6 +13,7 @@
 
 #define FM1B_CPU2 1
 #define FM1B_BUILD 0x12345678u
+#define PST_NOINIT                        /* (plain .bss here: a Mach-O section needs a segment) */
 #include "fm1_cpu1.h"
 struct bootguard_s { uint32_t magic, failed, pending; };
 static struct bootguard_s bootguard;

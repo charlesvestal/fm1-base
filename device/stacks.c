@@ -26,7 +26,10 @@ typedef struct {
     uint32_t count;                                 /* the crash (fm1_crash.count) these are of */
     int32_t left[3];                                /* bytes left at it, main / interrupts / second core; -1 unknown */
 } pst_crash_t;
-static pst_crash_t pst_crash __attribute__((section(".noinit")));
+#ifndef PST_NOINIT
+#define PST_NOINIT __attribute__((section(".noinit")))   /* (a host test: its own, as dbgstats.c's DS_NOINIT) */
+#endif
+static pst_crash_t pst_crash PST_NOINIT;
 
 static void pst_fill(uint32_t *lo, uint32_t *hi)
 {
