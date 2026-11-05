@@ -70,6 +70,8 @@ run announce sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $
 run audio-commit sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/audio_commit_test \
     tests/audio_commit_test.c && $OUT/audio_commit_test"
 run installer "$PY" tests/install_test.py
+# the installer page's script as make_site inlines it (fm1ports.js, fm1pkg.js, fm1ota.js in one module) parses: no name twice
+run site-script "$PY" tests/site_script_test.py
 # the installer's step 2 against felucca-bsp's real update loader on a pipe (bsp/tests/ldr_pipe.c): classic, fast,
 # a loader from before the fast install, resumed after a power cut, a damaged table refused
 [ -f bsp/tests/install_fast_test.py ] && run installer-fast-py env CC="$CC" FM1_INSTALL_TOOLS="$PWD/tools" \

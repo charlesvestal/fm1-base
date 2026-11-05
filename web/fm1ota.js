@@ -216,13 +216,13 @@ export function parseFrame(pkt) {
 }
 
 // the UFW's CRC16 (XMODEM: poly 0x1021, init 0), as felucca-bsp chip/ota.c ota_crc16
-const CRC16_T = (() => {
+const UFW_CRC16_T = (() => {
   const t = new Uint16Array(256);
   for (let n = 0; n < 256; n++) { let c = n << 8; for (let k = 0; k < 8; k++) c = c & 0x8000 ? (c << 1) ^ 0x1021 : c << 1; t[n] = c & 0xFFFF; }
   return t;
 })();
-export function crc16(d, c = 0) {
-  for (let i = 0; i < d.length; i++) c = (CRC16_T[((c >> 8) ^ d[i]) & 0xFF] ^ (c << 8)) & 0xFFFF;
+export function ufwCrc16(d, c = 0) {   // (not crc16: fm1pkg.js has one, and the installer page inlines both)
+  for (let i = 0; i < d.length; i++) c = (UFW_CRC16_T[((c >> 8) ^ d[i]) & 0xFF] ^ (c << 8)) & 0xFFFF;
   return c;
 }
 
@@ -230,7 +230,7 @@ export function crc16(d, c = 0) {
 export function sectorTable(image, off, n) {
   const t = [];
   for (let k = 0; k < n; k++) {
-    const sec = image.subarray(off + k * FAST_CHUNK, off + (k + 1) * FAST_CHUNK), c = crc16(sec);
+    const sec = image.subarray(off + k * FAST_CHUNK, off + (k + 1) * FAST_CHUNK), c = ufwCrc16(sec);
     t.push(c & 0xFF, c >> 8, ...le32(crc32(sec)));
   }
   return t;
