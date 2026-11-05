@@ -71,6 +71,13 @@ hardware access outside the BSP and fm1-base's device files), and packs the `.fw
 `tools/run_tests.sh` builds the host simulator and runs the app's scripted tests. The web pages (installer, emulator,
 backup) are generated from templates with the firmware's name and words file.
 
+The FM-1 tells its identity to the update handshake (felucca-bsp `chip/ota.c`, cmd 0x11). M-VAVE's M-UPGRADE 3.11
+takes `NAME_` and one to three digits only, so the plain handshake gets the name, `_` and the first three digits
+(`FM-1_11000100` -> `FM-1_110`); the handshake with the one-byte body 01 gets the whole identity. The installers
+(`tools/fm1_install.py`, `web/fm1ota.js`, the backup page) ask that way when the plain answer is `NAME_` and three
+digits, and keep the plain answer when nothing answers (M-VAVE's firmware, the loaders, older builds). The scheme is
+PERF-1's (deamonSLINKY/PERF-1), so its tools and ours read each other's firmwares.
+
 ## What fm1-base ships
 
 - `template/`: a minimal firmware to copy: a screen with text, the keys playing a sine voice, MASTER as the volume,

@@ -135,7 +135,7 @@ def loopback(d):
 import fm1ports as P  # noqa: E402
 import fm1_install as I  # noqa: E402
 
-I.DELAY.update(open=0, hs=0.05, hello=0.05)
+I.DELAY.update(open=0, hs=0.05, hs_full=0.05, hello=0.05)
 T = 0.05
 
 # ---------------------------------------------------------------- fm1ports ---
