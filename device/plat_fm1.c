@@ -309,17 +309,23 @@ uint32_t plat_midi_out_room(uint32_t to)
 uint32_t plat_midi_out_link(void) { return midi_out_link(); }
 static uint32_t midi_in_from;                     /* plat_midi_in_from: the last one's link, as an out */
 uint32_t plat_midi_in_from(void) { return midi_in_from; }
+#if FM1B_MIDI_STAMP || FM1B_BLE_MIDI_TIME
 static uint32_t midi_in_t_last;                   /* plat_midi_in_t24: the last one's landing time (FM1B_MIDI_STAMP) */
 uint32_t plat_midi_in_t24(void) { return midi_in_t_last; }
+#define MIDI_IN_T(t) (midi_in_t_last = (t))
+#else
+uint32_t plat_midi_in_t24(void) { return fm1_ticks(); }   /* (no stamps: now, called where plat_midi_in is) */
+#define MIDI_IN_T(t) ((void)0)
+#endif
 int plat_midi_in(uint32_t *pkt, int *port)
 {
     int from;
     if (mi_r != mi_w) {
         uint32_t p = midi_in_q[mi_r % MQ];
 #if FM1B_MIDI_STAMP
-        midi_in_t_last = midi_in_t24[mi_r % MQ];
+        MIDI_IN_T(midi_in_t24[mi_r % MQ]);
 #else
-        midi_in_t_last = fm1_ticks();
+        MIDI_IN_T(fm1_ticks());
 #endif
         RING_PUBLISH();
         mi_r++;
@@ -330,9 +336,9 @@ int plat_midi_in(uint32_t *pkt, int *port)
     else if (ble_midi_in(pkt, &midi_in_from)) {
         from = PORT_BLE;
 #if FM1B_BLE_MIDI_TIME
-        midi_in_t_last = ble_in_t_last;           /* the sender's own time (fm1.toml ble_midi_time) */
+        MIDI_IN_T(ble_in_t_last);                 /* the sender's own time (fm1.toml ble_midi_time) */
 #else
-        midi_in_t_last = fm1_ticks();
+        MIDI_IN_T(fm1_ticks());
 #endif
     } else {
         return 0;
