@@ -59,6 +59,11 @@ def ports_js():
     return strip_module((SRC / "web" / "fm1ports.js").read_text(encoding="utf-8"))
 
 
+def panel_js():
+    """web/fm1panel.js (the panel's drawing and lights) as plain script, for a page's {{PANEL_JS}}"""
+    return strip_module((SRC / "web" / "fm1panel.js").read_text(encoding="utf-8"))
+
+
 def fill(html, values, what):
     """a page's {{KEY}}s filled in; every one must be"""
     for key, val in values.items():
@@ -93,7 +98,8 @@ def tool_pages(app, conf=None, values=None):
     out = {}
     if conf.get("mirror"):
         out["mirror/index.html"] = fill((SRC / "web" / "mirror" / "index.html").read_text(encoding="utf-8"),
-                                        dict({"NAME": conf.get("name", app.name), "PORTS_JS": ports_js()}, **(values or {})),
+                                        dict({"NAME": conf.get("name", app.name), "PORTS_JS": ports_js(), "PANEL_JS": panel_js()},
+                                             **(values or {})),
                                         "web/mirror")
     if conf.get("backup"):
         out["backup/index.html"] = fill((SRC / "web" / "backup" / "index.html").read_text(encoding="utf-8"),

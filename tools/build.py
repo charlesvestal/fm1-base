@@ -101,6 +101,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              builds it in whatever fm1.toml says (an app's demo build), FM1B_POOL_SPARE=N the
                              spare the build insists on (8192 B of the pool; of the SRAM with ram_layout =
                              "packed"; 2048 B of the pool with WiFi; a demo build may spend it)
+  pool_spare = 2048          the spare this app's builds insist on (8192 B, of the SRAM with ram_layout = "packed": the
+                             margin for what comes next; an app that spent it on purpose says how much it keeps)
   msc = true                 disk mode: the FM-1 as a USB drive of the app's blocks (FM1B_MSC: device/msc.c, plat_disk_* in
                              plat.h; felucca-bsp usb.c FELUCCA_MSC), no USB MIDI or audio meanwhile
   lcd_panel = true           the M-VAVE panel's own ST7789V setup after the reset (FM1B_LCD_PANEL: porch, gate voltages, VCOM
@@ -1107,6 +1109,8 @@ def check(img, syms, dis, rt):
     rt, bss, pool = (sym("_rt_end") - sym("_rt_start"), sym("_bss_end") - sym("_data_start"),
                      sym("_pool_end") - sym("_pool_start"))
     spare = 2048 if WIFI else 8192
+    if isinstance(CONF.get("pool_spare"), int) and not isinstance(CONF.get("pool_spare"), bool):   # an app that has spent the margin knowingly (fm1.toml)
+        spare = CONF["pool_spare"]
     cr_ways, cr_used = cache_ram_ways(), sym("_cr_end") - sym("_cr_start")   # the cache RAM's own objects (.cache_ram)
     if cr_used > cr_ways * 4096:
         errors.append(f".cache_ram {cr_used} B in {cr_ways} cache ways ({cr_ways * 4096} B; fm1.toml cache_ram_ways)")
@@ -1413,6 +1417,7 @@ def build_web():
            for f in ("index.html", "worklet.js")}
     page = web["index.html"].read_text()
     page = page.replace("{{NAME}}", CONF.get("name", NAME)).replace("{{ID}}", NAME)
+    page = page.replace("{{PANEL_JS}}", re.sub(r"^export\s+", "", (SRC / "web" / "fm1panel.js").read_text(), flags=re.M))
     (emu / "index.html").write_text(page)
     shutil.copy(web["worklet.js"], emu / "worklet.js")
     emu_parts_out(emu, parts)

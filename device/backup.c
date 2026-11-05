@@ -35,7 +35,9 @@
  *      before it, nothing happened. So the set changes whole or not at all.
  *   5. everything reloaded as at power-on (app_backup_restored); the result to the host: a read of RS_OK_ADDR, or
  *      RS_FAIL_ADDR | code. RS_ASK_ADDR is read just before the question (the host says so).
- * RAM: one object's buffer (bu_buf, 3840 B, the pool), the staging list; the flash does the rest.
+ * RAM: one object's buffer for a restore (bu_buf, 3840 B, the pool; or the app's, APP_BACKUP_BUF), the staging list;
+ * the flash does the rest. A backup sends each object from its current copy on the flash, a chunk a frame (saving is
+ * held meanwhile; a copy written over anyway fails its record's CRC on a restore, which then changes nothing).
  * An app with a pooled store (APP_STORE_POOL, storage.c) has no second copy of everything to stage into: 2. stages
  * nothing (every record still received and checked, so a wrong or cut backup changes nothing), and 4. erases the
  * pooled objects the backup holds (one it does not, OBJ_BLE's keys say, is kept), then fetches the image again and
@@ -97,7 +99,12 @@ static int bu_send(const uint8_t *p, uint32_t n);
 static void bu_flush(void);
 static void bu_hold(int on);
 
-static uint8_t bu_buf[ST_PAYLOAD_MAX] __attribute__((aligned(4))) PLAT_POOL;   /* an object, backup or restore */
+#ifdef APP_BACKUP_BUF                                /* the app's scratch buffer, lent to a restore (plat.h) */
+extern uint8_t APP_BACKUP_BUF[];
+#define bu_buf APP_BACKUP_BUF
+#else
+static uint8_t bu_buf[ST_PAYLOAD_MAX] __attribute__((aligned(4))) PLAT_POOL;   /* an object being restored */
+#endif
 
 static uint32_t bu_rd16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
 static uint32_t bu_rd32(const uint8_t *p) { return bu_rd16(p) | bu_rd16(p + 2) << 16; }
@@ -125,8 +132,8 @@ static struct {
     uint8_t on, state, i, flags;
     uint32_t off, crc;                                /* bytes sent, their CRC-32 */
     uint32_t last;                                    /* ota_now_ms() of the start / the last frame out */
-    const uint8_t *p;                                 /* the segment being sent */
-    uint32_t n, len;
+    const uint8_t *p;                                 /* the segment being sent; 0: an object's body, from the flash */
+    uint32_t n, len, at;                              /* (at: the body's next byte on the flash) */
     uint8_t seg[BU_HEAD];
 } bu;
 
@@ -177,20 +184,23 @@ static int bu_next(void)
             return 1;
         }
         bu.len = 0;                                   /* the object as st_load sees it (none, or damaged: absent) */
-        if (st_current(bu_obj(bu.i), &h) >= 0 && h.len <= ST_PAYLOAD_MAX) {
-            bu.len = h.len;
-            for (uint32_t k = 0; k < h.len; k++)      /* (st_buf is the next save's) */
-                bu_buf[k] = st_buf[k];
+        {
+            int c = st_current(bu_obj(bu.i), &h);     /* (its payload checked against h.crc) */
+            if (c >= 0 && h.len <= ST_PAYLOAD_MAX) {
+                bu.len = h.len;
+                bu.at = st_sector(bu_obj(bu.i), (uint32_t)c) + ST_PAYLOAD_OFF;
+            } else
+                h.crc = 0;
         }
         bu_wr16(bu.seg, bu_obj(bu.i));
         bu_wr16(bu.seg + 2, bu.len);
-        bu_wr32(bu.seg + 4, bu_crc(0, bu_buf, bu.len));
+        bu_wr32(bu.seg + 4, h.crc);
         bu.p = bu.seg;
         bu.n = BU_REC;
         bu.state = BU_S_BODY;
         return 1;
     case BU_S_BODY:
-        bu.p = bu_buf;
+        bu.p = 0;
         bu.n = bu.len;
         bu.state = BU_S_REC;
         bu.i++;
@@ -243,10 +253,18 @@ static void bu_step(void)
             continue;
         }
         k = bu.n < BU_CHUNK - n ? bu.n : BU_CHUNK - n;
-        for (uint32_t j = 0; j < k; j++)
-            b[4 + n + j] = bu.p[j];
-        bu.crc = bu_crc(bu.crc, bu.p, k);
-        bu.p += k;
+        if (!bu.p) {                                  /* an object's body, from its copy */
+            if (st_read(bu.at, b + 4 + n, k)) {
+                bu_stop();                            /* (the host sees no end: the backup failed) */
+                return;
+            }
+            bu.at += k;
+        } else {
+            for (uint32_t j = 0; j < k; j++)
+                b[4 + n + j] = bu.p[j];
+            bu.p += k;
+        }
+        bu.crc = bu_crc(bu.crc, b + 4 + n, k);
         bu.n -= k;
         n += k;
     }
