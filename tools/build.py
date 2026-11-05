@@ -120,8 +120,11 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              function that calls itself at most N levels deep (its source's own bound): ["f=N", ..]
   emu = ["midi", "data"]     the browser emulator's optional parts (--web): web/emu/parts/NAME.js on the page and
                              NAME_worklet.js in the worklet, each file saying what it does; a part's own needs come
-                             with it; FM1B_EMU_NAME=1 for the C. FM1B_EMU="midi data" in the environment instead (""
-                             for none). Without any, the page, the worklet and app.wasm are what they were
+                             with it; FM1B_EMU_NAME=1 for the C. "resample" (the device's 44.1 kHz to the browser's
+                             rate) is on without asking, where the page takes parts (fm1-base's page and worklet, or
+                             an app's own that load app_worklet.js and call fm1App); "-resample" leaves it out.
+                             FM1B_EMU="midi data" in the environment instead: those parts and no others ("" for
+                             none). Without any, the page, the worklet and app.wasm are what they were
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
 app.h); the build prints what it has.
   boot_pack = true           .ram_text and .data stored LZMA-packed (tools/boot_pack.py, Melodee's; device/boot_lzma.h): the
@@ -1205,18 +1208,43 @@ def build_host():
 
 
 EMU_PARTS = SRC / "web" / "emu" / "parts"
+# the parts every emulator build has unless its fm1.toml says "-NAME" (emu = ["-resample"]): resample, as many
+# computers run audio at 48 kHz, where the page would play the FM-1 off pitch (at 44.1 kHz it does nothing)
+EMU_DEFAULT = ["resample"]
+
+
+def emu_takes_parts():
+    """whether the page loads the parts: fm1-base's page and worklet do; an app's own (APP_DIR/web/emu/index.html,
+    worklet.js) only if its page loads app_worklet.js and its worklet calls fm1App (as fm1-base's)"""
+    own = APP / "web" / "emu"
+    return ((not (own / "index.html").exists() or "app_worklet.js" in (own / "index.html").read_text())
+            and (not (own / "worklet.js").exists() or "fm1App" in (own / "worklet.js").read_text()))
 
 
 def emu_parts():
-    """the browser emulator's optional parts: fm1.toml emu = [...] (or FM1B_EMU="a b" in the environment), each one
-    web/emu/parts/NAME.js (the page's) and / or NAME_worklet.js (the worklet's); a part's file may start with a line
-    "// emu-needs: a b", parts it needs, which come before it. Names are lower-case letters and digits ("parts" is the
-    mechanism, web/emu/parts/parts.js and parts_worklet.js); NAME_*.js are a part's other files"""
+    """the browser emulator's optional parts: EMU_DEFAULT and fm1.toml emu = [...] ("-NAME" leaves a part out), or
+    FM1B_EMU="a b" in the environment (those and no others), each one web/emu/parts/NAME.js (the page's) and / or
+    NAME_worklet.js (the worklet's); a part's file may start with a line "// emu-needs: a b", parts it needs, which
+    come before it. Names are lower-case letters and digits ("parts" is the mechanism, web/emu/parts/parts.js and
+    parts_worklet.js); NAME_*.js are a part's other files. The defaults only where the page takes parts"""
     env = os.environ.get("FM1B_EMU")
-    asked = re.split(r"[,\s]+", env.strip()) if env is not None else list(CONF.get("emu", []))
+    if env is not None:
+        asked = re.split(r"[,\s]+", env.strip())
+    else:
+        asked = list(CONF.get("emu", []))
+        if emu_takes_parts():
+            asked = EMU_DEFAULT + asked
+        else:
+            print(f"emu      not on: {' '.join(EMU_DEFAULT)} (the app's own page or worklet, APP_DIR/web/emu, takes no "
+                  "parts: its page loads no app_worklet.js, or its worklet calls no fm1App)")
     asked = [p for p in asked if p]
     known = sorted({m[1] for f in EMU_PARTS.glob("*.js") if (m := re.fullmatch(r"([a-z0-9]+)(_worklet)?\.js", f.name))}
                    - {"parts"}) if EMU_PARTS.is_dir() else []
+    for p in asked:
+        if p.startswith("-") and p[1:] not in known:
+            raise SystemExit(f"fm1.toml emu: no part {p[1:]!r} to leave out (web/emu/parts has: {', '.join(known) or 'none'})")
+    off = {p[1:] for p in asked if p.startswith("-")}
+    asked = [p for p in asked if not p.startswith("-") and p not in off]
     out = []
 
     def needs(p):

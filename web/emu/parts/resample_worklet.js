@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (C) 2026 Henri David
-// Emulator part "resample" (fm1.toml emu = ["resample"]): the FM-1 makes 44.1 kHz; the page asks the browser for an
+// Emulator part "resample" (on in every build whose page takes parts; fm1.toml emu = ["-resample"] leaves it out,
+// tools/build.py EMU_DEFAULT): the FM-1 makes 44.1 kHz; the page asks the browser for an
 // AudioContext at 44,100 Hz, and a browser that runs it at another rate (48 kHz, 96 kHz, 22.05 kHz...) would play
 // the device's samples one for one: off pitch and off tempo. With this part the worklet runs the device at its own
 // rate and resamples (a 4-point cubic Hermite curve through the device's samples) to the context's, so the device's

@@ -186,7 +186,7 @@ run dim-app sh -c "$PY tools/build.py tests/dim_app --host && \
     tests/dim_app/build/host/dimtest_host tests/dim_app/tests/dim.txt tests/dim_app/build/host"
 # the browser emulator (tools/build.py --web, emcc): the template's worklet and app.wasm under node (boot, screen, a
 # key, MIDI in and out); its optional parts' build (fm1.toml emu); then each part's own test, tests/emu_NAME_test.mjs,
-# which builds what it needs (the template is left built without parts)
+# which builds what it needs (the template is left built as it is: resample, the part on without asking)
 if command -v emcc >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
     export PYTHON="$PY"
     run emu-build "$PY" tools/build.py template --web
