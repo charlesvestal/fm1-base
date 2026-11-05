@@ -48,6 +48,10 @@ run boot-pack sh tests/boot_pack_test.sh               # the boot's LZMA load im
 run announce sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/announce_test tests/announce_test.c && \
     $OUT/announce_test"
 run installer "$PY" tests/install_test.py
+# the installer's step 2 against felucca-bsp's real update loader on a pipe (bsp/tests/ldr_pipe.c): classic, fast,
+# a loader from before the fast install, resumed after a power cut, a damaged table refused
+[ -f bsp/tests/install_fast_test.py ] && run installer-fast-py env CC="$CC" FM1_INSTALL_TOOLS="$PWD/tools" \
+    "$PY" bsp/tests/install_fast_test.py
 # finding the FM-1 from Python (tools/fm1ports.py, as web/fm1ports.js) and the tools that use it, on a fake mido
 run ports "$PY" tests/ports_test.py
 # the screen reader's words file (tools/gen_words.py): made, and refused over the reader's limits
@@ -68,6 +72,9 @@ if command -v node >/dev/null 2>&1; then
     run installer-bluetooth node tests/installer_bluetooth_test.mjs
     # the handshake: a firmware that answers M-UPGRADE 3.11's query short and its whole identity to the one with 01
     run installer-hs node tests/installer_hs_test.mjs
+    # step 2 against felucca-bsp's real update loader on a pipe (bsp/tests/ldr_pipe.c): the fast install, the classic,
+    # a loader from before it, a package without a Felucca loader, a power cut and the install resumed, a damaged one
+    [ -f bsp/tests/ldr_pipe.c ] && run installer-fast env CC="$CC" node tests/installer_fast_test.mjs
 else
     echo "  skip installer-boot (no node)"
 fi

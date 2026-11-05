@@ -470,17 +470,22 @@ async function run(img, product, isStock, sha256) {
     /* progress: the bytes the device reads, against what it reads for this package (the size of the package,
        not a fixed request count). Step 1 (the running firmware): the UFW header, the loader's head twice, its
        body. Step 2 (fm1-base's loader): the header, the chip-key check, the whole flash.bin (checked before
-       anything is erased), then the app area again as it writes it. Held at 99 until the device comes back. */
+       anything is erased), then the app area again as it writes it. Held at 99 until the device comes back.
+       The fast install (a loader that answered its hello) gives the share of the app area it compared or wrote
+       instead (pct): the same span of the bar. */
     const ent = ufwEntries(img), fl = ent[0], ldr = ent[100];
     const CHECK = 0x400 + 0x400 + (ldr ? ldr.len - 0x20 : 0);
     const WRITE = fl && fl.len > 0x4000 && fl.len <= 0x100000 ? 0x400 + 0x20 + fl.len + (fl.len - 0x4000) : img.length;
     const total = CHECK + WRITE;
-    const step = (k, a, b) => {
-      log(`${k} ${a ?? ""}`);
+    const step = (k, a, b, pct) => {
+      if (k !== "write" || pct == null) log(`${k} ${a ?? ""}`);
       if (k === "start") sayK("start");
       if (k === "verify") { $("bar").value = (Math.min(b, CHECK) / total) * 100; sayPct("verify", $("bar").value); }
       if (k === "loader") sayK("loader");
-      if (k === "write") { $("bar").value = Math.min(99, ((CHECK + b) / total) * 100); sayPct("write", $("bar").value); }
+      if (k === "write") {
+        $("bar").value = Math.min(99, ((CHECK + (pct == null ? b : (pct / 100) * WRITE)) / total) * 100);
+        sayPct("write", $("bar").value);
+      }
       if (k === "reboot") sayK("reboot");
       if (k === "done" && !withBoot) { $("bar").value = 100; sayK(isStock ? "stockdone" : "done"); }
       if (k === "bootstart" || k === "bootwrite") sayK(k);
