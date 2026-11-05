@@ -568,7 +568,7 @@ uint32_t plat_wifi_ap_mem_bytes(void) { return FM1B_WIFI_MEM ? (uint32_t)(sizeof
 int plat_wifi_ap_mem(void *p)                           /* (the main loop) */
 {
 #if FM1B_WIFI_MEM
-    if ((!p && wa.st == WA_UP) || ((uintptr_t)p & 3u))
+    if ((!p && wa.st == WA_UP) || ((uintptr_t)p & (__alignof__(struct wa_mem) - 1u)))
         return -1;                                      /* (up: off first, as the mode leaves AP) */
     wa.m = (struct wa_mem *)p;
     return 0;

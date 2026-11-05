@@ -127,7 +127,7 @@ uint32_t plat_link_mem_bytes(void) { return FM1B_WIFI_MEM ? (uint32_t)(sizeof(st
 int plat_link_mem(void *p)                        /* (the main loop; the app's interrupts off around it) */
 {
 #if FM1B_WIFI_MEM
-    if ((!p && lko.on) || ((uintptr_t)p & 3u))
+    if ((!p && lko.on) || ((uintptr_t)p & (__alignof__(struct lk_node) - 1u)))
         return -1;                                /* (running: plat_link_enable(0) or the Wi-Fi off first) */
     own_lkp = (struct lk_node *)p;
     return 0;

@@ -496,7 +496,9 @@ uint32_t plat_link_t24(int64_t us);    /* plat_ticks24 at a Link time within a m
  * the app lends, not static RAM: Link starts only once its node is lent, the access point comes up only once its block
  * is (a password's key is made without it). Without FM1B_WIFI_MEM they are static and these say so.
  *   plat_link_mem_bytes(), plat_wifi_ap_mem_bytes()   the block's size (4-aligned), 0: static
- *   plat_link_mem(p), plat_wifi_ap_mem(p)             p (zeroed): lent -> 0; 0: taken back -> 0 done, -1 still running (Link:
+ *   plat_link_mem(p), plat_wifi_ap_mem(p)             p (zeroed, 8-aligned: the blocks hold pointers, 8 bytes on the
+ *                                                     host; a block aligned less is refused, -1): lent -> 0;
+ *                                                     0: taken back -> 0 done, -1 still running (Link:
  *                                                     until plat_link_enable(0) or the address goes; the access
  *                                                     point: until it is no longer up) */
 #ifndef FM1B_WIFI_MEM

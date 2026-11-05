@@ -78,7 +78,7 @@ static int64_t now_us(void) { return own_us(); }
 #define AT_POISON(p, n) ((void)(p), (void)(n))
 #define AT_UNPOISON(p, n) ((void)(p), (void)(n))
 #endif
-static uint8_t at_block[4096] __attribute__((aligned(4)));   /* (the arena's stand-in block) */
+static uint8_t at_block[4096] __attribute__((aligned(8)));   /* (the arena's stand-in block: 8-aligned, plat.h) */
 static int at_lent, at_lends, at_takes, at_hold = 1;   /* (at_hold 0: the app does not lend) */
 static void app_lend(void)              /* each pass, as Optimist's ui/opt_feat.h of_lend_want / set (core/arena_bufs.c) */
 {
