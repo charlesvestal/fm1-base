@@ -3,7 +3,8 @@
 A base for M-VAVE FM-1 firmware, on [felucca-bsp](https://github.com/hugelton/felucca-bsp): the platform layer
 above the hardware (screen, drawing and fonts, panel, LEDs, audio, MIDI over USB and TRS, storage, the screen reader),
 a host simulator and a browser emulator that run the same app, and the tools to build, package and install it.
-MPL-2.0: an app built on it may use any licence. See [DESIGN.md](DESIGN.md), [LICENSING.md](LICENSING.md) and
+MPL-2.0: an app built on it may use any licence. A firmware built with Ableton Link (`link = true`) is GPL-3.0-only
+as a whole; the build refuses it unless fm1.toml says `licence = "GPL-3.0-only"`. See [DESIGN.md](DESIGN.md), [LICENSING.md](LICENSING.md) and
 [CREDITS.md](CREDITS.md).
 
 **Status: beta.** Two firmwares are built on it so far, and they are its proof points:
