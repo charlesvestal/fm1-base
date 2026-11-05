@@ -9,7 +9,7 @@
 //   message   the page side's messages ({ type: "app", part: name, ... })
 //   process   before each render quantum (after the app's own)
 // fm1 is the worklet's processor (worklet.js: ex, the wasm's exports; mem; port); fm1.part(name, m, transfer) sends
-// a message to the part's page side. The app's own fm1App (load, message, process) keeps working beside them.
+// a message to the part's page side. The app's own fm1App (load, message, process, env) keeps working beside them.
 
 const own = globalThis.fm1App || {};
 const parts = [];
@@ -25,6 +25,7 @@ globalThis.registerProcessor = (name, Proc) => register(name, name !== "fm1" ? P
 });
 
 globalThis.fm1App = {
+  env: own.env,                          // (the app's own imports for app.wasm, worklet.js: kept as the app gave them)
   load(fm1) {
     fm1.part = (name, m, transfer) => fm1.port.postMessage({ ...m, type: "app", part: name }, transfer || []);
     for (const p of parts) if (p.load) p.load(fm1, (fm1.partData || {})[p.name]);
