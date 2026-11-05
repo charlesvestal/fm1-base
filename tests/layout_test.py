@@ -9,6 +9,7 @@ code and the cache RAM in them too), and app_wifi.ld's are still read for its ch
 import importlib
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,6 +60,19 @@ w = build.memory_regions(WIFI)
 ok(w["CACHE"] == (0x01F28000, 0x7000) and w_cache(WIFI), "app_wifi.ld: the same CACHE region and .cache_ram")
 ok(w["RAMTEXT"] == (0x01C00000, 0x6000) and w["RAM"] == (0x01C08000, 128 * 1024) and w["POOL"] == (0x01C28000, 0x4C000),
    f"app_wifi.ld's fixed regions read ({w})")
+
+# the SMK-37 (fm1.toml board = "smk37", tools/build.py board_script): the default script and the packed one with the
+# board's app slot, 0x97FBC (its app area 0x9D000), and nothing else changed
+with tempfile.TemporaryDirectory() as tmp:
+    build.OUT, build.BOARD, build.APP_SLOT = Path(tmp), "smk37", build.fm1pkg_make.BOARDS["smk37"]["app_slot"]
+    for name, src in (("app.ld", FIXED), ("app_packed.ld", APP)):
+        s = build.board_script(ROOT / "device" / name).read_text()
+        a, b = build.memory_regions(src), build.memory_regions(s)
+        ok(b["XIP"] == (0x02000120, 0xA7FBC) and "_app_xip_end = ORIGIN(XIP) + 0x97FBC;" in s and
+           {k: v for k, v in b.items() if k != "XIP"} == {k: v for k, v in a.items() if k != "XIP"},
+           f"{name} on the SMK-37: XIP the slot 0x97FBC and 64 KB, _app_xip_end its end, the other regions the FM-1's")
+        ok(sum(x != y for x, y in zip(s.splitlines(), src.splitlines())) == 2 and len(s.splitlines()) == len(src.splitlines()),
+           f"{name} on the SMK-37: those two lines changed only")
 
 print("layout: " + ("FAILED" if failed else "all passed"))
 sys.exit(1 if failed else 0)

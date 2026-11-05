@@ -17,7 +17,11 @@ int template_ble_off(void);
 /* the store: the app's objects, the panel calibration (the platform's) and Bluetooth's address and pairing among
  * them, and their flash offsets */
 enum { OBJ_SETTINGS, OBJ_PANEL, OBJ_BLE, OBJ_NOBJ };
+#if PLAT_SMK37
+#define APP_STORE_MAP {PLAT_GLOB, 0xDC000u, 0xDE000u}   /* the SMK-37: the settings pair where its map has it */
+#else
 #define APP_STORE_MAP {0xFC000u, 0xDC000u, 0xDE000u}
+#endif
 
 /* the contract: the platform calls these */
 void app_init(void);                     /* boot: the engine, then the saved settings (or defaults) */

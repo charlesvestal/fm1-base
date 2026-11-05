@@ -1,0 +1,51 @@
+# The template on the simulated SMK-37 (fm1.toml board = "smk37", or FM1B_BOARD=smk37 FM1B_MODEL=elite):
+#   FM1B_BOARD=smk37 FM1B_MODEL=elite tools/build.py template --host
+#   template/build/host/template-smk37-elite_host template/tests/smk37.txt template/build/host
+# The FM-1's words work as on the FM-1 (the middle 27 keys, the 14 functions on the SMK's buttons); the SMK's own:
+wait 600
+shot smk-boot.png
+key37 12 down 90
+wait 50
+expect note 60
+expect midi_out 1
+key37 12 up
+wait 50
+expect note -1
+key37 0 down
+wait 50
+expect note -1
+key37 0 up
+wait 20
+tapkey37 36 127
+wait 50
+expect midi_out 2
+# (C6 is outside the FM-1's 27: the template plays nothing for it; an SMK app reads plat_keys37)
+pad 3 down 110
+wait 20
+expect pads 8
+pad 3 press 90
+pad 3 up
+wait 20
+expect pads 0
+fader 1 512
+expect fader1 512
+wheel pitch 4000
+expect wheel_pitch 4000
+wheel pitch 0
+wheel mod 64
+expect wheel_mod 64
+pedal down
+expect pedal 1
+pedal up
+expect pedal 0
+press KBANK
+wait 30
+release KBANK
+tap LEFT
+tap RIGHT
+wait 30
+tap OCT+
+wait 30
+expect octave 1
+leds
+padleds

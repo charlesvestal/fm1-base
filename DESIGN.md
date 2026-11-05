@@ -31,7 +31,7 @@ app (ui.c, project.c, dsp/ ...)            the firmware's own code, any licence
 fm1-base  device: plat_fm1.c, main_fm1.c, panel.c, lcd.c, gfx.c, storage.c, midi_uart.c, announce.c
           host:   plat_host.c (simulator, scripted), web/emu (the simulator in the browser)
           tools:  build.py, fonts, words, installer and site pages
-felucca-bsp (git submodule, pinned)  chip/ boards/fm1/ loader/ tools/fm1pkg.py tools/fm1_install.py
+felucca-bsp (git submodule, pinned)  chip/ boards/fm1/ boards/smk37/ loader/ tools/fm1pkg.py tools/fm1_install.py
 ```
 
 The app sees only `plat.h`. The device and the host implement it, so every app runs, unchanged, on the FM-1, in the

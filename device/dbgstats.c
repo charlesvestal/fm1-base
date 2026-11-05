@@ -68,7 +68,7 @@
  *   DS_LAYOUT              the app block's fields, "name width ..." (APP_STATS_LAYOUT), or 0: printed raw
  *   DS_NOINIT              the queue's section attribute (.noinit on the device) */
 #define DS_MAGIC 0x32535344u                        /* "DSS2" (DSS1's layout, without the stacks, reads as absent) */
-#define DS_LO 0x000E4000u                           /* the staging area's 5th and last sector */
+#define DS_LO (PLAT_STAGE_HI - 0x1000u)              /* the staging area's 5th and last sector (0xE4000) */
 #define DS_REC 64u                                  /* bytes a record: four to a 256-byte page, never across one */
 #define DS_SLOTS (0xF00u / DS_REC)                  /* 60: 0xF00..0xFFF erased (the update's record, its scan) */
 #define DS_Q 4u                                     /* the .noinit queue: the newest records, in the flash or not yet */
@@ -83,13 +83,15 @@
 #define DS_LOUD 4u
 #define DS_ON 8u
 #define DS_NI_MAGIC 0x51535344u                     /* "DSSQ": the queue is this power-on's */
-#if !defined PLAT_DATA_HI || !defined PLAT_XDATA1_LO
+#if !defined PLAT_STAGE_LO || !defined PLAT_XDATA1_LO
 #error "dbgstats.c: plat.h first"
 #endif
-_Static_assert(DS_LO >= PLAT_DATA_HI && DS_LO + 0x1000u == PLAT_XDATA1_LO,
-               "the debug stats: the update's staging's last sector (0xE4000), below the third data window");
-_Static_assert(DS_LO + DS_SLOTS * DS_REC <= 0xE4F00u, "the debug stats: below the update's record (0xE4F00)");
-_Static_assert(DS_LO >= 0xE4000u, "the debug stats: off the crash history (0xE2000..0xE3FFF) and backup.c's journal");
+#define DS__APART(lo, hi) (PLAT_STAGE_HI <= (lo) || (hi) <= PLAT_STAGE_LO)
+_Static_assert(DS__APART(PLAT_DATA_LO, PLAT_DATA_HI) && DS__APART(PLAT_XDATA0_LO, PLAT_XDATA0_HI) &&
+               DS__APART(PLAT_XDATA1_LO, PLAT_XDATA1_HI),
+               "the debug stats: the update's staging's last sector (0xE4000), no app window there");
+_Static_assert(DS_LO + DS_SLOTS * DS_REC <= PLAT_STAGE_HI - 0x100u, "the debug stats: below the update's record (0xE4F00)");
+_Static_assert(DS_LO >= PLAT_STAGE_LO + 0x4000u, "the debug stats: off the crash history (0xE2000..0xE3FFF) and backup.c's journal");
 _Static_assert(DS_KEEP < DS_Q && DS_KEEP < DS_SLOTS, "the debug stats: the write-back fits the queue and the sector");
 
 typedef struct {

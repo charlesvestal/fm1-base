@@ -68,8 +68,8 @@ class FakeFM1:
     """a MIDI backend with one FM-1 on it"""
 
     def __init__(self, image, identity="FM-1_015", name="FM-1", unplug_after=None, after_write="FM-1_900",
-                 stall_after=None, bad_addr=None, refuse_arm=False, new_ota=(), jedec=0):
-        self.image, self.unplug_after, self.after_write = image, unplug_after, after_write
+                 stall_after=None, bad_addr=None, refuse_arm=False, new_ota=(), jedec=0, loader="ota-FM-1_900"):
+        self.image, self.unplug_after, self.after_write, self.loader = image, unplug_after, after_write, loader
         self.new_ota, self.jedec = set(new_ota), jedec   # identities whose ota.c cuts the plain answer; bsp#29's bytes
         self.refuse_arm, self.armed, self.arms = refuse_arm, False, []
         self.stall_after, self.bad_addr = stall_after, bad_addr
@@ -141,7 +141,7 @@ class FakeFM1:
             if self.stall_after and self.served >= self.stall_after:
                 return
             if addr == I.FINISH_CHECK:
-                threading.Timer(0.05, self.boot, ("ota-FM-1_900", "Felucca Update")).start()
+                threading.Timer(0.05, self.boot, (self.loader, "Felucca Update")).start()
             elif addr == I.FINISH_WRITE:
                 threading.Timer(0.05, self.boot, (self.after_write, "Felucca")).start()
             else:
@@ -370,6 +370,33 @@ def from_open():
     ok(rc == 0 and "FM1_OFFICIAL_OPEN" in out, "--info finds Open on its own port name")
 
 
+def smk37():
+    """the SMK-37 builds (tools/build.py board = "smk37"): identities "SMK-37 Pro_", "SMK-37 Elite_", "MKE-P37_" with
+    the FM-1's digits; a package goes only to its own model, through the same two steps"""
+    for product, port in (("SMK-37 Elite_1100", "TEMPLATE FM-1 SMK-37"), ("MKE-P37_1100", "Melodee SMK-37")):
+        raw = package(product)
+        ok(I.product_of(raw) == product, f"product_of: {product}")
+        model = product.split("_")[0]
+        dev = FakeFM1(I.logical_image(raw), identity=f"{model}_1000", name=port, after_write=product,
+                      loader=f"ota-{model}_1000")
+        rc, out, err = cli([pkgfile("smk.fwsc", raw), "--yes"], dev)
+        ok(rc == 0 and dev.bad == 0 and dev.upgrades == 2 and f"done: the FM-1 runs {product}" in out,
+           f"install: {model} -> its own package, on its port ({port})")
+    elite = package("SMK-37 Elite_1100")
+    for ident, what in (("SMK-37 Pro_1100", "an Elite package on a Pro"), ("FM-1_900", "an SMK-37 package on an FM-1"),
+                        ("MKE-P37_016", "an Elite package on an MKE-P37 (stock)")):
+        dev = FakeFM1(I.logical_image(elite), identity=ident)
+        rc, out, err = cli([pkgfile("elite.fwsc", elite), "--yes"], dev)
+        ok(rc == 6 and dev.upgrades == 0 and "the package is for SMK-37 Elite_1100" in err, f"{what}: exit 6, nothing sent")
+    fm1 = package()
+    dev = FakeFM1(I.logical_image(fm1), identity="SMK-37 Elite_1100", name="TEMPLATE FM-1 SMK-37")
+    rc, out, err = cli([pkgfile("ok.fwsc", fm1), "--yes"], dev)
+    ok(rc == 6 and dev.upgrades == 0, "an FM-1 package on an SMK-37: exit 6, nothing sent")
+    dev = FakeFM1(I.logical_image(elite), identity="FM1_OFFICIAL_OPEN", name="FM1 Community")
+    rc, out, err = cli([pkgfile("elite.fwsc", elite), "--yes"], dev)
+    ok(rc == 6 and dev.arms == [] and dev.upgrades == 0, "an SMK-37 package on M-VAVE's Open (an FM-1): refused, nothing sent")
+
+
 def against_js():
     clean = ROOT / "template/build/template.fwsc"
     if not shutil.which("node") or not clean.exists():
@@ -389,6 +416,7 @@ wire()
 installs()
 errors()
 from_open()
+smk37()
 against_js()
 shutil.rmtree(TMP, ignore_errors=True)
 print(f"INSTALL TESTS FAILED ({failed})" if failed else "install tests passed")

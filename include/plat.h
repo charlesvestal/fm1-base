@@ -46,8 +46,17 @@ static inline __attribute__((always_inline)) void *plat_far_ptr(void *fn)
 
 /* panel controls, by printed label (Felucca's panel.c map turns these into matrix ids; Felucca
  * calls the second button SCL, the panel prints SEL) */
+#ifndef PLAT_SMK37
+#define PLAT_SMK37 0                   /* 1: the M-VAVE SMK-37 Pro / Elite / MKE-P37 (fm1.toml board = "smk37"; the end of
+                                        * this file). The FM-1's enums stay; the SMK adds its four buttons before NB */
+#endif
+#if PLAT_SMK37
+enum { B_FX, B_SEL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B_PLAY, B_REC,
+       B_OCTDN, B_OCTUP, B_KBANK, B_FBANK, B_LEFT, B_RIGHT, NB };
+#else
 enum { B_FX, B_SEL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B_PLAY, B_REC,
        B_OCTDN, B_OCTUP, NB };
+#endif
 enum { EN_SELECT, EN_ALGO, EN_PRESET, EN_K1, EN_K2, EN_K3, EN_K4, NE };
 
 #define NKEYS 27                       /* F3 .. G5 */
@@ -100,6 +109,8 @@ void plat_play_red(int red);
  * plat_midi_send(pkt, (TO_USB | TO_BLE) & ~plat_midi_in_from()) */
 enum { PORT_USB, PORT_BLE, PORT_TRS, NPORTS };
 #define TO_USB (1u << PORT_USB)
+#define TO_TRS (1u << PORT_TRS)        /* the SMK-37's jack, MIDI OUT (PLAT_SMK37; nothing elsewhere): it also gets
+                                        * everything sent TO_USB, the stream a computer gets */
 #define TO_BLE_HOST (1u << PORT_BLE)   /* the computer (a phone, a tablet) connected to the FM-1 */
 #define TO_BLE_DEV (1u << 3)           /* the Bluetooth MIDI device the FM-1 connected to (FM1B_BLE_CENTRAL) */
 #define TO_BLE (TO_BLE_HOST | TO_BLE_DEV)
@@ -357,6 +368,25 @@ void plat_log(const char *line);
  * looks for records below 0xFC000 only, so no 0xF00 rule here. Store objects may sit there too (the template's
  * settings pair is 0xFC000 / 0xFD000): with the window on, plat_data_erase and plat_data_write refuse a store
  * object's sectors in it, so an app with this window puts its objects elsewhere (or keeps to the rest) */
+#if PLAT_SMK37                         /* the SMK-37's windows (felucca-bsp boards/smk37/fm1_flash.h): the data area
+                                        * 0xC2000..0xE9FFF (40 sectors), PLAT_XDATA0 just above the SMK's app area,
+                                        * PLAT_XDATA1 (the autosave pair and 96 KiB) below the update's staging; the
+                                        * settings pair (the FM-1's 0xFC000) is PLAT_GLOB, 0xEB000, and PLAT_XDATA2 the
+                                        * board's FL_GLOB, 0xEB000..0xEDFFF */
+#define PLAT_DATA_LO 0xC2000u
+#define PLAT_DATA_HI 0xEA000u
+#define PLAT_XDATA0_LO 0x9D000u
+#define PLAT_XDATA0_HI 0xA1000u
+#define PLAT_XDATA1_LO 0xA1000u
+#define PLAT_XDATA1_HI 0xBB000u
+#define PLAT_XDATA2_LO 0xEB000u
+#define PLAT_XDATA2_HI 0xEE000u
+#define PLAT_GLOB 0xEB000u
+#define PLAT_WIN_LO PLAT_XDATA0_LO     /* the lowest and highest of the three (the host simulator's flash) */
+#define PLAT_WIN_HI PLAT_DATA_HI
+#define PLAT_STAGE_LO 0xBB000u         /* the update's staging (felucca-bsp FL_OTA), between PLAT_XDATA1 and the data */
+#define PLAT_STAGE_HI 0xC0000u
+#else
 #define PLAT_DATA_LO 0x97000u
 #define PLAT_DATA_HI 0xE0000u
 #define PLAT_XDATA0_LO 0x93000u
@@ -365,6 +395,14 @@ void plat_log(const char *line);
 #define PLAT_XDATA1_HI 0xFC000u
 #define PLAT_XDATA2_LO 0xFC000u
 #define PLAT_XDATA2_HI 0xFF000u
+#define PLAT_GLOB 0xFC000u
+#define PLAT_WIN_LO PLAT_XDATA0_LO
+#define PLAT_WIN_HI PLAT_XDATA1_HI
+/* the update's staging (felucca-bsp chip/ota.c OTA_AREA, 5 sectors, its record in the last one's last 256 bytes):
+ * the platform's, never an app's; backup.c's journal, the crash history and the debug stats keep to it */
+#define PLAT_STAGE_LO 0xE0000u
+#define PLAT_STAGE_HI 0xE5000u
+#endif
 #if FM1B_XDATA2
 #define PLAT_DATA_OK(off, n) (plat_in((off), (n), PLAT_DATA_LO, PLAT_DATA_HI) || \
                               plat_in((off), (n), PLAT_XDATA0_LO, PLAT_XDATA0_HI) || \
@@ -649,3 +687,36 @@ int app_stats_quiet(void);
  * and these: int app_backup_playing(void) (1: no restore now, STOP FIRST), void app_backup_flush(void) (what is not
  * saved yet, saved: a backup starts), void app_backup_hold(int on) (no saving while a backup streams),
  * void app_backup_restored(void) (everything from the flash again) */
+
+/* The SMK-37 (fm1.toml board = "smk37": PLAT_SMK37 1; PLAT_SMK37_MODEL 1 Pro, 2 Elite, 3 MKE-P37, PLAT_SMK37_MODEL_NAME
+ * "Pro" / "Elite" / "MKE"; felucca-bsp boards/smk37/). The FM-1's controls above work as on the FM-1: plat_keys the
+ * middle 27 keys (F3..G5), plat_buttons the 14 functions on the SMK's buttons (FX, SCALE as SEL, CHORD as ENV,
+ * NOTE REPEAT as LFO, PARA as EDIT, GLOBE as GLO, PATCH as HOME, BT as SAVE, ARP, SEQ, SEQ PLAY, SEQ REC,
+ * OCTAVE-/+; HARDWARE CALIBRATION re-teaches them) plus B_KBANK, B_FBANK, B_LEFT, B_RIGHT; plat_enc the seven
+ * roles on K6 (SELECT), K7 (ALGORITHM), K8 (PRESETS), K1..K4; plat_master a virtual MASTER turned by K5, kept with the
+ * panel calibration (plat_master_set: an app's own saved level); plat_lights the 18 buttons' LEDs and PLAY's second
+ * colour, no key LEDs; plat_battery as on the FM-1. Not yet confirmed on a unit (the board layer follows Melodee's own
+ * SMK-37 port, which runs on an Elite); the Pro and the MKE-P37 are the same firmware under their names. */
+#if PLAT_SMK37
+#define NKEYS37 37                     /* C3 .. C6; key 5 is F3 (plat_keys' key 0) */
+#define NPADS 16                       /* 0..7 the top row, 8..15 the bottom */
+enum { PLAT_WHEEL_PITCH, PLAT_WHEEL_MOD };
+uint64_t plat_keys37(void);            /* held: bit k = key k (0 = C3) */
+uint64_t plat_keys37_pressed(void);    /* press edges since the last call: read plat_key_vel for each */
+uint64_t plat_keys37_retrig(void);     /* keys struck again while down since the last call: their bit stayed set, so
+                                        * end the note and start it again at plat_key_vel */
+void plat_vel_curve(int mode);         /* keys and pads: 0 the factory curves, 1 softer, 2 harder, 3 fixed at 100 */
+void plat_trs_out(int on);             /* the TRS jack sends, or not (on again retries a UART that had gone quiet) */
+int plat_key_vel(int k);               /* the last press's velocity, 1..127 (the factory curves of USRTRIM) */
+uint32_t plat_pads(void);              /* held: bit p */
+uint32_t plat_pads_pressed(void);      /* hit edges since the last call */
+int plat_pad_vel(int p);               /* the last hit's velocity, 1..127 */
+int plat_pad_press(int p);             /* pressure while held, 0..127 */
+void plat_pad_rgb(int p, uint32_t rgb);   /* its light, 0xRRGGBB (0 dark); shown at the next UI frame */
+int plat_fader(int i);                 /* 0..127, fader 0 the leftmost */
+int plat_wheel(int w);                 /* PLAT_WHEEL_PITCH -8192..8191 (0 at rest, the rest learnt at power-on),
+                                        * PLAT_WHEEL_MOD 0..127 */
+int plat_pedal(void);                  /* 1 = the sustain pedal is down (either polarity: the jack's rest level is
+                                        * read at power-on, so plug the pedal in before switching on) */
+void plat_master_set(uint32_t q12);    /* the virtual MASTER's level, 0..4096 */
+#endif

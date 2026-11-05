@@ -44,7 +44,8 @@ FEATURES = (
 )
 FEATURE_NAMES = tuple(f for f, _ in FEATURES)
 
-# the models a firmware on fm1-base runs on
+# the models a firmware on fm1-base runs on: the FM-1's build; an SMK-37 build names its own model (tools/build.py
+# fm1.toml board = "smk37": "SMK-37 Pro", "SMK-37 Elite" or "MKE-P37", its package identity's model)
 MODELS = ("FM-1",)
 
 # the fm1.toml keys a release build needs (a dev build only warns without them); author may be the .rfm1's authors
@@ -55,11 +56,12 @@ KEYS = ("schema", "id", "name", "author", "license", "tagline", "description", "
         "screenshot", "hardware", "credits")
 
 
-def flash_ids(header=SRC / "device" / "fm1_flash_ok.h"):
-    """the flash parts fm1-base's storage accepts (FM1B_FLASH_JEDEC_OK), as upper-case hex: "856014" """
-    m = re.search(r"#define\s+FM1B_FLASH_JEDEC_OK\(id\)(.*)", Path(header).read_text())
+def flash_ids(header=SRC / "device" / "fm1_flash_ok.h", macro="FM1B_FLASH_JEDEC_OK"):
+    """the flash parts fm1-base's storage accepts (FM1B_FLASH_JEDEC_OK), as upper-case hex: "856014"; a board's
+    (an SMK-37 build: felucca-bsp's boards/smk37/fm1_flash.h, FL_JEDEC_OK) from its header and macro"""
+    m = re.search(rf"#define\s+{macro}\(id\)(.*)", Path(header).read_text())
     if not m:
-        raise SystemExit(f"firmware.json: no FM1B_FLASH_JEDEC_OK in {header}")
+        raise SystemExit(f"firmware.json: no {macro} in {header}")
     return [f"{int(h, 16):06X}" for h in re.findall(r"0x([0-9A-Fa-f]+)u?", m[1])]
 
 
@@ -205,8 +207,9 @@ def _url(conf, key):
     return v
 
 
-def make(conf, fid, name, have, flash=None, app_dir=None):
-    """the file's content: conf (fm1.toml), fid (the build's NAME), name (display_name), have (parts). A key fm1.toml
+def make(conf, fid, name, have, flash=None, app_dir=None, models=None):
+    """the file's content: conf (fm1.toml), fid (the build's NAME), name (display_name), have (parts); models and
+    flash the board's (default: the FM-1's, MODELS and flash_ids()). A key fm1.toml
     leaves out (or leaves empty) is left out, and so is a screenshot that fails screenshot_problem (given app_dir).
     Refuses a tag outside TAGS, a description that is not one paragraph of at most DESCRIPTION_MAX characters and a
     screenshot that is not a path in the repository"""
@@ -246,7 +249,7 @@ def make(conf, fid, name, have, flash=None, app_dir=None):
     shot = screenshot_path(conf)
     if shot and (app_dir is None or screenshot_problem(conf, app_dir) is None):
         d["screenshot"] = shot
-    d["hardware"] = {"models": list(MODELS), "flash": flash_ids() if flash is None else list(flash),
+    d["hardware"] = {"models": list(MODELS if models is None else models), "flash": flash_ids() if flash is None else list(flash),
                      "features": [f for f in FEATURE_NAMES if have.get(f)]}
     return {k: d[k] for k in KEYS if k in d}
 
@@ -269,13 +272,14 @@ def dumps(d, indent=""):
     return val(d, indent) + "\n"
 
 
-def targets(app_dir, no_ble=False, src=SRC):
-    """where a build writes it: APP_DIR/build/firmware.json (firmware-usb.json for a --no-ble build), and for an app
-    in a firmware's repository (APP_DIR named app, as fm1-ctl/app) the repository's firmware.json too, as fm1.toml
-    has it (not from a --no-ble build). Never into fm1-base itself (its template)"""
+def targets(app_dir, no_ble=False, src=SRC, board=""):
+    """where a build writes it: APP_DIR/build/firmware.json (firmware-usb.json for a --no-ble build; an SMK-37
+    build's with its file names' board part, board: firmware-smk37-elite.json), and for an app in a firmware's
+    repository (APP_DIR named app, as fm1-ctl/app) the repository's firmware.json too, as fm1.toml has it (not from
+    a --no-ble build or another board's). Never into fm1-base itself (its template)"""
     app = Path(app_dir).resolve()
-    out = [app / "build" / ("firmware-usb.json" if no_ble else "firmware.json")]
-    if app.name == "app" and not no_ble and app.parent != Path(src).resolve():
+    out = [app / "build" / f"firmware{board}{'-usb' if no_ble else ''}.json"]
+    if app.name == "app" and not no_ble and not board and app.parent != Path(src).resolve():
         out.append(app.parent / "firmware.json")
     return out
 
