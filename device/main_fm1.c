@@ -21,6 +21,8 @@ struct fm1b_dbg {
     uint32_t magic, halves, max_us, nested, in_audio, late, timer_irqs, ui_frames;
     uint32_t last_us, cpu_q12, boots, stage;
     uint32_t crash_seen;                            /* the crash count already reported at a boot */
+    uint32_t crash_kept, crash_saving;              /* the crash count already in the flash history; a boot's save of it
+                                                     * under way (crashlog.c cl_boot: one cut short is not tried again) */
 } fm1b_dbg __attribute__((section(".noinit")));
 static uint8_t safe_mode;                           /* two failed boots: no audio, USB on (safe_main) */
 int8_t clock_fix;                                   /* fm1_clock_stock() at the start: 0 stock already, 1 set, -1 failed */
@@ -31,7 +33,7 @@ static uint8_t rails_boot[2], rails_tries;          /* VDC14's and SYSVDD's regi
                                                      * the raises it took to read back M-VAVE's levels (the log) */
 static uint32_t wdt_stage __attribute__((section(".noinit")));   /* the main loop's step when the watchdog fired:
                                                                   * 2 Bluetooth, 3 the app's loop, 4 USB, 5 a frame,
-                                                                  * 6 input (fm1b_dbg.stage) */
+                                                                  * 6 input, 7 the debug stats (fm1b_dbg.stage) */
 
 #if FM1B_BT_AUDIO
 static int own_bta_feed(const int32_t *o, uint32_t n);   /* bt_own_audio.c */
@@ -42,6 +44,12 @@ static int dev_frame(const uint8_t *p, uint32_t n);   /* bt_own_central.c */
 #endif
 #include "uac_mix.h"                                /* the USB recording, the computer's audio, in that order */
 #include "fm1_flash_ok.h"                          /* the flash parts the storage may use (FM1B_FLASH_JEDEC_OK) */
+#if FM1B_BT_AUDIO
+static volatile uint8_t bta_streamed;               /* the last render went to Bluetooth (plat_bta_streams) */
+int plat_bta_streams(void) { return bta_streamed; }
+#else
+int plat_bta_streams(void) { return 0; }
+#endif
 static void render_block(int32_t *o)                /* ALNK0: one half, measured */
 {
     uint32_t t0 = fm1_ticks(), us, budget = HALF_FRAMES * 1000000u / FS;
@@ -77,7 +85,13 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
             uac_mix(o + 2u * k, REND_FRAMES, gain, master_pos, full, usb_play_q12);   /* the USB
                                                      * recording, then the computer's audio, then MASTER if full */
 #if FM1B_BT_AUDIO
-            if (own_bta_feed(o + 2u * k, REND_FRAMES)) {   /* Bluetooth audio streams: the FM-1's own output muted */
+#ifdef APP_BT_FRAMES
+            bta_streamed = (uint8_t)own_bta_feed(app_bt_frames(o + 2u * k, REND_FRAMES), REND_FRAMES);   /* (the app's
+                                                     * frames for Bluetooth: 0 silence) */
+#else
+            bta_streamed = (uint8_t)own_bta_feed(o + 2u * k, REND_FRAMES);
+#endif
+            if (bta_streamed) {                     /* Bluetooth audio streams: the FM-1's own output muted */
                 uint32_t i;
                 for (i = 0; i < 2u * REND_FRAMES; i++)
                     o[2u * k + i] = 0;
@@ -102,15 +116,33 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
     fm1b_dbg.in_audio = 0;
 }
 
+#ifndef FM1B_AUDIO_ASIDE
+#define FM1B_AUDIO_ASIDE 1
+#endif
+#if FM1B_AUDIO_ASIDE
+#include "audio_commit.c"                           /* the half rendered aside, copied in while its half is free;
+                                                     * FM1B_AUDIO_ASIDE 0: straight into the DMA's half, as before */
+#endif
+
 void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_isr.S) */
 {
     uint8_t p = fm1_audio_pending();
     fm1_audio_ack_aux(p);
     if (p & FM1_AUDIO_HALF) {
         uint32_t half = fm1_audio_free_half();
+#if FM1B_AUDIO_ASIDE
+        uint32_t ok;
+        fm1_audio_ack_half();                       /* (now: a new pending after the render = the DMA moved on) */
+        render_block(aside);
+        ok = audio_commit(half);
+        if (fm1_audio_pending() & FM1_AUDIO_HALF)
+            fm1_audio_ack_half();                   /* (the half missed: not rendered again) */
+        if (!ok) {
+#else
         render_block(&abuf[half * HALF_WORDS]);
         fm1_audio_ack_half();
         if (fm1_audio_free_half() != half) {
+#endif
             fm1b_dbg.late++;                         /* the DMA moved on while we rendered */
             audio_xruns++;
         }
@@ -149,6 +181,18 @@ void fm1_timer5_irq(void)
             if (gap > 300u)
                 t5_late++;
         }
+#if FM1B_MIDI_STAMP
+        /* what came in since the last tick came in, on the average, half way since: within 0.05 ms at 10 kHz (a tick
+         * held up by a lock: half the gap). Every tick, the render's too: the poll below waits for the render, the
+         * stamps do not. One SIE read and a look at the jack's ring */
+        {
+            uint32_t t = t5_prev ? now - (now - t5_prev) / 2u : now;
+            usb_midi_peek(t);
+#if FM1B_TRS
+            uart_midi_peek(t);
+#endif
+        }
+#endif
         t5_prev = now;
     }
     fm1b_dbg.timer_irqs++;
@@ -213,6 +257,163 @@ static void hexs(char *b, uint32_t v)
         b[i] = "0123456789ABCDEF"[(v >> (28u - 4u * i)) & 15u];
     b[8] = 0;
 }
+
+#include "stacks.c"                                 /* the stacks' room: painted at the start, read at a crash */
+
+/* the crash history in flash (crashlog.c: the staging area's 0xE2000..0xE3FFF), the boot's save and the readouts */
+#ifndef FM1B_BUILD
+#define FM1B_BUILD 0u                               /* (tools/build.py's build_id) */
+#endif
+#include "crashlog.c"
+_Static_assert(CL_LO >= OTA_AREA + 0x2000u && CL_LO + CL_SECTORS * 0x1000u <= (OTA_RES & ~0xFFFu),
+               "the crash history: in ota.c's staging, past the loader's head and backup.c's journal, before its record");
+#if FM1B_BACKUP
+_Static_assert(RS_REC + 0x1000u <= CL_LO, "the crash history: off backup.c's journal record");
+#endif
+static int cl_in(uint32_t off, uint32_t n) { return flash_ok && off >= CL_LO && n <= CL_SECTORS * 0x1000u - (off - CL_LO); }
+static int cl_read(uint32_t off, void *dst, uint32_t n) { return cl_in(off, n) ? st_read(off, dst, n) : -1; }
+static int cl_erase(uint32_t off)                   /* (the main loop's too: the clear, sliced as plat_data_erase's) */
+{
+    int rc;
+    if (!cl_in(off, 0x1000u) || (off & 0xFFFu))
+        return -1;
+    fm1_wdt_feed();
+    rc = data_erase(off);
+    fm1_wdt_feed();
+    return rc;
+}
+static int cl_prog(uint32_t off, const void *src, uint32_t n)
+{
+    return cl_in(off, n) ? fl_write(off, (const uint8_t *)src, n) : -1;   /* (src: a record on the stack, RAM) */
+}
+static int cl_send(const uint8_t *f, uint32_t n) { return ota_wire_send(f, n); }
+static void crash_keep(void)                        /* the boot: a crash since the last one into the flash history */
+{
+    cl_rec_t r;
+    const fm1_crash_ctx_t *x = &fm1_crash_ctx[fm1_crash.count % FM1_CRASH_CTX_N];
+    uint32_t i;
+    if (fm1_crash.magic != FM1_CRASH_MAGIC || !flash_ok)
+        return;
+    memset(&r, 0, sizeof r);
+    r.count = fm1_crash.count, r.vec = fm1_crash.vec, r.pc = fm1_crash.pc, r.rets = fm1_crash.rets;
+    r.sp = fm1_crash.sp, r.uptime_ms = fm1_crash.uptime_ms, r.emu = fm1_crash.emu, r.dbg = fm1_crash.dbg;
+    r.psr = fm1_crash.psr, r.build = FM1B_BUILD;
+    if (x->count == fm1_crash.count) {              /* (its registers, when the ring still holds them) */
+        r.flags = CL_CTX;
+        for (i = 0; i < 16u; i++)
+            r.r[i] = x->r[i];
+        r.usp = x->usp, r.ssp = x->ssp;
+    }
+    if (pst_crash.count == fm1_crash.count)         /* (the stacks' room fm1_fault read at this crash: stacks.c) */
+        r.flags |= cl_stk_pack(pst_crash.left);
+    (void)cl_boot(&r, &fm1b_dbg.crash_kept, &fm1b_dbg.crash_saving);
+}
+
+/* the debug stats in flash (dbgstats.c: the staging area's last sector, 0xE4000..0xE4EFF), the snapshots and the
+ * readouts. Read through the plain window (plat_data's: no window with the interrupts off, the second core's flash
+ * left alone), written by fl_write's page programs, each one's window measured (prog_us: the cost while playing) */
+#define DS_NOINIT __attribute__((section(".noinit")))
+#ifdef APP_STATS_LAYOUT
+#define DS_LAYOUT APP_STATS_LAYOUT
+#else
+#define DS_LAYOUT 0
+#endif
+#include "dbgstats.c"
+_Static_assert(DS_LO == (OTA_RES & ~0xFFFu) && DS_LO + DS_SLOTS * DS_REC <= OTA_RES && DS_LO >= CL_LO + CL_SECTORS * 0x1000u,
+               "the debug stats: ota.c's staging's last sector, below its record, past the crash history");
+static int ds_in(uint32_t off, uint32_t n) { return flash_ok && off >= DS_LO && n <= DS_SLOTS * DS_REC - (off - DS_LO); }
+static int ds_read(uint32_t off, void *dst, uint32_t n)
+{
+    if (!ds_in(off, n))
+        return -1;
+    memcpy(dst, (const void *)FL_XIP(off), n);   /* (the plain window: fl_plain_window_init) */
+    return 0;
+}
+static int ds_erase(uint32_t off)                   /* (sliced, as plat_data_erase's: the sound plays on) */
+{
+    int rc;
+    if (!flash_ok || off != DS_LO)
+        return -1;
+    fm1_wdt_feed();
+    rc = data_erase(off);
+    fm1_wdt_feed();
+    return rc;
+}
+static int ds_prog(uint32_t off, const void *src, uint32_t n)
+{
+    uint32_t t0, us;
+    int rc;
+    if (!ds_in(off, n))
+        return -1;
+    t0 = fm1_ticks();
+    rc = fl_write(off, (const uint8_t *)src, n);   /* (src: the .noinit queue, RAM; one page, one window) */
+    us = (fm1_ticks() - t0) / FM1_TICKS_PER_US;
+    if (us > ds_prog_us)
+        ds_prog_us = (uint16_t)(us < 0xFFFFu ? us : 0xFFFFu);
+    return rc;
+}
+static int ds_send(const uint8_t *f, uint32_t n)   /* (120 frames, ~20 KB: half a second of the main loop) */
+{
+    fm1_wdt_feed();
+    return ota_wire_send(f, n);
+}
+static int ds_staged(void)                          /* an update staged (or no flash): the area is not the stats' */
+{
+    uint32_t w[2];
+    if (!flash_ok)
+        return 1;
+    memcpy(&w[0], (const void *)FL_XIP(OTA_AREA), 4u);   /* (the plain window, as ds_read) */
+    memcpy(&w[1], (const void *)FL_XIP(OTA_RES), 4u);
+    return (w[0] & w[1]) != 0xFFFFFFFFu;
+}
+static uint8_t ds_u8(uint32_t v) { return (uint8_t)(v < 255u ? v : 255u); }
+static uint16_t ds_u16(uint32_t v) { return (uint16_t)(v < 65535u ? v : 65535u); }
+static void ds_fill(ds_rec_t *r)
+{
+    extern uint32_t lock_max;
+    uint32_t c2 = (bootguard.failed < 7u ? bootguard.failed : 7u) << 5;
+#if FM1B_CPU2
+    c2 |= (uint32_t)(plat_cpu2_on() != 0) | (uint32_t)(plat_cpu2_barred() != 0) << 1 |
+          ((uint32_t)plat_cpu2_gave_up() & 7u) << 2;
+#endif
+    r->up_s = fm1_ms / 1000u, r->halves = fm1b_dbg.halves, r->nested = fm1b_dbg.nested;
+    r->late = ds_u16(fm1b_dbg.late), r->max_us = ds_u16(fm1b_dbg.max_us);
+    r->gap_us = ds_u16(t5_gap_max), r->t5_late = ds_u8(t5_late), r->lock_us = ds_u16(lock_max);
+    r->boots = ds_u8(fm1b_dbg.boots);
+    r->crashes = fm1_crash.magic == FM1_CRASH_MAGIC ? ds_u8(fm1_crash.count) : 0u;
+    r->stage = (uint8_t)((fm1b_dbg.stage & 15u) | (wdt_stage & 15u) << 4);
+    r->cpu2 = (uint8_t)c2;
+#if FM1B_BLE
+    r->radio = (uint8_t)(((uint32_t)plat_ble_state() & 3u) | (uint32_t)(plat_ble_connected() != 0) << 2 |
+                         (uint32_t)(plat_ble_linked() != 0) << 3);
+#endif
+#if FM1B_WIFI
+    r->radio |= (uint8_t)(((uint32_t)plat_wifi_state() & 15u) << 4);
+#endif
+#ifdef APP_STATS
+    app_stats(r->app);
+#endif
+}
+static int ds_quiet(void)
+{
+#ifdef APP_STATS_QUIET
+    return app_stats_quiet();
+#else
+    return 1;
+#endif
+}
+static int32_t ds_stack(int k) { return plat_stack_left(k); }
+void plat_stats_enable(int on) { ds_enable(on); }
+int plat_stats_on(void) { return ds_on; }
+int32_t plat_stack_least_ever(int k) { return ds_least_ever(k); }
+static void stats_keep(void)                        /* the boot: the queue's left, a crash's snapshot (dbgstats.c), the
+                                                     * stacks' least ever (the flash's, the crash's room) */
+{
+    uint32_t count = fm1_crash.magic == FM1_CRASH_MAGIC ? fm1_crash.count : 0u;
+    ds_init();
+    if (flash_ok)
+        (void)ds_boot(count, count && pst_crash.count == count ? pst_crash.left : 0);
+}
 #if FM1B_BLE
 static char *log_dec(char *b, uint32_t v)            /* v in decimal at b; the end */
 {
@@ -229,9 +430,27 @@ static char *log_dec(char *b, uint32_t v)            /* v in decimal at b; the e
 #endif
 
 /* a readout for development over USB-MIDI: F0 7D 4C 47 F7 ("LG") asks; the answer is one frame per line,
- * F0 7D 4C 47 <ASCII> F7: the last crash (count, vector, pc, rets, sp, uptime), the supplies' registers (rails), the
+ * F0 7D 4C 47 <ASCII> F7: the last crash (count, vector, pc, rets, sp, uptime), the crash history kept in flash (its
+ * records, the oldest first, in crashlog.c's form: it survives a power-off), the supplies' registers (rails), the
  * power setup's and the clock's as the boot loader left them, then
- * Bluetooth's log, the oldest first (it survives a reset) */
+ * Bluetooth's log, the oldest first (it survives a reset), the cache RAM's test (FM1B_CACHE_RAM) and the app's own
+ * lines (APP_LOG); "end" last.
+ * The crash history alone, for a program: F0 7D 4C 48 F7 ("LH") asks; one frame a record, F0 7D 4C 48 <ASCII> F7,
+ *   crash I/N n COUNT vec HEX pc HEX rets HEX sp HEX ms DEC emu HEX dbg HEX psr HEX build HEX seq DEC
+ *   regs I/N r0 HEX .. r15 HEX usp HEX ssp HEX (when the record has the registers)
+ *   stk I/N main DEC irq DEC c1 DEC guard 0|1 (each stack's bytes left at the crash, -1 not known; guard: EMU_MSG bit 3
+ *     or DBG_MSG bit 13, a stack into its guard; crashlog.c)
+ * the oldest first (I of N, at most 8), then "end N". F0 7D 4C 48 43 4C 52 F7 ("LHCLR") erases it and answers
+ * "cleared" (or "clear failed"); a boot never clears it (an install does: the update's staging, crashlog.c).
+ * The debug stats (dbgstats.c: every 5 minutes while the app has them on, and one with every crash; the record's
+ * layout there): F0 7D 4C 53 F7 ("LS") asks; three frames a record, F0 7D 4C 53 <ASCII> F7, the oldest first (at most 60),
+ *   stat I/N seq DEC up DEC build HEX flags HEX boots DEC crashes DEC halves DEC nested DEC late DEC maxus DEC
+ *     gap DEC t5late DEC lock DEC pass DEC pstage DEC prog DEC stage DEC wdt DEC cpu2 HEX bt HEX wifi DEC
+ *   stk I/N main DEC irq DEC ever main DEC irq DEC c1 DEC (bytes left since the start, then the least ever)
+ *   app I/N NAME DEC ... (the app's fields, APP_STATS_LAYOUT) or app I/N raw HEX (14 digits)
+ * then "end N". F0 7D 4C 53 43 4C 52 F7 ("LSCLR") erases them: "cleared", or "clear failed" (an update staged). Up and
+ * the times in seconds and microseconds; flags 1 periodic, 2 a crash's, 4 written while playing, 8 the switch on.
+ * Both answer in safe mode too */
 static void log_line_send(const char *t)
 {
     uint8_t f[48];
@@ -308,6 +527,12 @@ static int log_frame(const uint8_t *p, uint32_t n)
     } else {
         log_line_send("no crash recorded");
     }
+    {   /* the crash history in flash (crashlog.c: it survives a power-off): its records, the oldest first, as the
+         * history's own request (F0 7D 4C 48 F7) gives them */
+        log_line_send("saved in flash, the oldest first:");
+        if (!cl_print(0x47))
+            log_line_send("saved none");
+    }
     {   /* the supplies: as the boot loader left them, the raises, and now (raw registers: a broken read shows) */
         static const char H[] = "0123456789ABCDEF";
         uint8_t v[4] = {rails_boot[0], rails_boot[1], fm1_p33_read(FM1_P3_ANA_CON6), fm1_p33_read(FM1_P3_ANA_CON9)};
@@ -380,12 +605,13 @@ static int log_frame(const uint8_t *p, uint32_t n)
         }
     }
     if (wdt_stage) {
-        static const char *const ST[7] = {"?", "?", "Bluetooth", "the app's loop", "USB", "a frame", "input"};
+        static const char *const ST[8] = {"?", "?", "Bluetooth", "the app's loop", "USB", "a frame", "input",
+                                          "the debug stats"};
         char *q = b;
         const char *t = "last watchdog reset in ";
         while (*t)
             *q++ = *t++;
-        t = ST[wdt_stage < 7u ? wdt_stage : 0];
+        t = ST[wdt_stage < 8u ? wdt_stage : 0];
         while (*t)
             *q++ = *t++;
         *q = 0;
@@ -434,6 +660,7 @@ static int log_frame(const uint8_t *p, uint32_t n)
         shim_off_max = 0;
     }
 #if FM1B_BLE_OWN
+#if BLE_DIAG                                         /* (fm1.toml ble_diag = false: the counters not kept, no line) */
     {   /* the own stack's link layer: advertising events, connections taken / refused, packets good / CRC bad,
          * links closed : the last reason, the longest BLE interrupt (us) */
         q = b;
@@ -457,6 +684,7 @@ static int log_frame(const uint8_t *p, uint32_t n)
         *q = 0;
         log_line_send(b);
     }
+#endif
 #else
     {   /* the radio's tasks' deepest stacks and its heap's most, now (the "stacks" lines may have scrolled away) */
         extern int shim_stack_depth(int task);
@@ -508,6 +736,52 @@ static int log_frame(const uint8_t *p, uint32_t n)
         bj_gap_min = 0xFFFFu;
         bj_gap_max = bj_gap_zero = bj_ticks = bj_rel_max = 0;
     }
+#endif
+#if FM1B_CACHE_RAM
+    {   /* the cache RAM (plat_cache_ram): "cache ram ways 2 st 1 free 00002000 at 01F28000" (st 1 ready, 2 the cache
+         * never idled, 3 the masks not taken, 4 the test failed: put back, free 0), then the masks after (a set bit: a
+         * way kept as a cache) and the first failing address */
+        const struct plat_cache_ram *c = plat_cache_ram();
+        const char *l;
+        q = b;
+        for (l = "cache ram ways "; *l;)
+            *q++ = *l++;
+        *q++ = (char)('0' + c->ways % 10u);
+        for (l = " st "; *l;)
+            *q++ = *l++;
+        *q++ = (char)('0' + c->status % 10u);
+        for (l = " free "; *l;)
+            *q++ = *l++;
+        hexs(q, c->bytes);
+        q += 8;
+        *q = 0;
+        log_line_send(b);
+        q = b;
+        for (l = "cache at "; *l;)
+            *q++ = *l++;
+        hexs(q, (uint32_t)(uintptr_t)c->base);
+        q += 8;
+        for (l = " bad "; *l;)
+            *q++ = *l++;
+        hexs(q, c->bad_at);
+        q += 8;
+        *q = 0;
+        log_line_send(b);
+        q = b;
+        for (l = "cache dway "; *l;)
+            *q++ = *l++;
+        hexs(q, c->dway);
+        q += 8;
+        for (l = " iway "; *l;)
+            *q++ = *l++;
+        hexs(q, c->iway);
+        q += 8;
+        *q = 0;
+        log_line_send(b);
+    }
+#endif
+#ifdef APP_LOG
+    app_log(log_line_send);                          /* (the app's own lines) */
 #endif
     log_line_send("end");
     return 1;
@@ -631,6 +905,48 @@ static int wifi_frame(const uint8_t *p, uint32_t n)
         q = wifi_cat(q, " ", e);
         wifi_cat(q, plat_wifi_why(), e);
         wifi_line(b);
+#if FM1B_WIFI_OWN
+        {   /* joined: how well the link works (plat_wifi_quality), a second line: the first ask starts the measuring, so
+             * a status 10 s later has the whole window ("10s") */
+            struct plat_wifi_quality wq;
+            static const char *const W[] = {"q ", " dBm ", "k tx ", " retried ", " lost ", " rxover ", " in ", "s"};
+            if (plat_wifi_quality(&wq)) {
+                const int32_t v[7] = {wq.rssi, wq.tx_kbps, wq.tx, wq.retried, wq.lost, wq.rx_over, wq.secs};
+                q = b;
+                for (i = 0; i < 7; i++) {
+                    q = wifi_cat(q, W[i], e);
+                    q = wifi_num(q, v[i], e);
+                }
+                wifi_cat(q, W[7], e);
+                wifi_line(b);
+            }
+        }
+        {   /* the tuning (wifi/wifi_tune.h), a third line: "tune a:on b:on c:on f:on | cal 187 in | filt sta | agc 51 | 2000k
+             * falls 0": which switches are on, then what each does now */
+            struct plat_wifi_tune t;
+            static const char *const CAL[] = {"not read", "187 ", "no 187"};
+            static const char L[5] = {'a', 'b', 'c', 'f', 'g'};   /* (g: MODE AP's group frames once, WT_GRP) */
+            int up = plat_wifi_tune_info(&t);
+            q = wifi_cat(b, "tune", e);
+            for (i = 0; i < 5; i++) {
+                char k[4] = {' ', L[i], ':', 0};
+                q = wifi_cat(q, k, e);
+                q = wifi_cat(q, t.on >> i & 1u ? "on" : "off", e);
+            }
+            q = wifi_cat(q, " | cal ", e);
+            q = wifi_cat(q, CAL[t.cal < 3u ? t.cal : 0], e);
+            if (t.cal == 1u)
+                q = wifi_cat(q, t.cal_in ? "in" : "out", e);
+            q = wifi_cat(q, t.filt_sta ? " | filt sta | agc " : " | filt all | agc ", e);
+            q = wifi_num(q, t.agc_gain, e);
+            q = wifi_cat(q, " | ", e);
+            q = wifi_num(q, t.tx_kbps, e);
+            q = wifi_cat(q, "k falls ", e);
+            q = wifi_num(q, (int32_t)t.falls, e);
+            wifi_cat(q, up ? "" : " (radio not up)", e);
+            wifi_line(b);
+        }
+#endif
         break;
     }
     case 5:
@@ -676,6 +992,12 @@ static int wifi_frame(const uint8_t *p, uint32_t n)
             wifi_line(b);
         }
         break;
+#if FM1B_WIFI_OWN
+    case 9:                                      /* the tuning's switches: 1 a, 2 b, 4 c, 8 f, 16 g (wifi/wifi_tune.h) */
+        if (n >= 5u)
+            plat_wifi_tune_set(p[4] & 31u);   /* (wifi_tune.h WT_BITS) */
+        break;
+#endif
     default:
         break;
     }
@@ -740,6 +1062,10 @@ static void usb_cmd(uint32_t d)
         return;
     }
 #endif
+#if FM1B_COMPANION
+    if (comp_cmd(ota_dec, d))
+        return;                                     /* the companion services (companion.c) */
+#endif
 #ifdef APP_USB_CMD
     app_usb_cmd(ota_dec, d);
     ota_try_ms = 5000u;                             /* (the app's patience, plat_host_patience, back to the default) */
@@ -751,6 +1077,7 @@ static void fm1_fault(const fm1_crash_t *c)
 {
     char b[12];
     uint32_t t0;
+    pst_at_crash(c->count);                         /* the stacks' room before anything here draws on one (stacks.c) */
 #ifdef APP_FAULT
     app_fault(c);                                   /* the app's first (its second core: given up, or this is it) */
 #endif
@@ -772,6 +1099,19 @@ static void fm1_fault(const fm1_crash_t *c)
         ;
     fm1_reboot();
 }
+
+#ifdef APP_RESTART                                  /* (built for an app that asks for it: another's image as it was) */
+void plat_restart(void)
+{
+    app_panic();
+    fm1_audio_stop();
+    usb_detach();
+    fm1_delay_ms(30);
+    bootguard.pending = 0;                          /* intentional reset: not a failed boot */
+    radio_clean_exit();
+    fm1_reboot();
+}
+#endif
 
 static void enter_uboot(const char *why)
 {
@@ -835,7 +1175,7 @@ static void safe_main(void)
         {   /* the log readout works here too: what crashed is the question safe mode raises */
             const uint8_t *p;
             uint32_t n;
-            if (ota_frame_get(&p, &n) && log_frame(p, n))
+            if (ota_frame_get(&p, &n) && (log_frame(p, n) || cl_request(p, n) || ds_request(p, n)))
                 ota_frame_done();
             else
                 ota_service();                      /* (only at a frame the log didn't take) */
@@ -878,6 +1218,8 @@ static void fm1_main(void)
     int took;                                       /* a SysEx frame taken this pass (not the updater's) */
     {
         uint32_t f = irq_save();
+        pst_boot(&knob);                            /* the stacks painted below what is live (stacks.c: the room a crash
+                                                     * finds; the last run's marks were read at its fault, if any) */
         rails_boot[0] = fm1_p33_read(FM1_P3_ANA_CON6);
         rails_boot[1] = fm1_p33_read(FM1_P3_ANA_CON9);
         for (rails_tries = 1; ; rails_tries++) {
@@ -926,6 +1268,11 @@ static void fm1_main(void)
     }
     fm1b_dbg.in_audio = 0;                          /* (.noinit: a crash inside the render left it set, and safe mode,
                                                      * with no render to clear it, then never polled USB) */
+    crash_keep();                                   /* a crash since the last boot into the flash history (crashlog.c):
+                                                     * before safe mode, whose crashes at the start matter most; the
+                                                     * staging cleaned up above first (ota_boot_cleanup erases it) */
+    stats_keep();                                   /* the debug stats' queue into the flash, a crash's snapshot
+                                                     * (dbgstats.c): beside it, for the same reasons */
     if (safe_mode)
         safe_main();                                /* never returns */
     if (fm1_crash.magic == FM1_CRASH_MAGIC && fm1_crash.count != fm1b_dbg.crash_seen) {
@@ -983,6 +1330,15 @@ static void fm1_main(void)
     app_ui_init();
 
     for (;;) {
+        plat_hp_read();                             /* the headphone jack, every pass (plat_headphones) */
+        {   /* the debug stats (dbgstats.c): the last pass's length and where it ended, the second's snapshot, a due
+             * one queued, a queued one written when the app is quiet (or has kept it waiting 4 minutes) */
+            static uint32_t t_ds;
+            uint32_t now = fm1_ticks(), st = fm1b_dbg.stage;
+            fm1b_dbg.stage = 7;
+            ds_poll(fm1_ms, t_ds ? (now - t_ds) / FM1_TICKS_PER_US : 0u, st);
+            t_ds = now;
+        }
         fm1_wdt_feed();
 #if FELUCCA_USB_HOST
         usb_host_task(fm1_ms);                      /* the host's mode change and connecting (plat_usb_host) */
@@ -1025,7 +1381,8 @@ static void fm1_main(void)
             const uint8_t *p;
             uint32_t n;
             took = 0;
-            if (ota_frame_get(&p, &n) && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || remote_frame(p, n)
+            if (ota_frame_get(&p, &n) && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || cl_request(p, n) ||
+                                          ds_request(p, n) || remote_frame(p, n)
 #if FM1B_WIFI
                                           || wifi_frame(p, n)
 #endif
@@ -1053,6 +1410,9 @@ static void fm1_main(void)
 #if FM1B_MIRROR
         mirror_step();                              /* the screen mirrored: input reports, redraws, timeouts */
 #endif
+#if FM1B_COMPANION
+        comp_step();                                /* the companion: what a watched parameter did */
+#endif
         if (usb.ota_req) {
             usb.ota_req = 0;
             app_panic();                            /* silence: the update rewrites the flash */
@@ -1062,9 +1422,6 @@ static void fm1_main(void)
         }
         if (usb.uboot_req)
             enter_uboot("UBOOT (USB)");
-#if FM1B_CDC
-        cdc_task();
-#endif
         if (fm1_ms - last_frame >= 16u) {           /* ~60 frames/s at most; input in between */
             last_frame = fm1_ms;
             fm1b_dbg.ui_frames++;
@@ -1142,6 +1499,11 @@ void fm1_cstart(void)
     }
     for (d = _pool_start; d < _pool_end; d++)
         *d = 0;
+#if FM1B_CACHE_RAM
+    fm1_cache_ram_init(FM1B_CACHE_RAM);             /* data-cache ways as RAM (felucca-bsp's fm1_cache_ram.h): its RAM
+                                                     * code is in place now, the interrupts still off, the second core
+                                                     * held; tested before anything uses it (plat_cache_ram) */
+#endif
     fm1_mailbox_clear();
     fm1_guard_enable(FM1_GUARD_STACK | FM1_GUARD_WRITE | FM1_GUARD_BUS | FM1_GUARD_PC);
     safe_mode = (uint8_t)(p3 >> 8);

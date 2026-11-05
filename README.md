@@ -25,35 +25,43 @@ parts it has.
 
 | Part | How to include it | What the app calls |
 | --- | --- | --- |
-| Bluetooth MIDI with a computer or tablet | `ble = true` (`tools/build.py --no-ble` leaves it out of one build) | `TO_BLE`, `PORT_BLE`; `plat_ble_state`, `plat_ble_connected`; `plat_ble_enable` |
+| Bluetooth MIDI with a computer or tablet | `ble = true` (`tools/build.py --no-ble` leaves it out of one build) | `TO_BLE`, `PORT_BLE`; `plat_ble_state`, `plat_ble_connected`; `plat_ble_enable`; with `ble_stack = "own"` a stream of SysEx frames read by the radio at the link's rate (`plat_ble_stream`: a screen mirrored) and the link as agreed (`plat_ble_link_info`) |
 | Bluetooth MIDI devices (the FM-1 connects to a keyboard or controller) | `ble_central = true`, with `ble` | `plat_ble_scan`, `plat_ble_found`, `plat_ble_connect`, `plat_ble_disconnect`, `plat_ble_device`; `TO_BLE_HOST`, `TO_BLE_DEV`, `plat_midi_in_from` (one link at a time); `plat_ble_passkey` on the own stack |
 | Bluetooth on fm1-base's own stack instead of JieLi's libraries (below) | `ble_stack = "own"`, with `ble` | the same calls |
 | Pairing on the own stack (LE legacy pairing, the bond kept) | `ble_pairing = true`, with `ble_stack = "own"` | nothing |
+| Bluetooth MIDI in by the sender's time (for an app that follows a clock by time) | `ble_midi_time = true`, with `ble_stack = "own"` | `plat_midi_in_t24` after `plat_midi_in` |
 | Bluetooth audio to headphones and speakers (A2DP) | `bt_audio = true`, with `ble_stack = "own"`; `bt_log = true` puts its set-up on the radio's log | `plat_bta_on`, `plat_bta_scan`, `plat_bta_found`, `plat_bta_known`, `plat_bta_pick`, `plat_bta_reconnect`, `plat_bta_forget`, `plat_bta_hangup`, `plat_bta_state` |
 | USB audio: the FM-1 recorded over the cable | on unless `usb_audio_in = false` | nothing: the app's output at MASTER, without the computer's audio (taken before it is mixed in) |
 | USB audio: a computer plays through the FM-1 | on unless `usb_audio_out = false` (needs the input too) | nothing: mixed after the app and after the recording's tap, at MASTER; `plat_usb_play_gain` (0 muted .. 4096, the default) for the app's own setting |
 | USB MIDI after the USB audio interfaces, so macOS 13-15 show the audio device | on with the USB audio input, unless `usb_midi_last = false` | nothing |
 | Velocity and pressure from the keys | `#define APP_TOUCH` in app.h | `touch_on`, `touch_poll`, `touch_keys`, `touch_vel`, `touch_pressure` (lib/touch.h) |
 | WiFi: a station on the networks around, with lwIP's sockets | `wifi = true` (not with `ble`, yet), and `net = [...]` for the app's network code | `plat_wifi_on`, `plat_wifi_state`, `plat_wifi_scan`, `plat_wifi_found`, `plat_wifi_join`, `plat_wifi_saved`, `plat_wifi_forget`, `plat_net_task` |
+| WiFi on fm1-base's own stack, beside Bluetooth: a WPA2 station, UDP (below) | `wifi_stack = "own"`, with `wifi` and `ble_stack = "own"` | the calls above but `plat_net_task`, and `plat_wifi_mode`, `plat_wifi_step`, `plat_wifi_found_ap`, `plat_wifi_join_ssid`, `plat_wifi_leave`; `plat_net_udp_open`, `plat_net_udp_send`, `plat_net_udp_close`, `plat_net_join` |
+| The FM-1 as a Wi-Fi access point (MODE AP): a phone or a laptop joins it, gets an address, and Link and the app's UDP run over it | `wifi_ap = true`, with `wifi_stack = "own"` | `plat_wifi_mode(WIFI_MODE_AP)` / `WIFI_MODE_AP_MAN`, `plat_wifi_ap_set`, `plat_wifi_ap_set_channel`, `plat_wifi_ap_run`, `plat_wifi_ap_forget`, `plat_wifi_ap_state`, `plat_wifi_ap_name`, `plat_wifi_ap_channel`, `plat_wifi_ap_clients`, `plat_wifi_ap_client`, `plat_wifi_ap_start`, `plat_wifi_ap_stop` |
+| Ableton Link: tempo, beat, start / stop with Live and the apps (**GPL-3.0-only**: LICENSING.md) | `link = true`, with `wifi_stack = "own"`, and `licence = "GPL-3.0-only"` | `plat_link_enable`, `plat_link_peers`, `plat_link_mpb`, `plat_link_beat_at`, `plat_link_time_at`, `plat_link_phase`, `plat_link_playing`, `plat_link_set_tempo`, `plat_link_set_playing`, `plat_link_now`, `plat_link_t24` |
 | A page for Bluetooth MIDI devices: the scan while it's up, the list, SAVE to connect or let go, and what happened in words | `#define APP_BTDEV` in app.h, with `ble_central` | `btdev_page`, `btdev_event`, `btdev_word`, `btdev_found`, `btdev_choose`, `btdev_save`, `btdev_title` (lib/btdev.h) |
 | USB audio at full level, MASTER for the speaker and headphones only | with the USB audio input | `plat_usb_audio_full` (the app's setting) |
 | Screen mirroring: the screen and panel live on a computer (web/mirror, a PNG with `tools/fm1_mirror.py`), the panel played from it | `mirror = true` | nothing; `APP_REDRAW` (what a slow link dropped, drawn again), `APP_MIRROR_TEST` (a test session from the remote) |
 | Backup and restore of the app's saved objects over USB, all or nothing (web/backup, `tools/fm1_backup.py`) | `backup = true` | app.h: `APP_BACKUP_OBJS`, `APP_BACKUP_MAGIC`, `APP_BACKUP_VERSION`, `APP_BACKUP_WHAT`; `app_backup_playing`, `_flush`, `_hold`, `_restored` |
+| The companion services over USB: what the firmware is and has, the app's files and parameters, for a generic page or tool (docs/COMPANION.md, `tools/fm1_companion.py`) | `companion = true` | app.h: `APP_COMPANION_EXTRAS` (optional); files: `APP_FILES`, `app_file`, `app_file_read`, `_begin`, `_write`, `_commit`, `_delete`, `_busy` (`plat_file_*`: a file kept in the data area, A / B); parameters: `APP_PARAMS`, `app_param`, `app_param_group`, `app_param_get`, `_set` |
 | The app's own commands over USB, in the update's framing, data pulled from the host | `#define APP_USB_CMD` in app.h | `app_usb_cmd`; `plat_host_read`, `plat_host_patience` |
+| The USB host's device by name (its product string), for the app's own page | `#define APP_USB_HOST_NAME` in app.h, with `usb_host` | `plat_usb_host_name` |
 | Lower case in the big fonts | `font_full = ["L"]` | the fonts as ever |
 | The firmware as an `.rfm1` for host apps (RemoteFM1 for iOS), below | `tools/build.py APP_DIR --rfm1` | nothing |
+| The browser emulator's own parts (`tools/build.py --web`): web/emu/parts, each file saying what it does; without any, the page and app.wasm are as before | `emu = ["name", ...]` (or `FM1B_EMU="name ..."` for one build) | nothing, unless a part says so |
 
 Every firmware also counts each port's MIDI messages, in and out: `plat_midi_count(PORT_*, out)` for counters,
 `plat_midi_ago` for activity lights.
 And: `plat_midi_out_room(to)` (room in the out queues, each Bluetooth link's its own, for a sequencer's note-offs),
 `plat_midi_in_from()` (where the last message in came from, as an out: for MIDI thru) and `plat_midi_out_link()` (a new
 USB connection); `plat_store_size` and `plat_store_head` (an object whole or not at all; its header only); big data in
-flash beyond the store with `plat_data*`, in the data area and two more windows (`PLAT_XDATA0`, `PLAT_XDATA1`).
+flash beyond the store with `plat_data*`, in the data area and two more windows (`PLAT_XDATA0`, `PLAT_XDATA1`), and a
+third on request (`xdata2 = true`: `PLAT_XDATA2`, 0xFC000..0xFEFFF).
 
 ## Bluetooth and WiFi
 
-A firmware has Bluetooth or WiFi, not both: each fills most of what the FM-1 has (the chip has no external RAM),
-and together they don't fit. WiFi, and Bluetooth on JieLi's stack, need JieLi's AC79 SDK (`$AC79_SDK`) for its
+On JieLi's libraries a firmware has Bluetooth or WiFi, not both: each fills most of what the FM-1 has (the chip has
+no external RAM), and together they don't fit. On fm1-base's own stacks it has both (below). WiFi, and Bluetooth on JieLi's stack, need JieLi's AC79 SDK (`$AC79_SDK`) for its
 libraries. Bluetooth on fm1-base's own stack (`ble_stack = "own"`) links nothing of JieLi's, and neither does a
 build without a radio. Every build still takes the three SDK files a package needs (LICENSING.md).
 
@@ -68,6 +76,11 @@ overwritten works the same. The own stack is smaller and does more:
 - Bluetooth MIDI with a computer or a phone, as on JieLi's.
 - With `ble_pairing = true` it pairs and encrypts the link (LE legacy pairing), and keeps the bond in `OBJ_BLE`.
   Without it a pairing is refused; macOS and iOS connect anyway.
+- `ble_diag = false` leaves out the link layer's diagnostics (its counters and event rings: about 2.4 KB of RAM
+  and some code; the radio log's `BT ll` line). They are kept by default.
+- With `ble_midi_time = true` each message from Bluetooth comes with the time it was sent, from its BLE-MIDI
+  timestamp (`plat_midi_in_t24`): the connection's bunching taken out, for an app that times a clock it follows
+  itself. Without it the clock and transport are held to the sender's time (spaced as sent, up to 0.12 s later).
 - With `ble_central = true` the FM-1 connects to Bluetooth MIDI devices, as on JieLi's. A device that asks for a
   code gets one on the FM-1's screen (`plat_ble_passkey`).
 - With `bt_audio = true` it sends its sound to headphones and speakers (A2DP, SBC), beside Bluetooth MIDI on the
@@ -93,7 +106,9 @@ headphones (AIAIAI TMA-2) and a speaker (Anker SoundCore 2), MIDI and audio at o
 1. In fm1.toml, `ble = true`. Add `ble_central = true` for the FM-1 to connect to MIDI devices too (a keyboard,
    a controller), beside a computer. For the own stack, add `ble_stack = "own"` and its options (above).
 2. In app.h, give it a store object: `OBJ_BLE` in the app's object enum, and its offset in `APP_STORE_MAP` (the
-   radio's address and pairing are kept there).
+   radio's address and pairing are kept there). On the own stack an app may keep them in its own saved data instead
+   (a settings record of its own): `#define APP_BLE_STORE` and `app_ble_load` / `app_ble_save` (plat.h `struct
+   plat_ble_rec`), and no `OBJ_BLE`.
 3. In the app: MIDI goes out with `TO_BLE` and comes in on `PORT_BLE`, as USB's does. For a page of devices, add
    `#define APP_BTDEV` to app.h and use lib/btdev.h (the template's REC does).
 4. With devices there are two links, the computer's and the device's. `TO_BLE` goes to both; `TO_BLE_HOST` or
@@ -126,10 +141,46 @@ should say where the setting is (the template's: for details, see template/docs/
 
 For a working example, see `examples/wifi`; for a whole firmware, fm1-radio.
 
+### WiFi on the own stack, and Ableton Link
+
+With `wifi_stack = "own"` (and `ble = true`, `ble_stack = "own"`) WiFi runs on fm1-base's own stack (`wifi/`,
+`device/wifi_own.c`, from Optimist), beside Bluetooth, on the radio the own Bluetooth stack starts: nothing of JieLi's
+linked, no lwIP, no task. It is a WPA2-PSK station (CCMP, the MAC's) with a small IP layer: ARP, DHCP, IGMP and UDP
+(up to four ports, one multicast group), no TCP and no DNS. Everything runs from the main loop, a small step a pass.
+
+1. In fm1.toml: `ble = true`, `ble_stack = "own"`, `wifi = true`, `wifi_stack = "own"`; `link = true` for Ableton
+   Link (and then `licence = "GPL-3.0-only"`).
+2. In app.h: `OBJ_BLE` and `OBJ_WIFI` (the networks kept: four, their SSID and the WPA2 key made from the password,
+   never the password; the mode), or the app's own record of them (`APP_WIFI_STORE`, plat.h).
+3. In the app: `plat_wifi_mode(WIFI_MODE_AUTO)` (or `plat_wifi_on(1)`) joins the best network kept that it hears,
+   at the start and whenever none is joined; `WIFI_MODE_MAN` joins when asked (`plat_wifi_join`,
+   `plat_wifi_join_ssid`). `plat_wifi_step` and `plat_wifi_fail` say how far it got and why not, `plat_wifi_found_ap`
+   lists what a scan heard (`plat_wifi_scan`, or `plat_wifi_scanning` while a list is on screen). A network that goes
+   (nothing heard for 8 s) is NETWORK LOST, and AUTO looks again. Passwords come over USB as for JieLi's WiFi
+   (`tools/fm1_remote.py wifi join SSID PASSWORD`) or from the app's own page.
+4. The app's datagrams: `plat_net_udp_open(port, rx, ctx)`, `plat_net_udp_send`, `plat_net_join(group)`; each one
+   arrives with its time (`plat_wifi_us`).
+5. Link (`link = true`): `plat_link_enable(1)`, then the session's tempo, beat and start / stop at any time (Link's
+   clock, `plat_link_now`; `plat_link_t24` turns a time into a `plat_ticks24` value for the tick or the render).
+6. MODE AP (`wifi_ap = true`): the FM-1 is the access point, where there is no router (on stage, a phone with Ableton
+   Note). `plat_wifi_ap_set(name, len, password)` makes the WPA2 key (len 0: the name FM1- and the last four digits
+   of the radio's address) and keeps it with the networks; `plat_wifi_mode(WIFI_MODE_AP)` runs the access point
+   whenever a key is kept, from power-on, `WIFI_MODE_AP_MAN` only once `plat_wifi_ap_run(1)` starts it. Up to four
+   clients (WPA2-PSK, CCMP at their own key in the MAC), DHCP on 192.168.4.0/24 (the FM-1 is 192.168.4.1, which
+   answers a ping), Link and the app's ports as on a network joined; `plat_wifi_ap_clients` counts the clients. The
+   station rests meanwhile. No web server, no internet behind it.
+
+For a working example, see `examples/link` (GPL-3.0-only: it uses Link); its host test runs it on the simulator's
+own network (`host/wifi_air.c`: an access point, DHCP, a Link peer, all in the process; with `wifi_ap` a client of
+the FM-1's own access point, `host/wifi_air_client.c`, as in `tests/wifi/link_ap`). On an FM-1 the station has
+joined a network, got its address and synced with Live in Optimist's firmware, and MODE AP has had an iPhone with
+Ableton Note join it (the 4-way handshake, DHCP, data both ways, one Link peer) (docs/wifi/README.md).
+
 ### What each costs
 
-The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss` (128 KB in a WiFi build), and a
-336 KB pool of RAM for big buffers (304 KB in a WiFi build). Measured on the template (October 2026), in KB:
+The FM-1 has a 581 KB app slot in the flash and 464 KB of SRAM, one budget packed from its bottom for the RAM code,
+`.data` and `.bss`, and the pool of big buffers, 8 KB kept spare (`device/app.ld`; a WiFi build keeps fixed
+regions: 24 KB of RAM code, 128 KB of RAM, a 304 KB pool). Measured on the template (October 2026), in KB:
 
 | | Flash | RAM | Pool |
 | --- | --- | --- | --- |
@@ -139,9 +190,12 @@ The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss`
 | Bluetooth MIDI with a computer on the own stack (`ble_stack = "own"`) | + 41 to 46 | + 10 | + 1 |
 | Pairing, devices and Bluetooth audio too (`ble_pairing`, `ble_central`, `bt_audio`) | + 57 to 62 | + 8 | + 30 |
 | WiFi (`wifi`, from fm1-radio's measurements) | + about 300 | + about 100 | + about 276 |
+| WiFi on the own stack (`wifi_stack = "own"`: the station, the IP layer, the manager), on the own Bluetooth stack | + 18.6 | + 3.8 | 0 |
+| Ableton Link too (`link`) | + 8.8 | + 1.8 | 0 |
+| MODE AP too (`wifi_ap`: the access point, its authenticator and DHCP server) | + 6.4 | 0 | + 1.7 |
 
 - Bluetooth: JieLi's BT controller and stack (the flash), its 24 KB heap and their tables (the RAM), three task
-  stacks of 8 KB (the pool). The template with Bluetooth and devices is 214 KB of flash, 75 of 96 KB of RAM: room
+  stacks of 8 KB (the pool). The template with Bluetooth and devices is 214 KB of flash, 75 KB of RAM: room
   for a big app (CTL-1, with a General MIDI synth, is 491 KB).
 - The own stack: the template with Bluetooth MIDI alone is 118 to 123 KB of flash, 37 KB of RAM and 69 KB of pool;
   with pairing, devices and audio, 180 KB, 45 KB and 99 KB. On a big app the
@@ -158,6 +212,9 @@ The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss`
   hear). `examples/wifi` is 420 KB of
   flash, 119 of 128 KB of RAM and 299 of 304 KB of pool; fm1-radio (MP3 and HE-AAC decoders, HTTPS) is
   576 KB, 127 KB and 300 KB.
+- The own WiFi stack (measured on `examples/link`, October 2026): the example with Link is 139 KB of flash and
+  29 KB of RAM; it keeps the RAM layout of a build without WiFi, its two frame buffers (1.6 KB) in main RAM below
+  0x01C20000 (the build checks: the radio's DMA does not reach above).
 - In a WiFi build, fm1-base's large font (the splash's name, the panel's screens) can go too:
   `#define APP_BIG_FONT FONT_M` in app.h saves 20 KB of flash.
 - An app with fonts of its own can give them to fm1-base's screens (crash, safe mode, update, restore,

@@ -13,7 +13,8 @@
  *   APP_NAME "TEMPLATE"     on the splash, crash and safe-mode screens and for the screen reader
  *   APP_VERSION "DEV"       a release build passes its own (tools/build.py --release)
  *   APP_BLOCK 256           frames per audio half (5.8 ms at 44.1 kHz), the render's block
- *   FM1B_CDC 0              USB serial console (a second USB function)
+ *   FM1B_CDC 0              USB serial console (a second USB function; fm1.toml usb_console = true): the app's text over
+ *                           plat_console_* (console.c)
  *   FM1B_UAC 1              USB audio input: the master output, recordable over the cable at 44.1 kHz (checked on an
  *                           FM-1 2026-10-16: no lost frame); FM1B_UAC_48K 0 (48 kHz too: needs the resampler's filter)
  *   FM1B_UAC_DEEP 0         1: the USB audio input keeps a half more in hand, for renders that take most of
@@ -28,7 +29,10 @@
  *   FM1B_MSC 0              disk mode: the FM-1 as a USB drive of the app's blocks (fm1.toml msc = true: msc.c)
  *   FM1B_BACKUP 0           backup and restore of the app's objects over USB (fm1.toml backup = true: backup.c)
  *   FM1B_RES 0              the resource region (fm1.toml resources = FILE: res.c; with backup)
- *   FM1B_CPU2 0             the second core (fm1.toml cpu2 = true: cpu2.c, felucca-bsp's fm1_cpu1.h) */
+ *   FM1B_CPU2 0             the second core (fm1.toml cpu2 = true: cpu2.c, felucca-bsp's fm1_cpu1.h)
+ *   FM1B_CACHE_RAM 0        data-cache ways as RAM, 2, 4 or 7 (fm1.toml cache_ram_ways: plat_cache_ram, felucca-bsp's
+ *                           fm1_cache_ram.h; set and tested in fm1_cstart, main_fm1.c)
+ *   FM1B_COMPANION 0        the companion services over USB (fm1.toml companion = true: companion.c) */
 #include <stdint.h>
 #include "plat.h"
 #include "app.h"                  /* first: the scan's hooks below may call the app */
@@ -52,6 +56,7 @@
 #include "fm1_timer.h"
 #include "fm1_audio.h"
 #include "fm1_adc.h"
+#include "fm1_jack.h"               /* the headphone jack's switch (PB5): plat_headphones */
 #include "fm1_lcd_hw.h"
 #if FM1B_WIFI || FM1B_BLE
 #define FL_UID 1                          /* the flash's unique ID: the WiFi MAC, the Bluetooth name (plat_chip_uid) */
@@ -60,6 +65,12 @@
 #include "fm1_xip.h"
 #include "fm1_perf.h"
 #include "fm1_clock.h"
+#ifndef FM1B_CACHE_RAM
+#define FM1B_CACHE_RAM 0
+#endif
+#if FM1B_CACHE_RAM
+#include "fm1_cache_ram.h"        /* data-cache ways as RAM (fm1.toml cache_ram_ways): plat_cache_ram */
+#endif
 
 #include "libc.c"
 #include "lcd.c"
@@ -116,6 +127,9 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #ifndef FM1B_CPU2
 #define FM1B_CPU2 0
 #endif
+#ifndef FM1B_COMPANION
+#define FM1B_COMPANION 0
+#endif
 #define FELUCCA_MIRROR FM1B_MIRROR /* usb.c's ring for mirror.c's frames */
 #ifndef FM1B_USB_HOST
 #define FM1B_USB_HOST 0
@@ -125,8 +139,19 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define FM1B_MSC 0
 #endif
 #define FELUCCA_MSC FM1B_MSC      /* disk mode: usb.c's mass-storage descriptors and EP3 (msc.c) */
+#ifndef FM1B_MIDI_STAMP
+#define FM1B_MIDI_STAMP 1         /* MIDI in stamped where it lands, USB and the jack (plat_midi_in_t24; 0: when read) */
+#endif
+#define FELUCCA_MIDI_STAMP FM1B_MIDI_STAMP
+#if defined APP_USB_HOST_NAME && FM1B_USB_HOST
+#define FELUCCA_USB_HOST_NAME 1      /* the device's product string (plat_usb_host_name) */
+#endif
 #define SXQ 128u                  /* the SysEx send ring, in packets: a whole screen-reader SAY (ANN_MAX + 9 bytes) */
+#ifdef APP_SYSEX_BYTE
+#define FELUCCA_SYSEX_BYTE(b) app_sysex_byte(b)   /* the app's, every SysEx byte from USB (plat.h APP_SYSEX_BYTE) */
+#endif
 #include "usb.c"
+#include "console.c"              /* the USB serial console's bytes for the app (plat_console_*, FM1B_CDC) */
 #ifndef FM1B_TRS
 #define FM1B_TRS 1
 #endif
@@ -237,7 +262,9 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)   /* never waits: no room
 #else
 #include "radio_none.c"           /* the build with no radio: nothing of JieLi's linked */
 #endif
-#if FM1B_WIFI
+#if FM1B_WIFI_OWN
+#include "wifi_own.c"             /* WiFi on the own stack (wifi/, felucca-bsp's chip/fm1_wifi.h; link/ with FM1B_LINK) */
+#elif FM1B_WIFI
 #include "wifi.c"                 /* WiFi (ble/wifi/, the SDK's lwIP) */
 #endif
 #if FM1B_MIRROR
@@ -367,6 +394,15 @@ static int bu_room(void)                            /* the SysEx ring empty: a f
 static int bu_send(const uint8_t *p, uint32_t n) { return ota_wire_send(p, n); }
 static void bu_flush(void) { app_backup_flush(); }
 static void bu_hold(int on) { app_backup_hold(on); }
+#endif
+#if FM1B_COMPANION
+#include "companion.c"            /* the companion services over USB (docs/COMPANION.md: web/companion, tools/fm1_companion.py) */
+static int cp_send(const uint8_t *p, uint32_t n) { return usb.config ? ota_wire_send(p, n) : -1; }
+static int cp_room(uint32_t n)                      /* the SysEx ring takes it now: nobody else holds it, no backup */
+{
+    return usb.config && !usb.suspended && !sx_busy && !backup_streaming() && SXQ - (so_w - so_r) >= (n + 2u) / 3u;
+}
+static uint32_t cp_link(void) { return usb.config ? usb.resets + 1u : 0u; }
 #endif
 #ifdef APP_TOUCH
 #include "touch.c"

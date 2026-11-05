@@ -91,8 +91,22 @@ struct bti_rx {
     uint32_t clkn, stat, agc, len, rssi1;
     uint8_t data[340];                             /* (a DH5's 339 B whole: our features say 5-slot, bt_lmp.c) */
 };
+#ifndef FM1B_BTA_MEM
+#define FM1B_BTA_MEM 0
+#endif
+#if FM1B_BTA_MEM
+/* the ring in the app's block (fm1-base's plat_bta_mem: bt_page.c bp_mem), 0 while it lends none: nothing is pushed,
+ * no run starts (bti_prepare) */
+static struct bti_rx *bti_ringp;
+#define BTI_RX_AT(i) (&bti_ringp[(i) % BTI_RING])
+#define BTI_RING_HAVE (bti_ringp != 0)
+#else
 static struct bti_rx bti_ring[BTI_RING] IN_POOL;
+#define BTI_RX_AT(i) (&bti_ring[(i) % BTI_RING])
+#define BTI_RING_HAVE 1
+#endif
 static volatile uint32_t bti_rw, bti_rr;
+#define BTI_MEM_HAVE BTI_RING_HAVE                 /* (the ring and bt_page.c's queue are lent together: bp_mem) */
 
 /* the first interrupts of a run (bttrace) */
 #define BTI_TRACE 96u
@@ -287,11 +301,11 @@ static void bti_push(uint32_t kind, uint32_t idx, uint32_t stat, uint32_t clkn, 
     struct fm1_br_frame *f = fm1_br_frame(bti_tab, 0);
     struct bti_rx *r;
     uint32_t i;
-    if (bti_rw - bti_rr >= BTI_RING) {
+    if (!BTI_RING_HAVE || bti_rw - bti_rr >= BTI_RING) {
         bti_st.dropped++;
         return;
     }
-    r = &bti_ring[bti_rw % BTI_RING];
+    r = BTI_RX_AT(bti_rw);
     r->kind = (uint8_t)kind;
     r->idx = (uint8_t)idx;
     r->stat = stat;
@@ -601,8 +615,8 @@ static void bti_own_addr(void)                     /* our address: made once (LA
 static int bti_prepare(uint32_t mode)
 {
     struct fm1_br_frame *f = fm1_br_frame(bti_tab, 0);
-    if (bti_busy())
-        return 0;
+    if (bti_busy() || !BTI_MEM_HAVE)
+        return 0;                                  /* (FM1B_BTA_MEM: no run without the app's block, bt_page.c) */
     if (!bti_radio_up())
         return 0;
     bti_bredr_up();
@@ -721,9 +735,9 @@ static void bti_poll(void)                         /* the main loop */
         bti_clk_print();                           /* (shown only with a terminal open: `btclk` again) */
 #endif
     }
-    while (bti_rr != bti_rw) {
+    while (BTI_RING_HAVE && bti_rr != bti_rw) {
         RING_PUBLISH();
-        bti_print_rx(&bti_ring[bti_rr % BTI_RING]);
+        bti_print_rx(BTI_RX_AT(bti_rr));
         RING_PUBLISH();
         bti_rr++;
     }

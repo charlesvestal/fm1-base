@@ -1,0 +1,12 @@
+fm1-base
+Copyright (C) 2026 the fm1-base contributors (LICENSING.md lists every part, its origin and its licence).
+
+This NOTICE is for the Apache-2.0 data in fm1-base's own tree. felucca-bsp's Apache-2.0 files keep theirs in
+bsp/NOTICE. The full Apache-2.0 text is LICENSES/Apache-2.0.txt.
+
+device/fm1_wifi_wlc.h is Apache-2.0: the coexistence controller's set-up words that JieLi's wlc.c writes when Wi-Fi
+starts (the AC79 AIoT SDK's cpu/wl82/liba/cpu.a, Copyright (c) 2024-2026 Zhuhai Jieli Technology Co., Ltd.,
+Apache-2.0, https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK). Changed by Optimist (Henri David, hdavid): not the code
+but the writes it made, recorded in an emulator and listed as data, then packed; its header states the changes
+(Apache-2.0 section 4(b)). tests/wifi/wifi_wlc_ref.h holds the same words as first recorded, unpacked, for the test.
+Both were in felucca-bsp's chip/ (fm1_wifi_wlc.h) before 2026-10-29.

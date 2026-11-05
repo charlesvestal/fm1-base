@@ -172,7 +172,8 @@ static void own_bta_attach(void)
 }
 
 /* ---- the render's output (main_fm1.c render_block, the audio interrupt): 24-bit in int32 -> 16-bit for the SBC
- * encoder, a block of REND_FRAMES in pieces. 1: it streams (the FM-1's own output is muted then) */
+ * encoder, a block of REND_FRAMES in pieces (o 0: silence, the app's app_bt_frames). 1: it streams (the FM-1's own
+ * output is muted then) */
 static int own_bta_feed(const int32_t *o, uint32_t n)
 {
     int32_t q[2u * 32u];
@@ -181,7 +182,7 @@ static int own_bta_feed(const int32_t *o, uint32_t n)
     for (k = 0; k < n; k += m) {
         m = n - k > 32u ? 32u : n - k;
         for (i = 0; i < 2u * m; i++)
-            q[i] = (o[2u * k + i] + 128) >> 8;
+            q[i] = o ? (o[2u * k + i] + 128) >> 8 : 0;
         on = bt_audio_feed(q, m);
         if (!on)
             break;
@@ -190,8 +191,36 @@ static int own_bta_feed(const int32_t *o, uint32_t n)
 }
 
 /* ---- plat.h */
+uint32_t plat_bta_mem_bytes(void)
+{
+#if FM1B_BTA_MEM
+    return BP_MEM_BYTES;
+#else
+    return 0;
+#endif
+}
+int plat_bta_mem(void *p)                         /* (the main loop) */
+{
+#if FM1B_BTA_MEM
+    uint32_t f;
+    if (!p && (bta.mode != BTA_OFF || bti_busy()))
+        return -1;                                /* (still read: the mode on, or the run being let go, bta_stop) */
+    if ((uintptr_t)p & 3u)
+        return -1;
+    f = irq_save();                               /* (neither the audio's interrupt nor the radio's mid-way) */
+    bp_mem_set(p);
+    irq_restore(f);
+    return 0;
+#else
+    return p ? -1 : 0;
+#endif
+}
 void plat_bta_on(int on)
 {
+#if FM1B_BTA_MEM
+    if (on && !BTI_MEM_HAVE)
+        return;                                   /* (no block lent: off, as asked for without one) */
+#endif
     if (on) {
         if (ble_state == BLE_OFF)
             ble_start();                          /* (the radio's start-up and calibration are BLE's: rf_share.h) */
@@ -204,7 +233,7 @@ void plat_bta_on(int on)
 void plat_bta_scan(int on)
 {
     if (bta.mode != BTA_OFF)
-        bta_scan(on ? 1 : 0);
+        bta_scan(on == 2 ? 2 : on ? 1 : 0);       /* (2: the inquiry again, the list kept: bt_audio.c) */
 }
 int plat_bta_found(int i, char *name)             /* found device i: its name (17 bytes) -> 0: none */
 {
@@ -248,6 +277,21 @@ void plat_bta_forget(int i)
 }
 void plat_bta_hangup(void) { bta_hangup(); }
 int plat_bta_state(void) { return (int)bta_state(); }   /* PLAT_BTA_S_* (the same values as bt_audio.h's BTA_S_*) */
+void plat_bta_output(int to_device) { bta_output(to_device != 0); }   /* (streaming only: bt_audio.c) */
+int plat_bta_out_device(void) { return bta_out_bt(); }
+int plat_bta_lost(void)                           /* (PLAT_BTA_LOST_*: bt_audio.c's BTA_W_*, in the same order) */
+{
+    uint32_t w = bta_seen;
+    return bta_lost() ? (int)(w % 7u) : PLAT_BTA_LOST_NONE;
+}
+int plat_bta_timed_out(void) { return bta_state() == BTA_S_REFUSED && bta_gave_up(); }
+int32_t plat_bta_latency_us(void)
+{
+    int32_t t = bta_lat_t();                      /* (TIMER4 ticks: bt_acl.c) */
+    return t < 0 ? -1 : t / (int32_t)FM1_TICKS_PER_US;
+}
+_Static_assert(PLAT_BTA_LOST_LINK == BTA_W_LINK && PLAT_BTA_LOST_REFUSED == BTA_W_REFUSED, "plat.h PLAT_BTA_LOST_*: bt_audio.c's BTA_W_*");
+_Static_assert(PLAT_BTA_STREAMING == BTA_S_STREAMING && PLAT_BTA_READY == BTA_S_READY, "plat.h PLAT_BTA_*: bt_audio.h's BTA_S_*");
 
 /* ---- the USB remote (main_fm1.c; tools/fm1_remote.py bta ...): F0 7D 4C 41 cmd [arg] F7
  *   1 on  2 off  3 scan  4 status ("<state> <found> <known>")  5 the found devices, a line each  6 i: connect found i
