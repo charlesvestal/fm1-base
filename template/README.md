@@ -8,7 +8,7 @@ manual.
 | --- | --- |
 | `app.h` | The app's settings (name, block size, the store's objects) and its half of the contract with the platform |
 | `app.c` | The app: input, sound, screen, saving |
-| `fm1.toml` | Build and site settings: name, package identity, USB names, tagline, source, licence |
+| `fm1.toml` | Build and site settings: name, package identity, USB names, tagline, source, licence, and firmware.json's |
 | `words.tsv` | The screen reader's words (fm1-reader): the screen's text and how to say it |
 | `tests/basic.txt` | Host simulator checks: keys, MIDI, settings across a reboot, the sound, the screen reader |
 | `tests/screens.txt` | The manual's screenshots |
@@ -40,7 +40,8 @@ In a firmware's own repository, a release is built on GitHub from its tag by `.g
 calls the shared FM-1 builder ([`zvenson/fm1-build` at `v1`](https://github.com/zvenson/fm1-build/tree/v1)). The
 builder runs `./build.sh --release X.Y` and `tests/run_tests.sh` (a failing test stops the release) and signs build
 provenance for `NAME-X.Y.fwsc` and `NAME-X.Y-app.bin`; the FM-1 Firmware Hub shows such packages as built from
-source. The workflow makes a draft release (or keeps the one you wrote, with its notes), checks the sums and the
+source. It also builds `NAME-X.Y.rfm1` for host apps such as RemoteFM1, with Emscripten 6.0.10 from emsdk, and
+releases and signs it with `firmware.json`. The workflow makes a draft release (or keeps the one you wrote, with its notes), checks the sums and the
 signatures, then publishes it. A tag with a suffix (`v0.2-beta`) is a prerelease; a published release is never
 rebuilt. For the site, download that package and give it to `publish_site.sh`, so the site has the attested one:
 
@@ -52,7 +53,12 @@ rebuilt. For the site, download that package and give it to `publish_site.sh`, s
 1. Copy `template/` to your firmware's repository, with fm1-base beside it as a git submodule.
 2. In `app.h`, set `APP_NAME`, and the store's objects and their flash offsets (`APP_STORE_MAP`).
 3. In `fm1.toml`, set the name, an `id_prefix` of your own (`FM-1_` and digits; each firmware has its own), the USB
-   names, and the site's tagline, source and credits.
+   names, the site's tagline, source and credits, and your name, a description, tags, your install page and a
+   screenshot. The build writes them to `firmware.json` at your repository's root, which firmware hubs read
+   (fm1-base's docs/FIRMWARE-JSON.md); commit it. A release build refuses until your name, the description, the
+   tags, the install page, the tagline, the source, the licence and the screenshot are set. The screenshot is a
+   square PNG of at least 240 × 240 in your repository, its path relative to the repository's root; one of the
+   manual's screenshots (`tests/screens.txt`) fits as it is.
 4. In `words.tsv`, set the `# url:` line to where your site publishes its words.
 5. Write your app in `app.c`: `app_render` for the sound, `app_frame` for the screen and the controls, and the rest
    of the contract in `app.h`.

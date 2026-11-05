@@ -9,9 +9,10 @@
   tools/build.py APP_DIR --web         the browser emulator instead: APP_DIR/build/emu/ (emcc); the page is the
                                        simulator alone (panel, screen, sound, screen reader), for a site to link or frame;
                                        an app may bring its own (APP_DIR/web/emu/index.html, worklet.js)
-  tools/build.py APP_DIR --rfm1        the app as an .rfm1 instead: APP_DIR/build/rfm1/ID-VERSION.rfm1 (emcc), the
+  tools/build.py APP_DIR --rfm1        the app as an .rfm1 instead: APP_DIR/build/rfm1/ID-dev+COMMIT.rfm1 (emcc), the
                                        host simulator in WebAssembly for host apps (RemoteFM1 for iOS: RemoteFM1IOS's
-                                       docs/RFM1-FORMAT.md); host/rfm1.c, tools/rfm1_pack.py
+                                       docs/RFM1-FORMAT.md); host/rfm1.c, tools/rfm1_pack.py. With --release X.Y:
+                                       APP_DIR/build/NAME-X.Y.rfm1, beside the release's package
 
 APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   name = "TEMPLATE"          the build's file names (lower case)
@@ -41,7 +42,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              by flags: the register check skips them entirely (it reads the text: x86 asm behind
                              an #if would fail it)
   rfm1_memory_mib = 8        the .rfm1's fixed memory (MiB, 1..32; default 8)
-  authors = ["Name"]         the .rfm1 manifest's authors (default: the app repository's first commit's author)
+  authors = ["Name"]         the .rfm1 manifest's authors (default: author, below, else the app repository's first
+                             commit's author)
   words = "words.tsv"        the screen reader's words (fm1-reader), relative to APP_DIR
   font_full = ["L"]          font roles with lower case too (by default M and L have capitals and digits only)
   font_trim = true           each glyph stored as its lit box only (tools/gen_font.py FM1_FONT_TRIM): the same
@@ -204,7 +206,28 @@ The second core's code that runs from RAM goes in section .c1_text: in .ram_text
 RAM code window), between _c1_start and _c1_end; the check that RAM code calls nothing in the flash leaves it out
 (core 1 runs only while core 0 waits for it in the audio interrupt, and core 0 turns the flash off only with
 interrupts off).
-Outputs in APP_DIR/build/: NAME.bin (app), loader/ota.bin (update loader), NAME.fwsc (package).
+The firmware described for firmware hubs (firmware.json, docs/FIRMWARE-JSON.md; tools/firmware_json.py): these keys, and
+the site's (tools/make_site.py). A key left out is left out of the file.
+  tagline = "..."            a line: what the firmware is ("A MIDI controller for the FM-1")
+  repo = "https://..."       its source
+  licence = "MPL-2.0"        its licence, an SPDX expression
+  credits = "..."            a sentence: what it is built from (the installer's footer too)
+  author = "Name"            who made it (else authors, above, joined)
+  description = "..."        one paragraph, at most 600 characters
+  tags = ["synth", "fm"]     what it is, from a fixed list (tools/firmware_json.py TAGS; the build refuses another)
+  install = "https://..."    the page that installs it
+  site = "https://..."       its site
+  title = "..."              the name people see, when it is not usb_manufacturer (Radio's is fm1-radio)
+  screenshot = "docs/img/x.png"  a picture for the hubs' cards: a square PNG, at least 240 x 240, at most 2 MiB,
+                             relative to the repository's root (the parent of an APP_DIR named app), / between
+                             folders, no ".."; the build checks it (a host simulator's screenshot fits as it is)
+The name is title (else usb_manufacturer, else app.h's APP_NAME), the id fm1.toml's name in lower case; the hardware's features
+are the parts this build has (printed as "parts"). A --release build of the firmware refuses without author (or
+authors), licence, tagline, description, tags, install, repo and a screenshot that passes the checks; any other
+build warns and writes the file without them.
+Outputs in APP_DIR/build/: NAME.bin (app), loader/ota.bin (update loader), NAME.fwsc (package), firmware.json
+(firmware-usb.json from --no-ble; every build writes it, --host, --web and --rfm1 too). An app in a firmware's
+repository (APP_DIR named app) also has the repository's firmware.json written, when it changes.
 
 The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it; on
 macOS (or with JIELI_DOCKER=1) each tool runs in a linux/amd64 container.
@@ -229,6 +252,7 @@ LAYOUT = {}                                       # the linked script's MEMORY r
 sys.path.insert(0, str(SRC / "tools"))
 import fm1pkg_make  # noqa: E402
 import boot_pack  # noqa: E402
+import firmware_json  # noqa: E402
 import lz4blk  # noqa: E402
 
 APP_XIP = 0x02000120                # app.bin offset 0 in the XIP map; the SPL jumps here
@@ -252,6 +276,7 @@ SDK_SHA256 = {
 
 PRODUCT = None                      # package identity (fm1.toml id_prefix; see main)
 VERSION = None                      # APP_VERSION for release builds (default: "DEV", device/unity.c)
+RELEASE = None                      # --release X.Y as given: the release's file names (NAME-X.Y.fwsc, NAME-X.Y.rfm1)
 BLE = False                         # fm1.toml ble = true, unless --no-ble
 OWN = False                         # with BLE: fm1.toml ble_stack = "own" (bt/, no JieLi library)
 WIFI = False                        # fm1.toml wifi = true
@@ -1473,7 +1498,8 @@ def build_rfm1():
     base_head = git("rev-parse", "HEAD", cwd=SRC)
     emver = subprocess.run(["emcc", "--version"], capture_output=True, text=True).stdout.splitlines()[0]
     emver = re.search(r"\) ([0-9][^ ]*)", emver)[1] if re.search(r"\) ([0-9][^ ]*)", emver) else emver
-    authors = CONF.get("authors") or [a for a in [git("log", "--reverse", "--format=%an", cwd=repo).split("\n")[0]] if a]
+    authors = CONF.get("authors") or ([CONF["author"]] if CONF.get("author") else None)
+    authors = authors or [a for a in [git("log", "--reverse", "--format=%an", cwd=repo).split("\n")[0]] if a]
     mem = int(CONF.get("rfm1_memory_mib", 8))
     if not 1 <= mem <= 32:
         raise SystemExit(f"fm1.toml rfm1_memory_mib {mem}: 1 .. 32")
@@ -1531,7 +1557,8 @@ def build_rfm1():
     manifest = {k: v for k, v in manifest.items() if v}
     import json
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
-    dst = out / f"{rid}-{version}.rfm1"
+    # a release's beside its package, named as it is (NAME-X.Y.rfm1); a dev build's in rfm1/ with the commit
+    dst = OUT / f"{STEM}-{RELEASE}.rfm1" if RELEASE else out / f"{rid}-{version}.rfm1"
     r = subprocess.run([sys.executable, str(SRC / "tools" / "rfm1_pack.py"), str(wasm), str(dst),
                         "--manifest", str(out / "manifest.json"), "--credits", str(out / "credits.txt"),
                         *[a for n, f in lic for a in ("--license", f"{n}={f}")]], capture_output=True, text=True)
@@ -1543,7 +1570,7 @@ def build_rfm1():
 
 
 def main():
-    global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, OWN, WIFI, CPU2, STEM
+    global PRODUCT, VERSION, RELEASE, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, OWN, WIFI, CPU2, STEM
     ap = argparse.ArgumentParser()
     ap.add_argument("app", type=Path, help="the app's directory (with fm1.toml)")
     ap.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity id_prefix + XXYYZZ, version string X.Y[.Z]")
@@ -1581,7 +1608,17 @@ def main():
             raise SystemExit(f"--release {a.release}: use X.Y[.Z][-suffix], up to two digits each")
         PRODUCT = prefix + "%02d%02d%02d" % (int(m[1]), int(m[2]), int(m[3] or 0))
         VERSION = a.release.upper()
+        RELEASE = a.release
         name = f"{STEM}-{a.release}.fwsc"
+    # a release package needs firmware.json's keys; the simulator, the emulator, the .rfm1 and dev builds only warn
+    firmware_json.require(CONF, bool(a.release) and not (a.host or a.web or a.rfm1), APP / "fm1.toml", APP)
+    touch = any(re.search(r"^#define APP_TOUCH\b", f.read_text(errors="ignore"), re.M) for f in APP.glob("*.h"))
+    words = firmware_json.words_published(APP / CONF.get("words", "words.tsv"))
+    have = firmware_json.parts(CONF, BLE, OWN, WIFI, CPU2, touch, words)
+    fw_json = firmware_json.dumps(firmware_json.make(CONF, NAME, firmware_json.display_name(CONF, APP), have,
+                                                     app_dir=APP))
+    for f in firmware_json.targets(APP, no_ble=bool(CONF.get("ble")) and not BLE):
+        firmware_json.write(f, fw_json)        # (docs/FIRMWARE-JSON.md; a file already so is left alone)
     if a.host or a.web or a.rfm1:
         generate()
         return build_host() if a.host else build_web() if a.web else build_rfm1()
@@ -1606,16 +1643,7 @@ def main():
         print("  FAIL ", e)
     if errors:
         raise SystemExit("build: checks failed")
-    def on(key, env, default):
-        v = os.environ.get(env)
-        return v == "1" if v in ("0", "1") else bool(CONF.get(key, default))
-    parts = [("Bluetooth MIDI", BLE), ("Bluetooth MIDI devices", BLE and bool(CONF.get("ble_central"))), ("WiFi", WIFI),
-             ("USB audio in", on("usb_audio_in", "FM1B_UAC", True)),
-             ("USB audio out", on("usb_audio_out", "FM1B_UAC_OUT", True) and on("usb_audio_in", "FM1B_UAC", True)),
-             ("screen mirroring", bool(CONF.get("mirror")) or os.environ.get("FM1B_MIRROR") == "1"), ("backup and restore", bool(CONF.get("backup")) and os.environ.get("FM1B_BACKUP") != "0"),
-             ("the second core", CPU2), ("USB MIDI host", on("usb_host", "FM1B_USB_HOST", False)),
-             ("velocity and pressure", any(re.search(r"^#define APP_TOUCH\b", f.read_text(errors="ignore"), re.M)
-                                            for f in APP.glob("*.h")))]
+    parts = [(label, have[f]) for f, label in firmware_json.FEATURES]
     print("parts    " + ", ".join(n for n, x in parts if x) + "  (not built in: " +
           (", ".join(n for n, x in parts if not x) or "none") + ")")
     pkg = fm1pkg_make.ufw(fm1pkg_make.flash_image(img, fm1pkg_make.KEY), ota, PRODUCT)
@@ -1628,6 +1656,7 @@ def main():
     print(f"loader   {LDR / 'ota.bin'}  {len(ota)} B")
     print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}")
     print(f"build    {build_id():08X}  (FM1B_BUILD: the build a crash record names, fm1_remote.py crashes)")
+    print(f"about    {firmware_json.targets(APP, no_ble=bool(CONF.get('ble')) and not BLE)[0]}  (for firmware hubs)")
     return 0
 
 
