@@ -7,3 +7,4 @@ usb_product = "SXTEST FM-1"
 o2 = []
 words = "words.tsv"
 licence = "MPL-2.0"
+emu = ["midi"]                 # the browser emulator's SysEx with the app comes with its part "midi"
