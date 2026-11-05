@@ -78,8 +78,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   mirror = true              the screen and panel mirrored over USB (FM1B_MIRROR: device/mirror.c; web/mirror/,
                              tools/fm1_mirror.py), the panel played from the host; FM1B_MIRROR=1 in the environment
                              builds it in whatever fm1.toml says (an app's demo build), FM1B_POOL_SPARE=N the
-                             spare the build insists on (8192 B of the SRAM, device/app.ld; of the pool with WiFi;
-                             a demo build may spend it)
+                             spare the build insists on (8192 B of the pool; of the SRAM with ram_layout =
+                             "packed"; 2048 B of the pool with WiFi; a demo build may spend it)
   msc = true                 disk mode: the FM-1 as a USB drive of the app's blocks (FM1B_MSC: device/msc.c, plat_disk_* in
                              plat.h; felucca-bsp usb.c FELUCCA_MSC), no USB MIDI or audio meanwhile
   backup = true              backup and restore of the app's saved objects over USB (FM1B_BACKUP: device/backup.c;
@@ -104,10 +104,14 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              kept are the flash's data cache: fewer of them make big flash reads slower (7 as RAM: 57x
                              over 16 KiB on an FM-1; 2 in daily use there). The host: a buffer of that size stands in.
                              An app's own objects in section .cache_ram come first (the build checks they fit)
+  ram_layout = "packed"      one SRAM budget (device/app_packed.ld): the RAM code, .data/.bss and the pool packed from
+                             the SRAM's bottom up to the stacks, 8 KiB kept spare, the rest free above _pool_end (the
+                             default, "fixed", is device/app.ld: RAM code 32 KiB, .data/.bss 96 KiB, pool 336 KiB, each
+                             region checked on its own). Not with wifi_stack = "jieli" (app_wifi.ld's fixed map)
   main_stack = 9216          the main loop's stack (crt0's sp), bytes above its 256-byte guard band, a multiple of 256,
   irq_stack = 6400           2048..24320 (default 24320); the interrupts' (ssp), the same, 2048..7936 (default 7936):
-                             device/app.ld's SRAM ends that much lower or higher (its free RAM, an app's arena), the
-                             reset-kept record and the stacks' tops stay. Not with wifi_stack = "jieli" (app_wifi.ld)
+                             device/app_packed.ld's SRAM ends that much lower or higher (its free RAM, an app's arena),
+                             the reset-kept record and the stacks' tops stay. Only with ram_layout = "packed"
   stack_check = true         the stacks' static worst (tools/stack_depth.py: the deepest call path's frames, the
                              interrupts nested at their worst, the fault path on top) checked against those: a stack
                              whose worst is over its size fails the build; one within it but under its margin (25 % or
@@ -780,7 +784,7 @@ def build_app():
     lto = ["--plugin", "/opt/jieli/pi32v2/bin/LLVMgold.so" if use_docker() else str(toolchain() / "pi32v2/bin/LLVMgold.so"),
            f"--plugin-opt=mcpu={CPU}", "--plugin-opt=-pi32v2-large-program=true"] if jieli else []
     global LAYOUT
-    ld = SRC / "device" / ("app_wifi.ld" if WIFI else "app.ld")
+    ld = SRC / "device" / ("app_wifi.ld" if WIFI else "app_packed.ld" if ram_packed() else "app.ld")
     if not WIFI and stacks() != STACKS:          # (other stack sizes: the SRAM's end and the bands moved)
         ld = stack_script(ld)
     LAYOUT = memory_regions(ld.read_text())
@@ -832,6 +836,17 @@ STACKS = (24320, 7936)          # device/app.ld's main and interrupt stacks, eac
 STACK_TOP = 0x01C7C000          # (the interrupts' top: the reset-kept record, NOINIT, is above it)
 
 
+def ram_packed():
+    """fm1.toml ram_layout: "fixed" (the default: device/app.ld's three regions) or "packed" (device/app_packed.ld,
+    one SRAM budget) -> True for packed"""
+    v = CONF.get("ram_layout", "fixed")
+    if v not in ("fixed", "packed"):
+        raise SystemExit(f"build: fm1.toml ram_layout = {v!r}: \"fixed\" or \"packed\"")
+    if v == "packed" and WIFI:
+        raise SystemExit("build: fm1.toml ram_layout = \"packed\": not with JieLi's Wi-Fi (app_wifi.ld's fixed map)")
+    return v == "packed"
+
+
 def stacks():
     """fm1.toml main_stack / irq_stack -> (main, irq) bytes"""
     out = []
@@ -842,11 +857,13 @@ def stacks():
         out.append(n)
     if WIFI and tuple(out) != STACKS:
         raise SystemExit("build: fm1.toml main_stack / irq_stack: not with JieLi's Wi-Fi (app_wifi.ld's fixed map)")
+    if tuple(out) != STACKS and not ram_packed():
+        raise SystemExit("build: fm1.toml main_stack / irq_stack: only with ram_layout = \"packed\" (device/app_packed.ld)")
     return tuple(out)
 
 
 def stack_script(ld):
-    """-> OUT/app.ld with the stacks of fm1.toml (stacks()): each above its guard band, under the interrupts' top
+    """-> OUT/app_packed.ld with the stacks of fm1.toml (stacks()): each above its guard band, under the interrupts' top
     (STACK_TOP); SRAM up to the first band (the ASSERT keeps them together)"""
     main, irq = stacks()
     g1 = STACK_TOP - irq - 256
@@ -1021,7 +1038,7 @@ def check(img, syms, dis, rt):
                      f"{cr_ways * 4096 - cr_used} B for the app (plat_cache_ram, after its test at the start)")
     if os.environ.get("FM1B_POOL_SPARE", "").isdigit():   # an app's own build for itself (a demo build with mirror)
         spare = int(os.environ["FM1B_POOL_SPARE"])
-    if "SRAM" in LAYOUT:                          # device/app.ld: one packed region, one budget
+    if "SRAM" in LAYOUT:                          # device/app_packed.ld: one packed region, one budget
         org, size = LAYOUT["SRAM"]
         used = sym("_pool_end") - org
         notes.append(f"image {len(img)} B; SRAM {used} B of {size}: RAM code {rt} B, .data+.bss {bss} B, pool {pool} B; "
@@ -1032,7 +1049,7 @@ def check(img, syms, dis, rt):
             errors += boot_pack.check_decoder(syms, dis, APP_XIP, APP_XIP + APP_SLOT)
             notes.append(f"boot_pack: .ram_text + .data {BOOT_PACKED[0]} B stored as {BOOT_PACKED[1]} B (LZMA, unpacked at boot)")
         return errors, notes
-    (_, rt_max), (_, ram), (_, pool_max) = LAYOUT["RAMTEXT"], LAYOUT["RAM"], LAYOUT["POOL"]   # (app_wifi.ld)
+    (_, rt_max), (_, ram), (_, pool_max) = LAYOUT["RAMTEXT"], LAYOUT["RAM"], LAYOUT["POOL"]   # (app.ld, app_wifi.ld)
     notes.append(f"image {len(img)} B; RAM code .ram_text {rt} B of {rt_max}; RAM .data+.bss {bss} B of {ram}; "
                  f"pool {pool} B of {pool_max}")
     if BOOT_PACKED:                               # the boot decoder runs from the flash alone (tools/boot_pack.py)

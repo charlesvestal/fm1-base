@@ -18,7 +18,8 @@
 #endif
 
 /* PLAT_RAM_CODE: a function that runs from RAM (section .app_ram, copied at boot with .ram_text, at the start of
- * the packed SRAM, device/app.ld: as big as the SRAM's one budget lets it; WiFi's RAMTEXT 24 KiB), out of the way
+ * the RAMTEXT region they share: 32 KiB, 24 KiB with WiFi; with fm1.toml ram_layout = "packed", device/app_packed.ld,
+ * at the start of the packed SRAM, as big as its one budget lets it), out of the way
  * of the XIP cache's misses: an audio path. It may call
  * only RAM code (other PLAT_RAM_CODE functions, felucca-bsp's RAM functions) and nothing through a pointer; the build
  * checks it over the disassembly, to any depth (tools/ramcode.py; fm1.toml ram_code_allow names the exceptions an app

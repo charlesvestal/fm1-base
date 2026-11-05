@@ -36,7 +36,8 @@ run lock sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/lock_tes
 # shim_irq_save / shim_irq_restore (the radio's) over a simulated interrupt enable: inside an interrupt they leave
 # interrupts off
 run shim_lock sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/shim_lock_test tests/shim_lock_test.c && $OUT/shim_lock_test"
-# the packed SRAM (device/app.ld) as tools/build.py reads it: one region, RAM code first, then data, bss, the pool
+# the RAM layouts as tools/build.py reads them: device/app.ld's fixed regions (the default), app_packed.ld's one
+# region (ram_layout = "packed"), RAM code first, then data, bss, the pool
 run layout "$PY" tests/layout_test.py
 # the cache RAM (felucca-bsp's chip/fm1_cache_ram.h, fm1.toml cache_ram_ways) on a model of the cache's registers, tags and
 # ways: 2, 4 and 7 ways set, tested and zeroed; 0 and 8 nothing; a cache that never idles, masks not taken, a stuck bit

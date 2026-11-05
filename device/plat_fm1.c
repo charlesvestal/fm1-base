@@ -406,7 +406,8 @@ uint32_t plat_core(void) { return fm1_cnum(); }
  * holds (device/app.ld), 0 without the test passed */
 const struct plat_cache_ram *plat_cache_ram(void)
 {
-    static struct plat_cache_ram r;
+    /* (its own section: dropped with the function when no one calls it, as -ffunction-sections does for code) */
+    static struct plat_cache_ram r __attribute__((section(".bss.plat_cache_ram")));
 #if FM1B_CACHE_RAM
     extern uint8_t _cr_start[], _cr_end[];
     uint32_t all = fm1_cache_ram_bytes(), used = (uint32_t)(_cr_end - _cr_start);

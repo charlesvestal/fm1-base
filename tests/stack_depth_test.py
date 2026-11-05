@@ -171,23 +171,32 @@ check("a callee not followed (inttoptr): every function whose address is taken, 
 build.OUT = Path(__file__).resolve().parent / "build" / "stack_depth_test"
 build.OUT.mkdir(parents=True, exist_ok=True)
 build.WIFI = False
-build.CONF = {"main_stack": 6656, "irq_stack": 6400}
-out = build.stack_script(ROOT / "device" / "app.ld").read_text()
+build.CONF = {"main_stack": 6656, "irq_stack": 6400, "ram_layout": "packed"}
+out = build.stack_script(ROOT / "device" / "app_packed.ld").read_text()
 g1 = 0x01C7C000 - 6400 - 256
 g0 = g1 - 6656 - 256
 check("main_stack 6656 / irq_stack 6400: the bands and tops moved, SRAM up to the first band",
       f"_guard0 = {g0:#010x}; _ustack_lo = {g0 + 256:#010x}; _ustack_top = {g1:#010x};" in out
       and f"_guard1 = {g1:#010x}; _sstack_lo = {g1 + 256:#010x}; _sstack_top = 0x01c7c000;" in out
       and f"LENGTH = {g0 - 0x01C00000:#x}" in out and build.memory_regions(out)["SRAM"] == (0x01C00000, g0 - 0x01C00000))
-for bad in ({"main_stack": 1000}, {"irq_stack": 8192}, {"main_stack": 6600}):
+for bad in ({"main_stack": 1000}, {"irq_stack": 8192}, {"main_stack": 6600},
+            {"main_stack": 6656}, {"main_stack": 6656, "ram_layout": "fixed"}):
     build.CONF = bad
     try:
         build.stacks()
         ok = False
     except SystemExit:
         ok = True
-    check(f"fm1.toml {bad}: refused (a multiple of 256, within the defaults)", ok)
+    check(f"fm1.toml {bad}: refused (a multiple of 256, within the defaults; other sizes only on the packed SRAM)", ok)
+build.CONF = {"ram_layout": "tight"}
+try:
+    build.ram_packed()
+    ok = False
+except SystemExit:
+    ok = True
+check("fm1.toml ram_layout = \"tight\": refused (\"fixed\" or \"packed\")", ok)
 build.CONF = {}
+check("no ram_layout: the fixed regions (device/app.ld)", build.ram_packed() is False)
 check("no main_stack / irq_stack: app.ld's own (24,320 and 7,936)", build.stacks() == build.STACKS == (24320, 7936))
 check("the margin: 25 % or 1 KiB, the larger (8,000 B -> 10,000; 2,000 -> 3,024)",
       sd.need(8000) == 10000 and sd.need(2000) == 3024)
