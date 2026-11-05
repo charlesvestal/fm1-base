@@ -7,6 +7,7 @@ o2 = []
 ble = true
 ble_stack = "own"
 bt_audio = true
+bt_audio_sim = true            # the host simulator on fm1-base's stand-in for plat_bta_*
 bt_audio_mem = "app"
 licence = "MPL-2.0"
 words = "words.tsv"
