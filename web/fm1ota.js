@@ -43,8 +43,13 @@ const OPEN_LOADER_RE = /^ota-FM1C_[0-9a-f]+$/;
 // (felucca-bsp chip/ota.c: a well-made writer, a bootable boot area), not a list of known files
 const IS_STOCK = (product) => /^FM-1_0\d\d$/.test(product) && product !== "FM-1_099";
 
+// the update loader of M-VAVE's own firmware: the stock one ("ota-FM-1_0" and two digits) and the Open firmware's (OPEN_LOADER_RE).
+// Their layout of the image may differ from the one this package was made for, so a device found waiting in one of them is
+// written only a package of M-VAVE's own firmware (IS_STOCK: the return to the stock firmware), never another firmware's
+export const IS_MVAVE_LOADER = (id) => /^ota-FM-1_0\d\d$/i.test(id.text) || OPEN_LOADER_RE.test(id.text);
+
 // errors carry a code the pages translate: notfound, model, stopped, noloader, lost, noreturn,
-// mismatch (detail: the identity the device reports), badreq
+// mismatch (detail: the identity the device reports), badreq, foreign (detail: the loader's identity)
 function fail(code, msg, detail = "") { const e = new Error(msg); e.code = code; e.detail = detail; return e; }
 
 export function pack7(data) {
@@ -435,12 +440,17 @@ export class Updater {
     return s2;
   }
 
-  // resume: the device is already in update mode (loader) -> true when the write finished. With the product, the
+  // resume: the device is already in update mode (loader) -> true when the write finished. With the product, a loader of
+  // M-VAVE's own firmware is refused unless the product is M-VAVE's too (foreign), and the
   // FM-1 has to come back running it (as at the end of install)
   async resume(image, onStep, product) {
     const step = onStep || (() => {});
     const ota = await this.find(IS_OTA);
     if (!ota) return false;
+    if (product && !IS_STOCK(product) && IS_MVAVE_LOADER(ota.id)) {
+      ota.link.close();
+      throw fail("foreign", `the FM-1 is in the update mode of M-VAVE's own firmware (${ota.id.text}) and this package is not for it: nothing was written`, ota.id.text);
+    }
     this.watch();
     try {
       if (!(await this.write(ota, image, step)).finished) return false;

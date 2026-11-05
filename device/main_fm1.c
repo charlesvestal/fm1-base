@@ -102,15 +102,33 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
     fm1b_dbg.in_audio = 0;
 }
 
+#ifndef FM1B_AUDIO_ASIDE
+#define FM1B_AUDIO_ASIDE 1
+#endif
+#if FM1B_AUDIO_ASIDE
+#include "audio_commit.c"                           /* the half rendered aside, copied in while its half is free;
+                                                     * FM1B_AUDIO_ASIDE 0: straight into the DMA's half, as before */
+#endif
+
 void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_isr.S) */
 {
     uint8_t p = fm1_audio_pending();
     fm1_audio_ack_aux(p);
     if (p & FM1_AUDIO_HALF) {
         uint32_t half = fm1_audio_free_half();
+#if FM1B_AUDIO_ASIDE
+        uint32_t ok;
+        fm1_audio_ack_half();                       /* (now: a new pending after the render = the DMA moved on) */
+        render_block(aside);
+        ok = audio_commit(half);
+        if (fm1_audio_pending() & FM1_AUDIO_HALF)
+            fm1_audio_ack_half();                   /* (the half missed: not rendered again) */
+        if (!ok) {
+#else
         render_block(&abuf[half * HALF_WORDS]);
         fm1_audio_ack_half();
         if (fm1_audio_free_half() != half) {
+#endif
             fm1b_dbg.late++;                         /* the DMA moved on while we rendered */
             audio_xruns++;
         }
@@ -231,7 +249,8 @@ static char *log_dec(char *b, uint32_t v)            /* v in decimal at b; the e
 /* a readout for development over USB-MIDI: F0 7D 4C 47 F7 ("LG") asks; the answer is one frame per line,
  * F0 7D 4C 47 <ASCII> F7: the last crash (count, vector, pc, rets, sp, uptime), the supplies' registers (rails), the
  * power setup's and the clock's as the boot loader left them, then
- * Bluetooth's log, the oldest first (it survives a reset) */
+ * Bluetooth's log, the oldest first (it survives a reset), the cache RAM's test (FM1B_CACHE_RAM) and the app's own
+ * lines (APP_LOG); "end" last */
 static void log_line_send(const char *t)
 {
     uint8_t f[48];
@@ -509,6 +528,52 @@ static int log_frame(const uint8_t *p, uint32_t n)
         bj_gap_max = bj_gap_zero = bj_ticks = bj_rel_max = 0;
     }
 #endif
+#if FM1B_CACHE_RAM
+    {   /* the cache RAM (plat_cache_ram): "cache ram ways 2 st 1 free 00002000 at 01F28000" (st 1 ready, 2 the cache
+         * never idled, 3 the masks not taken, 4 the test failed: put back, free 0), then the masks after (a set bit: a
+         * way kept as a cache) and the first failing address */
+        const struct plat_cache_ram *c = plat_cache_ram();
+        const char *l;
+        q = b;
+        for (l = "cache ram ways "; *l;)
+            *q++ = *l++;
+        *q++ = (char)('0' + c->ways % 10u);
+        for (l = " st "; *l;)
+            *q++ = *l++;
+        *q++ = (char)('0' + c->status % 10u);
+        for (l = " free "; *l;)
+            *q++ = *l++;
+        hexs(q, c->bytes);
+        q += 8;
+        *q = 0;
+        log_line_send(b);
+        q = b;
+        for (l = "cache at "; *l;)
+            *q++ = *l++;
+        hexs(q, (uint32_t)(uintptr_t)c->base);
+        q += 8;
+        for (l = " bad "; *l;)
+            *q++ = *l++;
+        hexs(q, c->bad_at);
+        q += 8;
+        *q = 0;
+        log_line_send(b);
+        q = b;
+        for (l = "cache dway "; *l;)
+            *q++ = *l++;
+        hexs(q, c->dway);
+        q += 8;
+        for (l = " iway "; *l;)
+            *q++ = *l++;
+        hexs(q, c->iway);
+        q += 8;
+        *q = 0;
+        log_line_send(b);
+    }
+#endif
+#ifdef APP_LOG
+    app_log(log_line_send);                          /* (the app's own lines) */
+#endif
     log_line_send("end");
     return 1;
 }
@@ -740,6 +805,10 @@ static void usb_cmd(uint32_t d)
         return;
     }
 #endif
+#if FM1B_COMPANION
+    if (comp_cmd(ota_dec, d))
+        return;                                     /* the companion services (companion.c) */
+#endif
 #ifdef APP_USB_CMD
     app_usb_cmd(ota_dec, d);
     ota_try_ms = 5000u;                             /* (the app's patience, plat_host_patience, back to the default) */
@@ -772,6 +841,19 @@ static void fm1_fault(const fm1_crash_t *c)
         ;
     fm1_reboot();
 }
+
+#ifdef APP_RESTART                                  /* (built for an app that asks for it: another's image as it was) */
+void plat_restart(void)
+{
+    app_panic();
+    fm1_audio_stop();
+    usb_detach();
+    fm1_delay_ms(30);
+    bootguard.pending = 0;                          /* intentional reset: not a failed boot */
+    radio_clean_exit();
+    fm1_reboot();
+}
+#endif
 
 static void enter_uboot(const char *why)
 {
@@ -1053,6 +1135,9 @@ static void fm1_main(void)
 #if FM1B_MIRROR
         mirror_step();                              /* the screen mirrored: input reports, redraws, timeouts */
 #endif
+#if FM1B_COMPANION
+        comp_step();                                /* the companion: what a watched parameter did */
+#endif
         if (usb.ota_req) {
             usb.ota_req = 0;
             app_panic();                            /* silence: the update rewrites the flash */
@@ -1142,6 +1227,11 @@ void fm1_cstart(void)
     }
     for (d = _pool_start; d < _pool_end; d++)
         *d = 0;
+#if FM1B_CACHE_RAM
+    fm1_cache_ram_init(FM1B_CACHE_RAM);             /* data-cache ways as RAM (felucca-bsp's fm1_cache_ram.h): its RAM
+                                                     * code is in place now, the interrupts still off, the second core
+                                                     * held; tested before anything uses it (plat_cache_ram) */
+#endif
     fm1_mailbox_clear();
     fm1_guard_enable(FM1_GUARD_STACK | FM1_GUARD_WRITE | FM1_GUARD_BUS | FM1_GUARD_PC);
     safe_mode = (uint8_t)(p3 >> 8);

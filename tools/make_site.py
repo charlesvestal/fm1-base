@@ -12,6 +12,7 @@
   emu/                        the firmware in the browser (APP_DIR/build/emu: tools/build.py APP_DIR --web)
   words/                      the screen reader's words files (APP_DIR/web/words), every one ever made
   mirror/index.html           the screen mirror (web/mirror/index.html, with fm1ports.js inlined), with mirror = true
+  companion/                  the companion page (web/companion/: index.html, companion.js), with companion = true
   backup/index.html           backup and restore in the browser (web/backup/index.html, with fm1ports.js inlined), with
                               backup = true: its magic and version from APP_DIR/app.h (APP_BACKUP_MAGIC, APP_BACKUP_VERSION)
   firmware/NAME-VERSION.fwsc  the package the installer writes; also the download
@@ -86,7 +87,8 @@ def backup_values(app, conf):
 
 
 def tool_pages(app, conf=None, values=None):
-    """{"mirror/index.html": html, "backup/index.html": html}, as fm1.toml asks (mirror, backup), filled in; values:
+    """{"mirror/index.html": html, "backup/index.html": html, "companion/...": ...}, as fm1.toml asks (mirror, backup,
+    companion), filled in; values:
     the firmware's own, over the defaults (EXTRA: its notes; EXTRAS_JS: its own sections, web/backup/index.html)"""
     app = Path(app).resolve()
     conf = conf or read_conf(app / "fm1.toml")
@@ -99,6 +101,9 @@ def tool_pages(app, conf=None, values=None):
         out["backup/index.html"] = fill((SRC / "web" / "backup" / "index.html").read_text(encoding="utf-8"),
                                         dict(backup_values(app, conf), PORTS_JS=ports_js(), **(values or {})),
                                         "web/backup")
+    if conf.get("companion"):                     # (generic: everything it shows comes from the FM-1)
+        for f in ("index.html", "companion.js"):
+            out[f"companion/{f}"] = (SRC / "web" / "companion" / f).read_text(encoding="utf-8")
     return out
 
 

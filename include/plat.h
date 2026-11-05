@@ -17,6 +17,32 @@
 #define PLAT_POOL __attribute__((section(".pool")))
 #endif
 
+/* PLAT_RAM_CODE: a function that runs from RAM (section .app_ram, copied at boot with .ram_text, at the start of
+ * the packed SRAM, device/app.ld: as big as the SRAM's one budget lets it; WiFi's RAMTEXT 24 KiB), out of the way
+ * of the XIP cache's misses: an audio path. It may call
+ * only RAM code (other PLAT_RAM_CODE functions, felucca-bsp's RAM functions) and nothing through a pointer; the build
+ * checks it over the disassembly, to any depth (tools/ramcode.py; fm1.toml ram_code_allow names the exceptions an app
+ * vouches for). Not for code that runs with the flash off: it may read constants in the flash. XIP code it may not
+ * call: the compiler's own calls (memcpy for a struct copy, a 64-bit divide), and a static inline helper the compiler
+ * keeps out of line (at -Os it often does: fastmath.h's fm_exp2f), whose one copy is in XIP; a helper RAM code uses
+ * is always_inline, or PLAT_RAM_CODE itself.
+ * PLAT_FAR(fn): fn through a pointer the compiler cannot turn back into a direct call. RAM code and XIP code are
+ * mostly farther apart than a direct call reaches (+-4 MiB), so XIP code calls RAM code this way (the linker refuses
+ * a direct call that does not reach: "relocation truncated to fit"); a call from RAM code into XIP this way is one
+ * the check refuses, unless allowed. The host: plain calls. */
+#ifdef PLAT_HOST
+#define PLAT_RAM_CODE
+#define PLAT_FAR(fn) (&(fn))
+#else
+#define PLAT_RAM_CODE __attribute__((section(".app_ram")))
+static inline __attribute__((always_inline)) void *plat_far_ptr(void *fn)
+{
+    void *volatile held = fn;           /* read back from memory: the compiler no longer knows the target */
+    return held;
+}
+#define PLAT_FAR(fn) ((__typeof__(&(fn)))plat_far_ptr((void *)&(fn)))
+#endif
+
 /* panel controls, by printed label (Felucca's panel.c map turns these into matrix ids; Felucca
  * calls the second button SCL, the panel prints SEL) */
 enum { B_FX, B_SEL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B_PLAY, B_REC,
@@ -37,6 +63,10 @@ int32_t plat_enc(int role);            /* detents since the last call, + = clock
 uint32_t plat_master(void);            /* MASTER pot's position, 0..4096 (the render gets it as a gain: APP_GAIN) */
 int plat_battery(void);                /* the battery: 0 (empty) .. 3 (full), 4 a USB host powers the FM-1, -1 not read
                                         * yet (the keys' readings own the converter: APP_KEY_SENSE) */
+int32_t plat_battery_raw(void);        /* the reading plat_battery's bars come from: ADC channel 3 (the battery's divider),
+                                        * the main loop's slow average, in the converter's counts (the bars' thresholds
+                                        * 531 / 561 / 591); 0 = not read yet. Whether USB powers the FM-1 or not. For an
+                                        * app that shows the volts itself; built for an app with APP_BATTERY_RAW (below) */
 
 /* lights: bright buttons and keys, and dim ones (a short pulse each scan frame; a bright bit wins); glow 0 the dim
  * ones off, 1 low, 2 high. Bit NB in buttons / dim_buttons is PLAY's second, green LED */
@@ -45,6 +75,12 @@ void plat_lights(uint32_t buttons, uint32_t keys, uint32_t dim_buttons, uint32_t
 /* a third level, between the glow and lit (~12 % of lit; ~8 % with glow 1): these buttons and keys, unless lit, until
  * the next call (0, 0: none). Call it after plat_lights each time the lights change */
 void plat_lights_mid(uint32_t buttons, uint32_t keys);
+/* the dim ones at any brightness, not the glow's two (an app with APP_DIM_LEVELS): ns is the pulse each scan frame, in
+ * nanoseconds (a lit LED is lit ~95 us a frame, plat_lights' glow 2 is 3,200 ns and glow 1 1,600 ns); the FM-1 takes
+ * 500 .. 4,000, a value outside it is clamped to it. 0 hands the dim ones back to plat_lights' glow. One pulse serves
+ * every dim LED (the buttons' glow and the keys': a scan frame has one), so it is the brightness of the whole dim layer;
+ * the half level of plat_lights_mid is not changed. The host simulator keeps it (expect dim_ns, and "leds" prints it) */
+void plat_dim_ns(uint32_t ns);
 /* the same, simpler: the lit buttons and keys, the unlit buttons glowing if plat_glow(1); PLAY lights green, red
  * while plat_play_red(1) */
 void plat_leds(uint32_t buttons, uint32_t keys);
@@ -178,6 +214,11 @@ int plat_net_task(void (*fn)(void *), void *arg, const char *name);   /* a task 
 uint32_t plat_lock(void);
 void plat_unlock(uint32_t f);
 void plat_yield(void);
+/* the FM-1 restarts, on purpose (an app's own restore done, a session that starts from a clean boot): the sound
+ * stopped, USB let go (the computer sees the cable out and in), not counted as a failed start (no safe mode), the
+ * crash record and .noinit kept. Main loop; it does not return (the host simulator: the restart at the end of the
+ * millisecond, a "reboot"). Built for an app whose app.h defines APP_RESTART */
+void plat_restart(void);
 void plat_log(const char *line);
 /* the flash's data area, 0x97000..0xDFFFF, for an app's own big data (a table it builds, samples): its store objects
  * live there too, at the offsets it gave them (APP_STORE_MAP), so it keeps to the rest. Main loop only; an erase or a
@@ -210,7 +251,28 @@ int plat_data_write(uint32_t off, const void *src, uint32_t n);   /* src in RAM;
  * bits taken one by one. Guaranteed on the device (felucca-bsp's fl_write: page program, no erase, no read-back) and
  * in the host simulator (the same AND). A 1 written over a 0 stays 0, and is not an error: plat_data_write does not
  * read back; an app that must know reads plat_data after. */
-void plat_sysex_send(const uint8_t *frame, uint32_t n);   /* a whole SysEx frame (F0 .. F7) out over USB */
+/* SysEx to the computer over USB (main loop): whole frames, F0 .. F7, into felucca-bsp's SysEx ring (sent before
+ * the notes), which the USB interrupt empties as the computer reads. plat_sysex_room, plat_sysex_queued and
+ * plat_usb_session (and plat_sysex_send's -1 without a computer) are built for an app with APP_SYSEX (below) */
+int plat_sysex_send(const uint8_t *frame, uint32_t n);   /* 0 = queued whole; -1 = not sent: no computer has set
+                                                         * the FM-1 up (plat_usb_session 0), or it stopped reading
+                                                         * (no room for 200 ms; what was queued goes out) */
+uint32_t plat_sysex_room(void);        /* the bytes of SysEx the ring takes now without a wait: 0 with no computer, the
+                                        * bus asleep, or a send under way. A send that must never wait checks it */
+uint32_t plat_sysex_queued(void);      /* the bytes still in the ring, not yet read (0: all out) */
+/* a frame streamed as it is made, for one too long to build first (a screen mirrored as it is drawn): begin, its bytes
+ * F0 .. F7 in any number of puts, end. The ring is the stream's from begin to end (no other SysEx, no note out in
+ * between: keep it short), each packet going in as soon as it is whole. A put waits while the ring is full and the
+ * computer reads; one that waited PLAT_SYSEX_STALL_MS without a packet read gives up: the frame is cut there (the
+ * computer drops a frame cut short at the next F0), the rest of its puts and its end return -1. Main loop; built for
+ * an app with APP_SYSEX */
+#define PLAT_SYSEX_STALL_MS 30u
+int plat_sysex_begin(void);            /* 0 = the stream is open; -1 = no computer, or a send under way */
+int plat_sysex_put(const uint8_t *p, uint32_t n);   /* 0 = in the ring (the last bytes held until more or end) */
+int plat_sysex_end(void);              /* the last packet out, the ring free again: 0 = the frame went whole */
+uint32_t plat_usb_session(void);       /* 0: no computer has set the FM-1 up; else a number that changes at every new
+                                        * one (a bus reset, the cable out and in): what an app keeps for a connection
+                                        * (a client's session) it drops when this changes */
 /* the resource region (fm1.toml resources = FILE, FM1B_RES; app.h APP_RES_BASE, APP_RES_SECTORS: device/res.c):
  * the file's bytes read in place, *len their count; 0 (and *len 0) while the FM-1 does not hold this build's (not
  * yet written after an update, torn, another build's): the app does without. The host writes it
@@ -265,8 +327,58 @@ int plat_store_room(void);
  * data area (0x97000..0xDFFFF) or Felucca's settings sector pair at 0xFC000. An object's number is written in its
  * record, so an app keeps its numbering from one release to the next. */
 
+/* The companion's files (fm1.toml companion = true, app.h APP_FILES: docs/COMPANION.md): what app_file says of file i.
+ * kind PLAT_FK_*, flags PLAT_FF_* (PLAYING: written and deleted while the app is busy too); size its bytes now (0:
+ * empty), room the most it takes; name unique among the app's files (31 characters at most) */
+enum { PLAT_FK_OTHER, PLAT_FK_PROJECT, PLAT_FK_PRESET, PLAT_FK_SAMPLE, PLAT_FK_BANK, PLAT_FK_PATTERN, PLAT_FK_SETTINGS,
+       PLAT_FK_TEXT, PLAT_FK_LOG };
+#define PLAT_FF_READ 1u
+#define PLAT_FF_WRITE 2u
+#define PLAT_FF_DELETE 4u
+#define PLAT_FF_PLAYING 8u
+typedef struct {
+    const char *name;
+    uint8_t kind, flags;
+    uint32_t size, room;
+} plat_file_info_t;
+/* A file kept in the data area (plat_data's windows) as two copies, A at a and B at b, n bytes each (whole 4 KiB
+ * sectors): the current one is the newer whose head (its first PLAT_FILE_HEAD bytes: the size, the data's CRC-32, a
+ * sequence number) is whole; a write goes to the other, its sectors erased as the data reaches them, its head written
+ * last after the data was read back and checked: a power cut leaves the old one current. room n - PLAT_FILE_HEAD. One
+ * write at a time (begin .. commit); main loop only (plat_data_*'s rules: the sound stops for each erase) */
+#define PLAT_FILE_HEAD 32u
+typedef struct {
+    uint32_t a, b, n;
+} plat_file_t;
+int plat_file_size(const plat_file_t *f);                      /* the current one's bytes; -1 none */
+const uint8_t *plat_file_data(const plat_file_t *f);           /* read in place; 0 none */
+int plat_file_read(const plat_file_t *f, uint32_t off, void *dst, uint32_t n);   /* 0 = read */
+int plat_file_begin(const plat_file_t *f, uint32_t size);     /* a new one of size bytes: 0 = ready */
+int plat_file_write(const plat_file_t *f, uint32_t off, const void *src, uint32_t n);   /* in order, src in RAM */
+int plat_file_commit(const plat_file_t *f, uint32_t size, uint32_t crc);   /* checked, current: 0 */
+int plat_file_delete(const plat_file_t *f);                    /* 0 = none now */
+
+/* The companion's parameters (fm1.toml companion = true, app.h APP_PARAMS: docs/COMPANION.md): what app_param says of
+ * parameter i. id the app's own (kept from one release to the next); type PLAT_PT_*: a number min .. max, or one of
+ * labels (max - min + 1 of them, for min .. max); unit (0: none) and group (an index into app_param_group's) for a page;
+ * flags PLAT_PA_READONLY: shown, never set */
+enum { PLAT_PT_NUMBER, PLAT_PT_ENUM };
+#define PLAT_PA_READONLY 1u
+typedef struct {
+    uint16_t id;
+    uint8_t type, group, flags;
+    int32_t min, max, def;
+    const char *name, *unit;
+    const char *const *labels;
+} plat_param_t;
+
 /* audio load in % of the render budget, and xruns since boot (device: from the ISR) */
 uint32_t plat_cpu_pct(void);
+uint32_t plat_cpu_khz(void);           /* the CPU's clock, kHz: 360000 when its registers hold the stock set-up (M-VAVE's
+                                        * 360 MHz, which the start sets whichever boot loader ran: fm1_clock.h), 0 when
+                                        * not (unknown: the start could not set it) and on the host. For an app that
+                                        * turns the render's microseconds into instructions (a CPU guard's cost model);
+                                        * built for an app with APP_CPU_KHZ (below) */
 uint32_t plat_xruns(void);
 
 /* a free-running count of PLAT_TICKS_PER_US ticks a microsecond, for timing spans shorter than plat_ms can: a part of
@@ -319,7 +431,30 @@ int plat_cpu2_gave_up(void);           /* why it is off: 0 no, 1 it misread a jo
                                         * faulted, 5 it did not answer at its start */
 uint32_t plat_cpu2_bad(void);          /* the jobs it misread */
 int plat_cpu2_barred(void);            /* 1: one core until power-off (given up, or the first core crashed beside it) */
-uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B) has gone, in bytes */
+uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B; fm1.toml cpu2_stack) has gone, in bytes */
+/* which core runs the caller: 0 the first, 1 the second (a job plat_cpu2_run handed it). For state a job keeps per core
+ * (a scratch buffer each core renders into). No lock, no state: any core, any context; from code that runs from RAM
+ * through a pointer, as any flash function. Device: the core's number register (felucca-bsp's fm1_cnum); host: 1
+ * while the simulated second core runs a job (an app with APP_HOST_CPU2 has its own) */
+uint32_t plat_core(void);
+/* Cache RAM (fm1.toml cache_ram_ways = 2, 4 or 7: FM1B_CACHE_RAM; felucca-bsp's chip/fm1_cache_ram.h): that many of the
+ * data cache's 8 ways of 4 KiB used as RAM at 0x01F28000, set and tested at the start before anything else runs; a
+ * failed test puts the cache back and gives 0 bytes. Objects the app places there itself (section .cache_ram, NOLOAD:
+ * zeroed by the test, never RAM after a failure) come first; base is what is left after them, for the app's own use
+ * (main loop memory: whether the second core and DMA read these ways has not been measured, so nothing they read goes
+ * there). The flash's data goes through the ways kept as a cache: fewer of them make big reads from the flash slower
+ * (Optimist's FM-1, 7 ways as RAM: reads over 16 KiB 57x slower; 2 ways in daily use for days). Host: a buffer of the
+ * same size stands in; FM1B_CACHE_RAM_FAIL=1 in the environment: its test failed */
+enum { PLAT_CR_OFF, PLAT_CR_OK, PLAT_CR_BUSY, PLAT_CR_REG, PLAT_CR_BAD };   /* not built / ready / the cache never idled /
+                                                                          * the masks not taken / the test failed */
+struct plat_cache_ram {
+    uint8_t *base;                     /* the free part's start, 0: none */
+    uint32_t bytes;                    /* its bytes (the ways less the .cache_ram objects), 0: none */
+    uint32_t ways, status;             /* the ways asked for (fm1.toml), PLAT_CR_* */
+    uint32_t dway, iway, bad_at;       /* the data and instruction way masks after, the first failing address */
+};
+const struct plat_cache_ram *plat_cache_ram(void);
+
 
 /* the app's optional hooks (app.h defines the macro when it has the function):
  *   APP_TICK        void app_tick(void)           1 kHz, in the timer interrupt (a clock, a sequencer)
@@ -329,6 +464,9 @@ uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B) has gone, 
  *   APP_OVERLOAD    void app_overload(void)       the render took over 90 % of its time (shed voices)
  *   APP_SPLASH      void app_splash(void)         the first screen at boot, instead of the name
  *   APP_GAIN(m)     the render's gain from MASTER's position m (0..4096; default the square, m * m >> 12)
+ *   APP_BATTERY_RAW (no function) plat_battery_raw is built (the battery's reading, for an app's own volts)
+ *   APP_CPU_KHZ     (no function) plat_cpu_khz is built (the CPU's clock)
+ *   APP_DIM_LEVELS  (no function) plat_dim_ns is built (the dim lights at any of many brightnesses)
  *   APP_QUIET       void app_quiet(int32_t *lr, uint32_t n)   the render while the flash must not be read (the
  *                   radio's first second, FM1B_BLE): keep time without sound (default: silence)
  *   APP_KEY_SENSE   void app_key_sample(uint32_t key, uint32_t v, uint32_t ticks, int driven) (rows PA7 / PA8),
@@ -337,6 +475,9 @@ uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B) has gone, 
  *                   from the scan's interrupt
  *   APP_SYSEX       int app_sysex(const uint8_t *p, uint32_t n)   a SysEx frame from USB the platform does not take
  *                   (p: the bytes between F0 and F7); 1 = the app's. Its answers: plat_sysex_send. Main loop
+ *   APP_SYSEX_BYTE  void app_sysex_byte(uint8_t b)   every byte of a SysEx from USB, F0 and F7 too (realtime bytes
+ *                   left out; another status inside ends the frame, unseen here), as it comes: an app's own frames longer
+ *                   than APP_SYSEX's (640 bytes between F0 and F7; a DX7 bank is 4104). In the USB interrupt: keep it short
  *   APP_USB_CMD     void app_usb_cmd(const uint8_t *d, uint32_t n)   a frame in the update's framing (above). Main loop
  *   APP_REDRAW      void app_redraw(void)        draw the whole screen again at the next frame (the mirror lost a part)
  *   APP_MIRROR_TEST int app_mirror_test(int on)  the mirror's remote asks for a test session (on 1, off 0): 1 done
@@ -345,6 +486,9 @@ uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B) has gone, 
  *                   (fm1-base's own, cpu2 = true, needs none of these)
  *   APP_FAULT       void app_fault(const fm1_crash_t *c)   a crash, before the crash screen (c: the record): an app's
  *                   own second core given up; or the crash is on that core (c->sp on its stacks): it stops there
+ *   APP_LOG         void app_log(void (*line)(const char *t))   the development readout over USB-MIDI (F0 7D 4C 47 F7,
+ *                   "LG"): the app's own lines, each through line (ASCII, 40 characters at most), before its "end".
+ *                   Main loop
  *
  * Screen mirroring (fm1.toml mirror = true: FM1B_MIRROR 1, device/mirror.c): the screen and the panel live on a
  * computer (base/web/mirror/, tools/fm1_mirror.py), and the panel played from it. Nothing for the app to call; an app
@@ -357,4 +501,18 @@ uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B) has gone, 
  *   APP_BACKUP_WHAT "replaces all songs"   the restore question's second line
  * and these: int app_backup_playing(void) (1: no restore now, STOP FIRST), void app_backup_flush(void) (what is not
  * saved yet, saved: a backup starts), void app_backup_hold(int on) (no saving while a backup streams),
- * void app_backup_restored(void) (everything from the flash again) */
+ * void app_backup_restored(void) (everything from the flash again)
+ *
+ * Companion services over USB (fm1.toml companion = true: FM1B_COMPANION 1, device/companion.c; docs/COMPANION.md,
+ * tools/fm1_companion.py): a computer asks what the firmware is and has (the platform services built, APP_NAME,
+ * APP_VERSION, the backup's magic, version and file extension). The app may add its own tags for its own pages: APP_COMPANION_EXTRAS "key=value;...".
+ * Its files (APP_FILES): int app_file(i, plat_file_info_t *f) (file i: 0 = there, -1 past the last), app_file_read(i,
+ * off, dst, n), app_file_begin(i, size), app_file_write(i, off, src, n) (in order), app_file_commit(i, size, crc) (all
+ * of it came, its CRC-32 checked: make it current), app_file_delete(i) (0 = done each), app_file_busy() (1: no write or
+ * delete now, playing). The name app_file gives stays valid until its next call. APP_FILE_COUNT (optional): uint32_t
+ * app_file_count(void), how many files there are, for an app whose app_file is costly (each request asks it once
+ * then, not once a file). plat_file_* (above) keeps a file in the data area for an app that has nowhere else.
+ * Its parameters (APP_PARAMS; APP_PARAM_MAX the most, 64 by default): int app_param(i, plat_param_t *p) (parameter i: 0
+ * = there, -1 past the last), const char *app_param_group(g) (0 past the last), int32_t app_param_get(i),
+ * int32_t app_param_set(i, v) (v within min .. max; -> the value now). Main loop: a value the render reads is shared
+ * as the app's own UI shares it */

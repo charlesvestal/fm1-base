@@ -32,6 +32,7 @@
  *                                store_tries, clocks_out, midi_out, usb_play_gain, usb_audio_full, ... below; data.ADDR: the
  *                                flash's byte at ADDR, as plat_data reads it; -1 outside its windows)
  *   reboot                       re-run boot from the simulated flash (persistence test)
+ *                                (the app's plat_restart does the same, at the end of its millisecond; expect restarts)
  *   data FILE OFFSET             a file into the simulated data area (plat_data) at OFFSET, in any of its windows
  *                                (plat.h), up to that window's end
  *   res 0|1                      (FM1B_RES) the resource region there (1, at start) or not (0: an FM-1 updated
@@ -53,9 +54,18 @@
  *                                checked whole, every object replaced, everything reloaded; refused while playing
  *                                (STOP FIRST) or when damaged: nothing changes (expect restore_rc: 0, 10 playing)
  *   backup_damage FILE           (FM1B_BACKUP) a byte of a backup file changed (at its middle)
+ *   sysex HEX..                  a SysEx frame from the computer (F0 .. F7, hex, spaces allowed), as the device takes
+ *                                it: to the app (APP_SYSEX: app_sysex gets the bytes between F0 and F7), or dropped (no
+ *                                app hook, the app's 0, a status byte inside, longer than the device's 640-byte buffer)
+ *                                (8 KiB at most); with APP_SYSEX_BYTE each byte to app_sysex_byte first, any length
+ *   sysex_out                    print the app's SysEx frames (plat_sysex_send) since the last "sysex_out" (and forget them)
+ *   expect_sysex HEX..           check that this frame went out since the last "sysex_out" (F0 .. F7, hex)
+ *   sysex_log FILE|off           every frame the app sends from now on, appended to FILE as it went out (raw)
+ *   usb unplug|plug|stall|read   the computer: the cable out, in again (a new plat_usb_session), the computer stops
+ *                                reading the device's SysEx, reads again
  * FILE "out:NAME" for backup, restore, backup_damage and mirror: NAME in OUTDIR (fbdump: always there).
- * NAME_host --serve [OUTDIR] (FM1B_MIRROR): driven over stdin by a tool, as an FM-1 over USB:
- *   sx HEX      one SysEx message from the host (F0 .. F7, hex): the mirror's requests (cmd 0x50, 0x54)
+ * NAME_host --serve [OUTDIR] (FM1B_MIRROR, FM1B_COMPANION): driven over stdin by a tool, as an FM-1 over USB:
+ *   sx HEX      one SysEx message from the host (F0 .. F7, hex): the mirror's requests (cmd 0x50, 0x54), the companion's (0x60..)
  *   run MS      MS milliseconds of the device; then what it sent meanwhile, a line "sx HEX" a message, and "ok NOW"
  *   shot FILE, fbdump FILE   the screen as a PNG, as raw pixels
  *   expect WHAT VALUE   as in a script: its line, "  ok ..." or "FAIL ..."
@@ -86,6 +96,9 @@
 #endif
 #ifndef FM1B_CPU2
 #define FM1B_CPU2 0                             /* fm1.toml cpu2 = true */
+#endif
+#ifndef FM1B_COMPANION
+#define FM1B_COMPANION 0                        /* fm1.toml companion = true */
 #endif
 #ifdef __linux__
 #define _GNU_SOURCE                             /* (open_memstream: --serve) */
@@ -192,13 +205,31 @@ int32_t plat_enc(int role)
 uint32_t plat_master(void) { return mirror_in_master(master); }
 #ifdef __EMSCRIPTEN__
 int plat_battery(void) { return -1; }  /* the browser emulator has no battery: not read, so none is shown */
+#ifdef APP_BATTERY_RAW
+int32_t plat_battery_raw(void) { return 0; }     /* (not read, as a device's before its first reading) */
+#endif
 #else
 int plat_battery(void) { return 3; }   /* (the host simulator: full) */
+#ifdef APP_BATTERY_RAW
+int32_t plat_battery_raw(void) { return 620; }   /* (full: over the third bar's 591, as plat_battery's 3) */
+#endif
+#endif
+#ifdef APP_DIM_LEVELS
+static uint32_t dim_ns_app, dim_glow;   /* plat_dim_ns's pulse (0: the glow's); the glow plat_lights last got */
+void plat_dim_ns(uint32_t ns)           /* clamped as the FM-1's scan takes it: 500 .. 4,000 */
+{
+    dim_ns_app = !ns ? 0u : ns < 500u ? 500u : ns > 4000u ? 4000u : ns;
+}
+/* the pulse the dim ones have now (ns): the app's, else the glow's (1,600 or 3,200), 0 with no glow */
+static uint32_t dim_pulse(void) { return dim_ns_app ? dim_ns_app : dim_glow == 1 ? 1600u : dim_glow ? 3200u : 0u; }
 #endif
 /* the lights ("leds"): bright, and dim (glow 0: none); PLAY's green counts as PLAY */
 void plat_lights(uint32_t b, uint32_t k, uint32_t db, uint32_t dk, int glow)
 {
     lights_b = b, lights_db = db, lights_glow = glow;
+#ifdef APP_DIM_LEVELS
+    dim_glow = glow > 0 ? (uint32_t)glow : 0u;
+#endif
     lit_btn = (b & ((1u << NB) - 1u)) | (b & LED_PLAY_GREEN ? 1u << B_PLAY : 0u);
     lit_keys = k;
     db = (db & ((1u << NB) - 1u)) | (db & LED_PLAY_GREEN ? 1u << B_PLAY : 0u);
@@ -223,8 +254,10 @@ void plat_play_red(int red) { (void)red; }      /* the device's PLAY colour: gre
 void plat_leds(uint32_t b, uint32_t k) { plat_lights(b, k, glow_on ? ~b : 0u, 0, glow_on ? 2 : 0); }
 uint32_t plat_lock(void) { return 0; }  /* one thread: the tick runs between the main loop's steps (run_ms) */
 void plat_unlock(uint32_t f) { (void)f; }
+static void hsx_ms(void);
 void plat_yield(void)
 {
+    hsx_ms();                                   /* (a wait inside the app: the computer reads meanwhile) */
 #ifdef APP_YIELD
     app_yield();
 #endif
@@ -546,7 +579,52 @@ int plat_data_write(uint32_t off, const void *src, uint32_t n)
     data_writes++;
     return 0;
 }
-void plat_sysex_send(const uint8_t *frame, uint32_t n) { (void)frame, (void)n; }
+/* the app's SysEx to the computer (plat_sysex_send): the computer reads it at once; each frame is kept for the script
+ * ("sysex_out", "expect_sysex") and written to the "sysex_log" file */
+#define HSX_KEEP 65536u
+static uint8_t hsx_out[HSX_KEEP];               /* the frames sent since the last "sysex_out", one after another */
+static uint32_t hsx_n, hsx_lost;
+static FILE *hsx_log;
+static void hsx_keep(const uint8_t *p, uint32_t n)
+{
+    if (hsx_log)
+        fwrite(p, 1, n, hsx_log);
+    if (n <= HSX_KEEP - hsx_n) {
+        memcpy(hsx_out + hsx_n, p, n);
+        hsx_n += n;
+    } else {
+        hsx_lost += n;
+    }
+}
+/* the device's SysEx ring as the computer empties it (plat_sysex_room, plat_sysex_queued): HSX_RING packets of 3 bytes,
+ * HSX_READ a millisecond read while the computer reads (a 64-byte USB-MIDI transfer a 1 ms frame); a send that finds
+ * no room waits as the device's does, the computer reading meanwhile (or, stalled: -1 after its 200 ms). The script's
+ * "usb unplug | plug | stall | read" (plat_usb_session: a new number at each plug) */
+#define HSX_RING 128u                           /* (device/unity.c SXQ) */
+#define HSX_READ 16u
+static uint32_t hsx_q, hsx_session = 1, hsx_plugs = 1;
+static uint8_t hsx_stalled;
+static uint8_t hsx_streaming, hsx_scut;          /* a stream begun (plat_sysex_begin); cut short (a put gave up) */
+static uint32_t hsx_sk;                          /* the stream's bytes not yet in a packet (0..3) */
+uint32_t plat_sysex_room(void) { return hsx_session && !hsx_streaming ? (HSX_RING - hsx_q) * 3u : 0u; }
+uint32_t plat_sysex_queued(void) { return hsx_q * 3u; }
+uint32_t plat_usb_session(void) { return hsx_session; }
+static void hsx_ms(void)                        /* one millisecond of USB: the computer reads */
+{
+    if (!hsx_stalled)
+        hsx_q -= hsx_q < HSX_READ ? hsx_q : HSX_READ;
+}
+int plat_sysex_send(const uint8_t *frame, uint32_t n)
+{
+    uint32_t pk = (n + 2u) / 3u;
+    if (!hsx_session || (hsx_stalled && pk > HSX_RING - hsx_q))
+        return -1;                              /* (no computer; or the ring full and nobody reading) */
+    if (hsx_streaming)
+        return -1;                              /* (a stream under way holds the ring) */
+    hsx_q = hsx_q + pk > HSX_RING ? HSX_RING : hsx_q + pk;   /* (a wait: the computer read the rest meanwhile) */
+    hsx_keep(frame, n);
+    return 0;
+}
 #if FM1B_RES
 #include "fm1_res_data.h"                             /* fm1b_res_data: the build's resources (build.py, from the file) */
 static int res_there = 1;                             /* (script "res 0": an FM-1 without them) */
@@ -557,6 +635,44 @@ const uint8_t *plat_res(uint32_t *len)
     return res_there ? fm1b_res_data : 0;
 }
 #endif
+/* a stream (plat_sysex_begin .. end): its bytes kept as they are put, its packets into the ring as the device's */
+int plat_sysex_begin(void)
+{
+    if (!hsx_session || hsx_streaming)
+        return -1;
+    hsx_streaming = 1, hsx_scut = 0, hsx_sk = 0;
+    return 0;
+}
+int plat_sysex_put(const uint8_t *p, uint32_t n)
+{
+    uint32_t i;
+    if (!hsx_streaming || hsx_scut || !hsx_session)
+        return -1;
+    for (i = 0; i < n; i++) {
+        if (hsx_sk == 3u) {                     /* (a full packet goes when the next byte comes) */
+            if (hsx_stalled && hsx_q >= HSX_RING) {
+                hsx_scut = 1;                   /* (nobody reading for the stall: the frame cut here) */
+                hsx_keep(p, i);
+                return -1;
+            }
+            hsx_q += hsx_q < HSX_RING;
+            hsx_sk = 0;
+        }
+        hsx_sk++;
+    }
+    hsx_keep(p, n);
+    return 0;
+}
+int plat_sysex_end(void)
+{
+    int rc = hsx_streaming && !hsx_scut && hsx_session && hsx_sk ? 0 : -1;
+    if (!rc && hsx_stalled && hsx_q >= HSX_RING)
+        rc = -1;                                /* (its last packet: no room) */
+    else if (!rc)
+        hsx_q++;
+    hsx_streaming = 0, hsx_sk = 0;
+    return rc;
+}
 /* no host to pull from (an app's transfer is tested on its own, or by writing the flash: "data") */
 int plat_host_read(uint32_t addr, uint8_t *dst, uint32_t n) { (void)addr, (void)dst, (void)n; return -1; }
 void plat_host_patience(uint32_t try_ms, uint32_t total_ms) { (void)try_ms, (void)total_ms; }
@@ -624,6 +740,9 @@ int plat_store_save(uint32_t obj, const void *src, uint32_t len)
 
 static uint32_t cpu_pct;
 uint32_t plat_cpu_pct(void) { return cpu_pct; }
+#ifdef APP_CPU_KHZ
+uint32_t plat_cpu_khz(void) { return 0; }        /* (no clock to speak of: the host's) */
+#endif
 uint32_t plat_xruns(void) { return 0; }
 void plat_code_window(const void *end) { (void)end; }
 /* disk mode: no computer in the simulator; the app's screen and flush still run */
@@ -645,17 +764,20 @@ uint32_t plat_ticks24(void)                     /* the host's monotonic clock, a
 }
 
 #if FM1B_CPU2 && !defined(APP_HOST_CPU2)
-/* the second core, simulated: a job runs at once, in order (the same sums as the device's split) */
-static int cpu2_on;
+/* the second core, simulated: a job runs at once, in order (the same sums as the device's split); plat_core is 1 in it */
+static int cpu2_on, cpu2_in_job;
 int plat_cpu2_set(int on) { cpu2_on = on; return 0; }
 int plat_cpu2_on(void) { return cpu2_on; }
 int plat_cpu2_run(void (*fn)(uint32_t), uint32_t arg)
 {
     if (!cpu2_on)
         return 0;
+    cpu2_in_job = 1;
     fn(arg);
+    cpu2_in_job = 0;
     return 1;
 }
+uint32_t plat_core(void) { return (uint32_t)cpu2_in_job; }
 int plat_cpu2_wait(void) { return 0; }
 void plat_cpu2_sync(void) {}
 int plat_cpu2_busy(void) { return 0; }
@@ -663,7 +785,37 @@ int plat_cpu2_gave_up(void) { return 0; }
 uint32_t plat_cpu2_bad(void) { return 0; }
 int plat_cpu2_barred(void) { return 0; }
 uint32_t plat_cpu2_stack(void) { return 0; }
+#elif !defined(APP_HOST_CPU2)
+uint32_t plat_core(void) { return 0; }   /* (one core) */
 #endif
+
+/* the cache RAM (plat.h, fm1.toml cache_ram_ways): a buffer of the ways' size stands in, ready from the start, its masks
+ * as the device's would read; FM1B_CACHE_RAM_FAIL=1 in the environment: its test failed (0 bytes, the masks put back) */
+#ifndef FM1B_CACHE_RAM
+#define FM1B_CACHE_RAM 0
+#endif
+const struct plat_cache_ram *plat_cache_ram(void)
+{
+    static struct plat_cache_ram r;
+#if FM1B_CACHE_RAM
+    static uint8_t ways[FM1B_CACHE_RAM * 4096u] __attribute__((aligned(8)));
+    static int set;
+    if (!set) {
+        const char *f = getenv("FM1B_CACHE_RAM_FAIL");
+        uint32_t keep = (0xFFu << FM1B_CACHE_RAM) & 0xFFu;
+        int ok = !(f && f[0] == '1');
+        set = 1;
+        r.ways = FM1B_CACHE_RAM;
+        r.status = ok ? PLAT_CR_OK : PLAT_CR_BAD;
+        r.dway = ok ? keep | keep << 8 | keep << 16 : 0x00FFFFFFu;
+        r.iway = 0xFFFFu;
+        r.bad_at = ok ? 0u : 0x01F28000u;
+        r.bytes = ok ? (uint32_t)sizeof ways : 0u;
+        r.base = ok ? ways : 0;
+    }
+#endif
+    return &r;
+}
 
 /* -------------------------------------------------------------- app --- */
 #define ANN_NAME APP_NAME " " APP_VERSION
@@ -709,6 +861,15 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)
 #include "btdev.c"
 #endif
 #include "app.c"
+
+#if FM1B_COMPANION
+/* the companion services (device/companion.c): the computer's requests from "sysex" (and --serve's "sx"), the answers
+ * as the app's SysEx (plat_sysex_send: sysex_out, expect_sysex) */
+#include "companion.c"
+static int cp_send(const uint8_t *p, uint32_t n) { return plat_sysex_send(p, n); }
+static int cp_room(uint32_t n) { return plat_sysex_room() >= n; }
+static uint32_t cp_link(void) { return plat_usb_session(); }
+#endif
 
 #if FM1B_MIRROR
 /* ------------------------------------------------- mirroring over USB --- */
@@ -796,10 +957,9 @@ static uint32_t sim_crc32(uint32_t c, const uint8_t *p, size_t n)
 static void sim_wr32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24); }
 static uint32_t sim_rd32(const uint8_t *p) { return p[0] | p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static uint8_t sim_img[16 + SIM_NOBJ * (8 + PLAT_STORE_MAX) + 4];
-static int sim_backup(const char *path)
+static size_t sim_backup_image(void)              /* the image into sim_img: its length */
 {
     size_t n = 16;
-    FILE *f;
     int playing = app_backup_playing() != 0;
     if (!playing)
         app_backup_flush();
@@ -817,21 +977,21 @@ static int sim_backup(const char *path)
         n += 8 + len;
     }
     sim_wr32(sim_img + n, sim_crc32(0, sim_img, n));
-    n += 4;
-    if (!(f = fopen(path, "wb")))
+    return n + 4;
+}
+static int sim_backup(const char *path)
+{
+    size_t n = sim_backup_image();
+    FILE *f = fopen(path, "wb");
+    if (!f)
         return -1;
     fwrite(sim_img, 1, n, f);
     fclose(f);
     return 0;
 }
-static int sim_restore(const char *path)          /* 0, or backup.c's RS_E_*: 10 playing, 3 the head, 4..6 damaged */
+static int sim_restore_image(size_t n)            /* sim_img's n bytes: 0, or backup.c's RS_E_*: 10 playing, 3 the head, 4..6 damaged */
 {
-    size_t n, pos = 16;
-    FILE *f = fopen(path, "rb");
-    if (!f)
-        return 1;
-    n = fread(sim_img, 1, sizeof sim_img, f);
-    fclose(f);
+    size_t pos = 16;
     if (app_backup_playing())
         return 10;                                /* STOP FIRST */
     if (n < 16u + (size_t)SIM_NOBJ * 8u + 4u || sim_rd32(sim_img) != APP_BACKUP_MAGIC ||
@@ -860,6 +1020,16 @@ static int sim_restore(const char *path)          /* 0, or backup.c's RS_E_*: 10
     app_panic();
     app_backup_restored();
     return 0;
+}
+static int sim_restore(const char *path)          /* 0, or backup.c's RS_E_*; 1: no such file */
+{
+    size_t n;
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return 1;
+    n = fread(sim_img, 1, sizeof sim_img, f);
+    fclose(f);
+    return sim_restore_image(n);
 }
 #endif
 
@@ -1010,6 +1180,14 @@ static void boot(void)
     app_ui_init();
 }
 
+static uint8_t restart_req;                         /* plat_restart: at the end of this millisecond */
+static uint32_t restarts;
+void plat_restart(void) { restart_req = 1; }
+#if FM1B_EMU_REBOOT
+static uint8_t web_down;                            /* the browser emulator's restart or update mode: the app is not run,
+                                                     * the sound is silence (the page's part "reboot", web/emu/parts) */
+#endif
+
 /* one millisecond of the device, in three steps (run_ms; host/rfm1.c calls them on its host's clock): the clock and
  * what runs before the render (sim_ms_begin), the APP_BLOCK-frame renders that have fallen due (sim_render, each),
  * then the UI (sim_ms_end: a frame every 16 ms, else the input only) */
@@ -1062,6 +1240,10 @@ static void sim_ms_end(int frame)
     mirror_step();
     host_mirror_ms();
 #endif
+#if FM1B_COMPANION
+    comp_step();
+#endif
+    hsx_ms();
 #ifdef APP_HOST_MS
     app_host_ms();
 #endif
@@ -1072,6 +1254,17 @@ static void run_ms(uint32_t ms)
     static int32_t blk[2 * APP_BLOCK];
     uint32_t i, k;
     for (i = 0; i < ms; i++) {
+#if FM1B_EMU_REBOOT
+        if (web_down) {                             /* (the clock runs and the blocks are silence, as a stopped FM-1) */
+            now_ms++;
+            while (audio_due_ms <= (double)now_ms) {
+                memset(blk, 0, sizeof blk);
+                web_audio(blk, APP_BLOCK);
+                audio_due_ms += APP_BLOCK * 1000.0 / 44100.0;
+            }
+            continue;
+        }
+#endif
         sim_ms_begin(now_ms + 1u);
         while (audio_due_ms <= (double)now_ms) {      /* APP_BLOCK-frame blocks, as the device renders them */
             sim_render(blk);
@@ -1099,6 +1292,20 @@ static void run_ms(uint32_t ms)
             sim_ms_end(1);
         } else {
             sim_ms_end(0);
+        }
+        if (restart_req) {                          /* (as "reboot": the flash kept, the app's RAM forgotten) */
+            restart_req = 0;
+            restarts++;
+#if FM1B_EMU_REBOOT                                 /* (no printf: the browser's stdout takes nothing, it never returns) */
+            web_down = 1;                           /* (the page starts the app again from a fresh wasm: the app's RAM
+                                                     * forgotten as the FM-1's, the saved data kept) */
+#else
+            printf("  restart (plat_restart) at %u ms\n", now_ms);
+#ifdef APP_HOST_REBOOT
+            app_host_reboot();
+#endif
+            boot();
+#endif
         }
     }
 }
@@ -1163,6 +1370,8 @@ static int expect(const char *what, const char *val)
 #endif
     if (!strcmp(what, "store_writes"))
         got = (int)store_writes;
+    else if (!strcmp(what, "restarts"))            /* plat_restart's since the start */
+        got = (int)restarts;
     else if (!strcmp(what, "store_tries"))
         got = (int)store_tries;
 #if FM1B_BACKUP
@@ -1175,6 +1384,14 @@ static int expect(const char *what, const char *val)
         got = p ? (int)*p : -1;
     } else if (!strcmp(what, "data_rc"))           /* the last data_erase / data_write: 0 done, -1 refused, -2 no bytes */
         got = data_cmd_rc;
+#ifdef APP_BATTERY_RAW
+    else if (!strcmp(what, "battery_raw"))          /* plat_battery_raw: the battery's reading (the host's: full) */
+        got = (int)plat_battery_raw();
+#endif
+#ifdef APP_DIM_LEVELS
+    else if (!strcmp(what, "dim_ns"))               /* the dim pulse (plat_dim_ns, else the glow's), ns */
+        got = (int)dim_pulse();
+#endif
     else if (!strcmp(what, "clocks_out"))
         got = (int)clock_out_count;
     else if (!strcmp(what, "usb_play_gain"))        /* plat_usb_play_gain's level, 0..4096 */
@@ -1191,6 +1408,10 @@ static int expect(const char *what, const char *val)
         got = ble_state;
     else if (!strcmp(what, "ble_dev"))              /* the Bluetooth MIDI device: BLE_DEV_* (4 connected) */
         got = bdev_state;
+#ifdef APP_CPU_KHZ
+    else if (!strcmp(what, "cpu_khz"))              /* plat_cpu_khz: the CPU's clock (the host's: 0, none) */
+        got = (int)plat_cpu_khz();
+#endif
     else if (!strcmp(what, "midi_in_usb"))          /* plat_midi_count: messages in from USB */
         got = (int)plat_midi_count(PORT_USB, 0);
     else if (!strcmp(what, "peak_db_max") || !strcmp(what, "peak_db_min")) {
@@ -1228,7 +1449,7 @@ static void out_path(char *out, size_t n, const char *dir, const char *a)
     else
         snprintf(out, n, "%s", a);
 }
-#if FM1B_MIRROR
+#if FM1B_MIRROR || FM1B_COMPANION
 /* --serve: the simulator driven over stdin (see the top) */
 static uint32_t sv_unpack7(const uint8_t *in, uint32_t n, uint8_t *out)
 {
@@ -1248,11 +1469,13 @@ static int serve(const char *dir)
 {
     static char line[8192];
     static uint8_t raw[4096], dec[4096];
+#if FM1B_MIRROR
     char *buf = 0;
     size_t blen = 0;
     FILE *ms = open_memstream(&buf, &blen);
     mr_out = ms;
     mr_keep = 0;
+#endif
     setvbuf(stdout, 0, _IOLBF, 0);
     while (fgets(line, sizeof line, stdin)) {
         char cmd[16] = {0}, a[4096] = {0}, b[64] = {0};
@@ -1273,6 +1496,14 @@ static int serve(const char *dir)
             }
             if (n < 3 || raw[0] != 0xF0 || raw[n - 1] != 0xF7)
                 continue;
+#if FM1B_COMPANION
+#ifdef APP_SYSEX
+            if (n - 2u <= 640u && app_sysex(raw + 1, n - 2u))
+                continue;                            /* (as "sysex": the app's first, then the companion's) */
+#endif
+            if (comp_sysex(raw, n))
+                continue;
+#endif
             d = sv_unpack7(raw + 1, n - 2, dec);
             if (d >= 7 && dec[0] == 0 && dec[1] == 0x59 && (uint32_t)(dec[3] | dec[4] << 8 | dec[5] << 16) + 7u == d) {
                 uint32_t sum = 0;
@@ -1280,15 +1511,18 @@ static int serve(const char *dir)
                     sum += dec[i];
                 if ((uint8_t)~sum != dec[d - 1])
                     continue;
+#if FM1B_MIRROR
                 if (d == 8 && dec[2] == MR_REQ)
                     mirror_cmd(dec[6]);
                 else if (d == 12 && dec[2] == MR_REMOTE)
                     mirror_remote(dec + 6);
+#endif
             }
         } else if (!strcmp(cmd, "run")) {
             static uint8_t part[1 << 16];             /* a message cut at the end of a run: its start */
             static size_t pn;
             run_ms((uint32_t)atoi(a));
+#if FM1B_MIRROR
             fflush(ms);
             for (size_t i = 0; i < blen; i++) {
                 uint8_t v = (uint8_t)buf[i];
@@ -1306,6 +1540,23 @@ static int serve(const char *dir)
             }
             rewind(ms);
             blen = 0;
+#endif
+#if FM1B_COMPANION
+            for (uint32_t i = 0; i < hsx_n; i++) {    /* the SysEx ring's frames (the companion's answers) */
+                if (hsx_out[i] == 0xF0u)
+                    pn = 0;
+                if (pn < sizeof part)
+                    part[pn++] = hsx_out[i];
+                if (hsx_out[i] == 0xF7u && part[0] == 0xF0u) {
+                    fputs("sx ", stdout);
+                    for (size_t k = 0; k < pn; k++)
+                        printf("%02X", part[k]);
+                    putchar('\n');
+                    pn = 0;
+                }
+            }
+            hsx_n = hsx_lost = 0;
+#endif
             printf("ok %u\n", now_ms);
         } else if (!strcmp(cmd, "shot") || !strcmp(cmd, "fbdump")) {
             char out[4200];
@@ -1329,18 +1580,101 @@ static int serve(const char *dir)
 }
 #endif
 
+/* a frame's hex (spaces allowed between the bytes) into raw: its length, 0 = not hex */
+static uint32_t hsx_hex(const char *h, uint8_t *raw, uint32_t max)
+{
+    uint32_t n = 0;
+    unsigned v;
+    while (*h) {
+        if (*h == ' ' || *h == '\t' || *h == '\n' || *h == '\r') {
+            h++;
+            continue;
+        }
+        if (n >= max || sscanf(h, "%2x", &v) != 1 || !h[1] || h[1] == ' ')
+            return 0;
+        raw[n++] = (uint8_t)v;
+        h += 2;
+    }
+    return n;
+}
+/* "sysex": the frame as felucca-bsp's usb.c collects one (whole, 7-bit, HOST_SX_MAX at most between F0 and F7) and the
+ * main loop offers it (device/main_fm1.c: to the app after the platform's own) */
+#define HOST_SX_MAX 640u
+static int hsx_in(const char *hex)
+{
+    static uint8_t raw[8192];
+    uint32_t n = hsx_hex(hex, raw, sizeof raw), i, ok;
+    if (n < 2u || raw[0] != 0xF0u || raw[n - 1u] != 0xF7u) {
+        printf("FAIL sysex: not a frame (F0 .. F7, hex)\n");
+        return 1;
+    }
+    for (i = 1, ok = 1; i + 1u < n; i++)
+        ok &= raw[i] < 0x80u;
+#ifdef APP_SYSEX_BYTE
+    for (i = 0; i < n && (i == 0 || i + 1u == n || raw[i] < 0x80u); i++)
+        app_sysex_byte(raw[i]);                   /* (as the USB interrupt hands them over: to a status inside) */
+#endif
+    if (!ok || n - 2u > HOST_SX_MAX || !hsx_session)
+        return 0;                                 /* (a status byte inside, or too long: the device drops it) */
+#ifdef APP_SYSEX
+    if (app_sysex(raw + 1, n - 2u))
+        return 0;                                 /* (the app's first, as the device's main loop offers it) */
+#endif
+#if FM1B_COMPANION
+    (void)comp_sysex(raw, n);                     /* (then the update's framing: the companion's commands) */
+#endif
+    return 0;
+}
+static int hsx_frame_at(uint32_t at)              /* the length of the frame sent at hsx_out[at] (to its F7; one cut
+                                                   * short, to the next F0) */
+{
+    uint32_t k = at;
+    while (k < hsx_n && hsx_out[k] != 0xF7u && (k == at || hsx_out[k] != 0xF0u))
+        k++;
+    if (k < hsx_n && hsx_out[k] == 0xF0u)
+        return (int)(k - at);
+    return (int)(k < hsx_n ? k + 1u - at : hsx_n - at);
+}
+static int hsx_expect(const char *hex)            /* 0: this frame went out since the last "sysex_out" */
+{
+    static uint8_t want[HSX_KEEP];
+    uint32_t n = hsx_hex(hex, want, sizeof want), at;
+    for (at = 0; n && at < hsx_n; at += (uint32_t)hsx_frame_at(at))
+        if ((uint32_t)hsx_frame_at(at) == n && !memcmp(hsx_out + at, want, n)) {
+            printf("  ok sysex out (%u bytes)\n", n);
+            return 0;
+        }
+    printf("FAIL expect_sysex: not sent (%u bytes)\n", n);
+    return 1;
+}
+static void hsx_print(void)
+{
+    uint32_t at, k;
+    for (at = 0; at < hsx_n; at += k) {
+        k = (uint32_t)hsx_frame_at(at);
+        printf("  sysex<");
+        for (uint32_t i = 0; i < k; i++)
+            printf(" %02X", hsx_out[at + i]);
+        printf("\n");
+    }
+    if (hsx_lost)
+        printf("  sysex< (%u bytes more, not kept)\n", hsx_lost);
+    hsx_n = hsx_lost = 0;
+}
+
 int main(int argc, char **argv)
 {
     FILE *sc;
-    char line[512], out[400];
+    static char line[20000];
+    char out[400];
     const char *dir = argc > 2 ? argv[2] : ".";
     int lineno = 0, fails = 0;
     plat_host_dir = dir;
     if (argc < 2) {
-        fprintf(stderr, "usage: %s SCRIPT [OUTDIR]%s\n", argv[0], FM1B_MIRROR ? " | --serve [OUTDIR]" : "");
+        fprintf(stderr, "usage: %s SCRIPT [OUTDIR]%s\n", argv[0], FM1B_MIRROR || FM1B_COMPANION ? " | --serve [OUTDIR]" : "");
         return 2;
     }
-#if FM1B_MIRROR
+#if FM1B_MIRROR || FM1B_COMPANION
     if (!strcmp(argv[1], "--serve")) {
         snprintf(out, sizeof out, "%s/midi_out.txt", dir);
         midi_log = fopen(out, "w");
@@ -1499,6 +1833,9 @@ int main(int argc, char **argv)
             printf(" black ");
             for (i = 0; i < 11; i++)
                 printf("%c", (lit_keys >> HOST_BLACK_K[i] & 1u) ? '#' : ((dim_keys | mid_keys) >> HOST_BLACK_K[i] & 1u) ? '+' : '.');
+#ifdef APP_DIM_LEVELS
+            printf(" dim %u ns", (unsigned)dim_pulse());
+#endif
             printf("\n");
         } else if (!strcmp(cmd, "expect"))
             fails += expect(a, b);
@@ -1659,6 +1996,36 @@ int main(int argc, char **argv)
                 fclose(bf);
             }
 #endif
+        } else if (!strcmp(cmd, "sysex")) {
+            fails += hsx_in(strstr(line, "sysex") + 5);
+            run_ms(1);
+        } else if (!strcmp(cmd, "sysex_out"))
+            hsx_print();
+        else if (!strcmp(cmd, "expect_sysex"))
+            fails += hsx_expect(strstr(line, "expect_sysex") + 12);
+        else if (!strcmp(cmd, "usb")) {
+            if (!strcmp(a, "unplug"))
+                hsx_session = 0, hsx_q = 0;
+            else if (!strcmp(a, "plug"))
+                hsx_session = ++hsx_plugs;
+            else if (!strcmp(a, "stall") || !strcmp(a, "read"))
+                hsx_stalled = a[0] == 's';
+            else {
+                printf("line %d: usb %s: unplug, plug, stall or read\n", lineno, a);
+                return 2;
+            }
+            run_ms(1);
+        } else if (!strcmp(cmd, "sysex_log")) {
+            if (hsx_log)
+                fclose(hsx_log);
+            hsx_log = 0;
+            if (strcmp(a, "off")) {
+                out_path(out, sizeof out, dir, a);
+                if (!(hsx_log = fopen(out, "wb"))) {
+                    printf("line %d: cannot write %s\n", lineno, out);
+                    return 2;
+                }
+            }
         } else if (!strcmp(cmd, "echo"))
             printf("%s", line + 5);
         else {
@@ -1667,6 +2034,8 @@ int main(int argc, char **argv)
         }
     }
     wav_close();
+    if (hsx_log)
+        fclose(hsx_log);
     if (midi_log)
         fclose(midi_log);
 #ifdef APP_HOST_FAILS

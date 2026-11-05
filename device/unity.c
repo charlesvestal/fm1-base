@@ -28,7 +28,10 @@
  *   FM1B_MSC 0              disk mode: the FM-1 as a USB drive of the app's blocks (fm1.toml msc = true: msc.c)
  *   FM1B_BACKUP 0           backup and restore of the app's objects over USB (fm1.toml backup = true: backup.c)
  *   FM1B_RES 0              the resource region (fm1.toml resources = FILE: res.c; with backup)
- *   FM1B_CPU2 0             the second core (fm1.toml cpu2 = true: cpu2.c, felucca-bsp's fm1_cpu1.h) */
+ *   FM1B_CPU2 0             the second core (fm1.toml cpu2 = true: cpu2.c, felucca-bsp's fm1_cpu1.h)
+ *   FM1B_CACHE_RAM 0        data-cache ways as RAM, 2, 4 or 7 (fm1.toml cache_ram_ways: plat_cache_ram, felucca-bsp's
+ *                           fm1_cache_ram.h; set and tested in fm1_cstart, main_fm1.c)
+ *   FM1B_COMPANION 0        the companion services over USB (fm1.toml companion = true: companion.c) */
 #include <stdint.h>
 #include "plat.h"
 #include "app.h"                  /* first: the scan's hooks below may call the app */
@@ -60,6 +63,12 @@
 #include "fm1_xip.h"
 #include "fm1_perf.h"
 #include "fm1_clock.h"
+#ifndef FM1B_CACHE_RAM
+#define FM1B_CACHE_RAM 0
+#endif
+#if FM1B_CACHE_RAM
+#include "fm1_cache_ram.h"        /* data-cache ways as RAM (fm1.toml cache_ram_ways): plat_cache_ram */
+#endif
 
 #include "libc.c"
 #include "lcd.c"
@@ -116,6 +125,9 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #ifndef FM1B_CPU2
 #define FM1B_CPU2 0
 #endif
+#ifndef FM1B_COMPANION
+#define FM1B_COMPANION 0
+#endif
 #define FELUCCA_MIRROR FM1B_MIRROR /* usb.c's ring for mirror.c's frames */
 #ifndef FM1B_USB_HOST
 #define FM1B_USB_HOST 0
@@ -126,6 +138,9 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #endif
 #define FELUCCA_MSC FM1B_MSC      /* disk mode: usb.c's mass-storage descriptors and EP3 (msc.c) */
 #define SXQ 128u                  /* the SysEx send ring, in packets: a whole screen-reader SAY (ANN_MAX + 9 bytes) */
+#ifdef APP_SYSEX_BYTE
+#define FELUCCA_SYSEX_BYTE(b) app_sysex_byte(b)   /* the app's, every SysEx byte from USB (plat.h APP_SYSEX_BYTE) */
+#endif
 #include "usb.c"
 #ifndef FM1B_TRS
 #define FM1B_TRS 1
@@ -367,6 +382,15 @@ static int bu_room(void)                            /* the SysEx ring empty: a f
 static int bu_send(const uint8_t *p, uint32_t n) { return ota_wire_send(p, n); }
 static void bu_flush(void) { app_backup_flush(); }
 static void bu_hold(int on) { app_backup_hold(on); }
+#endif
+#if FM1B_COMPANION
+#include "companion.c"            /* the companion services over USB (docs/COMPANION.md: web/companion, tools/fm1_companion.py) */
+static int cp_send(const uint8_t *p, uint32_t n) { return usb.config ? ota_wire_send(p, n) : -1; }
+static int cp_room(uint32_t n)                      /* the SysEx ring takes it now: nobody else holds it, no backup */
+{
+    return usb.config && !usb.suspended && !sx_busy && !backup_streaming() && SXQ - (so_w - so_r) >= (n + 2u) / 3u;
+}
+static uint32_t cp_link(void) { return usb.config ? usb.resets + 1u : 0u; }
 #endif
 #ifdef APP_TOUCH
 #include "touch.c"

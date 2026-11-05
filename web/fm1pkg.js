@@ -79,3 +79,28 @@ export function ufwEntries(image) {
   }
   return out;
 }
+
+// M-VAVE's stock files (the .fwsc as downloaded) whose SHA-256 is pinned, by the product they carry. A file that says it is
+// one of these must be that very file, byte for byte: the digest covers every file in it, the loader and the layout, so
+// nothing else needs parsing. Other versions of M-VAVE's firmware are not pinned (checkUfw and the FM-1 itself check them)
+export const STOCK_FILES = {
+  "FM-1_015": { size: 699956, sha256: "db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7edb8a" },
+};
+
+export async function sha256hex(bytes) {
+  const d = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+// a stock file by its checksum: true when its product is pinned and the size and SHA-256 are the pinned ones, false when
+// the product has no pinned checksum; throws an Error (code "modified") when it is pinned and the file differs
+export function stockChecksum(product, size, sha256) {
+  const pin = STOCK_FILES[product];
+  if (!pin) return false;
+  if (size !== pin.size || sha256 !== pin.sha256) {
+    const e = new Error(`the file says it is ${product} but it is not M-VAVE's file (size or SHA-256 differs)`);
+    e.code = "modified";
+    throw e;
+  }
+  return true;
+}

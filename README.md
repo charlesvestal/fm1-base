@@ -39,9 +39,11 @@ parts it has.
 | USB audio at full level, MASTER for the speaker and headphones only | with the USB audio input | `plat_usb_audio_full` (the app's setting) |
 | Screen mirroring: the screen and panel live on a computer (web/mirror, a PNG with `tools/fm1_mirror.py`), the panel played from it | `mirror = true` | nothing; `APP_REDRAW` (what a slow link dropped, drawn again), `APP_MIRROR_TEST` (a test session from the remote) |
 | Backup and restore of the app's saved objects over USB, all or nothing (web/backup, `tools/fm1_backup.py`) | `backup = true` | app.h: `APP_BACKUP_OBJS`, `APP_BACKUP_MAGIC`, `APP_BACKUP_VERSION`, `APP_BACKUP_WHAT`; `app_backup_playing`, `_flush`, `_hold`, `_restored` |
+| The companion services over USB: what the firmware is and has, the app's files and parameters, for a generic page or tool (docs/COMPANION.md, `tools/fm1_companion.py`) | `companion = true` | app.h: `APP_COMPANION_EXTRAS` (optional); files: `APP_FILES`, `app_file`, `app_file_read`, `_begin`, `_write`, `_commit`, `_delete`, `_busy` (`plat_file_*`: a file kept in the data area, A / B); parameters: `APP_PARAMS`, `app_param`, `app_param_group`, `app_param_get`, `_set` |
 | The app's own commands over USB, in the update's framing, data pulled from the host | `#define APP_USB_CMD` in app.h | `app_usb_cmd`; `plat_host_read`, `plat_host_patience` |
 | Lower case in the big fonts | `font_full = ["L"]` | the fonts as ever |
 | The firmware as an `.rfm1` for host apps (RemoteFM1 for iOS), below | `tools/build.py APP_DIR --rfm1` | nothing |
+| The browser emulator's own parts (`tools/build.py --web`): web/emu/parts, each file saying what it does; without any, the page and app.wasm are as before | `emu = ["name", ...]` (or `FM1B_EMU="name ..."` for one build) | nothing, unless a part says so |
 
 Every firmware also counts each port's MIDI messages, in and out: `plat_midi_count(PORT_*, out)` for counters,
 `plat_midi_ago` for activity lights.
@@ -128,8 +130,9 @@ For a working example, see `examples/wifi`; for a whole firmware, fm1-radio.
 
 ### What each costs
 
-The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss` (128 KB in a WiFi build), and a
-336 KB pool of RAM for big buffers (304 KB in a WiFi build). Measured on the template (October 2026), in KB:
+The FM-1 has a 581 KB app slot in the flash and 464 KB of SRAM, one budget packed from its bottom for the RAM code,
+`.data` and `.bss`, and the pool of big buffers, 8 KB kept spare (`device/app.ld`; a WiFi build keeps fixed
+regions: 24 KB of RAM code, 128 KB of RAM, a 304 KB pool). Measured on the template (October 2026), in KB:
 
 | | Flash | RAM | Pool |
 | --- | --- | --- | --- |
@@ -141,7 +144,7 @@ The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss`
 | WiFi (`wifi`, from fm1-radio's measurements) | + about 300 | + about 100 | + about 276 |
 
 - Bluetooth: JieLi's BT controller and stack (the flash), its 24 KB heap and their tables (the RAM), three task
-  stacks of 8 KB (the pool). The template with Bluetooth and devices is 214 KB of flash, 75 of 96 KB of RAM: room
+  stacks of 8 KB (the pool). The template with Bluetooth and devices is 214 KB of flash, 75 KB of RAM: room
   for a big app (CTL-1, with a General MIDI synth, is 491 KB).
 - The own stack: the template with Bluetooth MIDI alone is 118 to 123 KB of flash, 37 KB of RAM and 69 KB of pool;
   with pairing, devices and audio, 180 KB, 45 KB and 99 KB. On a big app the

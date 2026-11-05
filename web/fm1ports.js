@@ -19,7 +19,9 @@
 // sends the HELLO back as it went out, with no name.
 
 // port names asked without being picked (any case, part of the name). "FM1": the Open firmware's "FM1 Community"
-export const PORT_NAMES = ["fm-1", "fm1", "felucca", "ota", "composite", "sinco", "usb-midi"];
+// The FM-1 firmwares of the family name their own port after themselves (an FM-1 running one shows as that name alone):
+// "optimist", "sloop", "melodee", "loom-8" / "loom8", as tools/fm1ports.py asks them too.
+export const PORT_NAMES = ["fm-1", "fm1", "felucca", "ota", "composite", "sinco", "usb-midi", "optimist", "sloop", "melodee", "loom-8", "loom8"];
 export function usualName(name, names = PORT_NAMES) {
   const n = (name || "").toLowerCase();
   return names.some((p) => n.includes(p));

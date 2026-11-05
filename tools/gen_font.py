@@ -9,8 +9,11 @@
 Glyph format: per glyph an advance width, a bitmap width and an offset; the
 bitmap starts FONT_PAD pixels left of the pen position (room for side
 bearings); rows top to bottom, 2 pixels per byte (high nibble first),
-alpha 0..15.
+alpha 0..15. With FM1_FONT_TRIM=1 (fm1.toml font_trim) a glyph is only its lit box: its left
+column, top row and row count (a byte each), then those rows, the bitmap width the box's. With FM1_FONT_PACK=1 too
+(fm1.toml font_pack) those rows' alphas are Huffman-coded (see PACK below).
 """
+import heapq
 import sys
 from pathlib import Path
 
@@ -62,6 +65,19 @@ SIZES = FONTSETS[FONTSET]
 # FM1_FONT_FULL="L M": those roles with every printable character (lower case too), for an app that writes words in
 # them (fm1.toml font_full; the others keep the set's range)
 FULL = set(os.environ.get("FM1_FONT_FULL", "").split())
+# FM1_FONT_TRIM=1: each glyph only its lit box (fm1.toml font_trim): the box's left column, top row and row count
+# first (3 bytes), then its rows; BW the box's width. device/gfx.c draws it so (FONT_TRIM, in the header)
+TRIM = os.environ.get("FM1_FONT_TRIM") == "1"
+# FM1_FONT_PACK=1 (with FM1_FONT_TRIM; fm1.toml font_pack): each trimmed glyph's alphas coded, w a row, its rows in
+# turn, by a canonical Huffman code of three: the one for the alpha after a 0, after a 15, after anything else (a
+# glyph starts after a 0), its bits from the high one down, the glyph padded to a byte. The face's data starts with the
+# three codes (HUF_CODES, FONT_HUF_SZ bytes each: the count of codes of each length 1..HUF_LEN, then the alphas in code
+# order); the offsets count from the data's start, as before. device/gfx.c decodes it as it draws (FONT_PACK)
+PACK = os.environ.get("FM1_FONT_PACK") == "1"
+if PACK and not TRIM:
+    raise SystemExit("gen_font: FM1_FONT_PACK needs FM1_FONT_TRIM (fm1.toml font_pack needs font_trim)")
+HUF_LEN = 12                    # the longest code (a longer one: the counts halved until none is)
+HUF_CODES = 3
 SIZES = [(n, f, px, sc, pix, first, 126 if n in FULL else last) for n, f, px, sc, pix, first, last in SIZES]
 PAD = 2
 
@@ -171,18 +187,115 @@ def render(ttf, px, scale, pixel, first, last):
     return h * scale, glyphs
 
 
+def lit_box(g, bw, h):
+    """a glyph's lit box: (left column, top row, width, rows); (0, 0, 0, 0) for a blank one"""
+    rows = [y for y in range(h) if any(g[y * bw:(y + 1) * bw])]
+    cols = [x for x in range(bw) if any(g[y * bw + x] for y in range(h))]
+    if not rows:
+        return 0, 0, 0, 0
+    return cols[0], rows[0], cols[-1] - cols[0] + 1, rows[-1] - rows[0] + 1
+
+
+def huff_lengths(freq):
+    """{alpha: code length} of a Huffman code for the counts freq (none longer than HUF_LEN)"""
+    freq = {k: v for k, v in freq.items() if v}
+    while True:
+        if len(freq) == 1:
+            return {k: 1 for k in freq}
+        heap = [(v, i, [k]) for i, (k, v) in enumerate(sorted(freq.items()))]
+        heapq.heapify(heap)
+        depth = dict.fromkeys(freq, 0)
+        n = len(heap)
+        while len(heap) > 1:
+            a, b = heapq.heappop(heap), heapq.heappop(heap)
+            for k in a[2] + b[2]:
+                depth[k] += 1
+            heapq.heappush(heap, (a[0] + b[0], n, a[2] + b[2]))
+            n += 1
+        if max(depth.values()) <= HUF_LEN:
+            return depth
+        freq = {k: (v + 1) // 2 for k, v in freq.items()}
+
+
+def huff_code(lengths):
+    """-> (the table's bytes: counts of lengths 1..HUF_LEN, then the alphas in code order, padded to 16), {alpha: (code,
+    length)}: the canonical code (by length, then alpha)"""
+    order = sorted(lengths, key=lambda k: (lengths[k], k))
+    counts = [sum(1 for k in order if lengths[k] == n) for n in range(1, HUF_LEN + 1)]
+    codes, code, at = {}, 0, 0
+    for n in range(1, HUF_LEN + 1):
+        for _ in range(counts[n - 1]):
+            codes[order[at]] = (code, n)
+            code += 1
+            at += 1
+        code <<= 1
+    return counts + order + [0] * (16 - len(order)), codes
+
+
+def ctx_of(prev):
+    return 0 if prev == 0 else 1 if prev == 15 else 2
+
+
+def pack_face(boxes):
+    """boxes: per glyph (its 3 header bytes, its alphas row by row) -> (data, offsets): the codes, then each glyph's
+    header and its bits"""
+    freq = [dict.fromkeys(range(16), 0) for _ in range(HUF_CODES)]
+    for _, alphas in boxes:
+        prev = 0
+        for a in alphas:
+            freq[ctx_of(prev)][a] += 1
+            prev = a
+    tables, codes = [], []
+    for c in range(HUF_CODES):
+        t, k = huff_code(huff_lengths(freq[c]) if any(freq[c].values()) else {})
+        tables += t
+        codes.append(k)
+    data, offs = list(tables), []
+    for head, alphas in boxes:
+        offs.append(len(data))
+        data += head
+        acc, nb, prev = 0, 0, 0
+        for a in alphas:
+            code, n = codes[ctx_of(prev)][a]
+            acc, nb, prev = (acc << n) | code, nb + n, a
+            while nb >= 8:
+                nb -= 8
+                data.append((acc >> nb) & 0xFF)
+        if nb:
+            data.append((acc << (8 - nb)) & 0xFF)
+    return data, offs
+
+
 def main(out):
     lines = [f"/* generated by tools/gen_font.py: font set {FONTSET} */",
              "#pragma once", "#include <stdint.h>", f"#define FONT_PAD {PAD}  /* x scale for L, see below */", ""]
+    if TRIM:
+        lines[-1:] = ["#define FONT_TRIM 1  /* each glyph its lit box: left, top, rows, then the rows (FM1_FONT_TRIM) */", ""]
+    if PACK:
+        lines[-1:] = [f"#define FONT_PACK 1  /* the rows' alphas Huffman-coded, {HUF_CODES} codes first (FM1_FONT_PACK) */",
+                      f"#define FONT_HUF_LEN {HUF_LEN}", f"#define FONT_HUF_SZ {HUF_LEN + 16}", ""]
+    box_max = 0                 # the largest glyph box's alphas (FONT_BOX_MAX: device/gfx.c APP_FONT_CACHE holds one)
     for name, ttf, px, scale, pixel, first, last in SIZES:
         h, glyphs = render(ttf, px, scale, pixel, first, last)
         data, offs = [], []
+        bws, boxes = [], []
         for adv, bw, g in glyphs:
             offs.append(len(data))
-            for y in range(h):
-                row = g[y * bw:(y + 1) * bw] + [0]
-                for x in range(0, bw, 2):
+            x0, y0, w, n = 0, 0, bw, h
+            if TRIM:
+                x0, y0, w, n = lit_box(g, bw, h)
+                data += [x0, y0, n]
+            bws.append(w)
+            box_max = max(box_max, w * n)
+            boxes.append(([x0, y0, n], [a for y in range(y0, y0 + n) for a in g[y * bw + x0:y * bw + x0 + w]]))
+            for y in range(y0, y0 + n):
+                row = g[y * bw + x0:y * bw + x0 + w] + [0]
+                for x in range(0, w, 2):
                     data.append((row[x] << 4) | row[x + 1])
+        if PACK:
+            raw = len(data)
+            data, offs = pack_face(boxes)
+            print(f"font {name}: packed {raw} B -> {len(data)} B")
         assert len(data) < 65536
         lines.append(f"static const uint8_t FONT_{name}_DATA[{len(data)}] = {{")
         for i in range(0, len(data), 24):
@@ -192,11 +305,14 @@ def main(out):
         lines.append(f"static const uint8_t FONT_{name}_ADV[{len(glyphs)}] = {{" +
                      ", ".join(str(a) for a, _, _ in glyphs) + "};")
         lines.append(f"static const uint8_t FONT_{name}_BW[{len(glyphs)}] = {{" +
-                     ", ".join(str(b) for _, b, _ in glyphs) + "};")
+                     ", ".join(map(str, bws)) + "};")
         lines.append(f"static const felucca_font_t FONT_{name} = {{ {h}, {PAD * scale}, {first}, {last}, "
                      f"FONT_{name}_ADV, FONT_{name}_BW, FONT_{name}_OFF, FONT_{name}_DATA }};")
         lines.append("")
         print(f"font {name}: {ttf} {px}px h {h}, digit adv {glyphs[ord('0') - first][0]}, {len(data)} B")
+    if PACK:
+        lines.append(f"#define FONT_BOX_MAX {box_max}  /* the largest glyph's alphas (device/gfx.c APP_FONT_CACHE: at least this) */")
+        lines.append("")
     print(f"font set {FONTSET}: {sum(len(l) for l in lines if l.startswith('    0x')) // 6} B (approx)")
     Path(out).write_text("\n".join(lines))
 

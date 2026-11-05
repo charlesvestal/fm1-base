@@ -36,6 +36,14 @@ run lock sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/lock_tes
 # shim_irq_save / shim_irq_restore (the radio's) over a simulated interrupt enable: inside an interrupt they leave
 # interrupts off
 run shim_lock sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/shim_lock_test tests/shim_lock_test.c && $OUT/shim_lock_test"
+# the packed SRAM (device/app.ld) as tools/build.py reads it: one region, RAM code first, then data, bss, the pool
+run layout "$PY" tests/layout_test.py
+# the cache RAM (felucca-bsp's chip/fm1_cache_ram.h, fm1.toml cache_ram_ways) on a model of the cache's registers, tags and
+# ways: 2, 4 and 7 ways set, tested and zeroed; 0 and 8 nothing; a cache that never idles, masks not taken, a stuck bit
+# in each way: all put back, 0 bytes
+run cache-ram sh -c "$CC -std=c11 -O1 -Wall -Wextra -Werror -Ibsp/chip -o $OUT/cache_ram_test bsp/tests/cache_ram_test.c && $OUT/cache_ram_test"
+# the static stack check (tools/stack_depth.py, stack_ir.py): frames, the interrupts nested, indirect calls on the IR
+run stack_depth "$PY" tests/stack_depth_test.py
 run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/storage_test"
 run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts
@@ -47,6 +55,9 @@ run boot-pack sh tests/boot_pack_test.sh               # the boot's LZMA load im
 # the firmwares not on fm1-base): the protocol, the SAY frames, ann_later's settling
 run announce sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/announce_test tests/announce_test.c && \
     $OUT/announce_test"
+# the half rendered aside (device/audio_commit.c) over a simulated audio DMA: copied only while its half is free
+run audio-commit sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/audio_commit_test \
+    tests/audio_commit_test.c && $OUT/audio_commit_test"
 run installer "$PY" tests/install_test.py
 # finding the FM-1 from Python (tools/fm1ports.py, as web/fm1ports.js) and the tools that use it, on a fake mido
 run ports "$PY" tests/ports_test.py
@@ -56,6 +67,10 @@ run gen-words "$PY" tests/gen_words_test.py
 run ram-run "$PY" tests/ram_run_test.py
 # the check that nothing calls the chip ROM or uses its addresses (tools/romref.py): a constant kept as a number passes
 run romref "$PY" tests/romref_test.py
+# fm1.toml cpu2_stack (tools/build.py cpu2_stack_flags): the second core's job stack, its range and its stop message
+run cpu2-stack "$PY" tests/cpu2_stack_test.py
+# the check on an app's RAM code (tools/ramcode.py, plat.h PLAT_RAM_CODE): RAM -> RAM passes, into XIP fails
+run ramcode "$PY" tests/ramcode_test.py
 # the web installer's m-bootloader step (web/fm1ota.js installBoot) against a simulated FM-1, and finding the FM-1 by
 # its port (unusual names, the loader under a new name, M-VAVE's Open firmware, resume's check, package checksums),
 # and writing the resource region after it
@@ -68,6 +83,9 @@ if command -v node >/dev/null 2>&1; then
     run installer-bluetooth node tests/installer_bluetooth_test.mjs
     # the handshake: a firmware that answers M-UPGRADE 3.11's query short and its whole identity to the one with 01
     run installer-hs node tests/installer_hs_test.mjs
+    run installer-family-ports node tests/installer_family_ports_test.mjs
+    run installer-foreign-loader node tests/installer_foreign_loader_test.mjs
+    run installer-stock node tests/installer_stock_test.mjs
 else
     echo "  skip installer-boot (no node)"
 fi
@@ -109,6 +127,33 @@ else
     echo "  skip mirror-viewer, mirror-ports (no node)"
 fi
 run mirror-png "$PY" tools/fm1_mirror.py $OUT/mirror.png --from $OUT/mirror/stream.syx
+# the trimmed fonts (fm1.toml font_trim) draw what the full ones draw, pixel for pixel (every face with lower case)
+run font-trim sh -c "mkdir -p $OUT/font/full $OUT/font/trim && \
+    FM1_FONT_FULL='T XS S B M L' $PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 $PY tools/gen_font.py $OUT/font/trim/felucca_font.h && \
+    $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/full -o $OUT/font/full_test tests/font_trim_test.c && \
+    $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/trim -o $OUT/font/trim_test tests/font_trim_test.c && \
+    $OUT/font/full_test $OUT/font/full.bin && $OUT/font/trim_test $OUT/font/trim.bin && cmp $OUT/font/full.bin $OUT/font/trim.bin"
+# the packed fonts (fm1.toml font_pack: the trimmed glyphs' alphas Huffman-coded) too, pixel for pixel
+run font-pack sh -c "mkdir -p $OUT/font/full $OUT/font/pack && \
+    FM1_FONT_FULL='T XS S B M L' $PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 FM1_FONT_PACK=1 $PY tools/gen_font.py $OUT/font/pack/felucca_font.h && \
+    $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/full -o $OUT/font/full_test tests/font_trim_test.c && \
+    $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/pack -o $OUT/font/pack_test tests/font_trim_test.c && \
+    $OUT/font/full_test $OUT/font/full.bin && $OUT/font/pack_test $OUT/font/pack.bin && cmp $OUT/font/full.bin $OUT/font/pack.bin"
+# the packed fonts drawn through the decoded-glyph cache (app.h APP_FONT_CACHE, device/gfx.c font_cached) too: a cache
+# that forgets all the time (the largest glyph's bytes, 16 slots) and a roomy one
+run font-cache sh -c "mkdir -p $OUT/font/full $OUT/font/pack && \
+    FM1_FONT_FULL='T XS S B M L' $PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 FM1_FONT_PACK=1 $PY tools/gen_font.py $OUT/font/pack/felucca_font.h && \
+    $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/full -o $OUT/font/full_test tests/font_trim_test.c && \
+    $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -DAPP_FONT_CACHE=FONT_BOX_MAX -DAPP_FONT_CACHE_BITS=4 \
+        -I$OUT/font/pack -o $OUT/font/cache_small_test tests/font_trim_test.c && \
+    $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -DAPP_FONT_CACHE=6144u -DAPP_FONT_CACHE_BITS=8 \
+        -I$OUT/font/pack -o $OUT/font/cache_test tests/font_trim_test.c && \
+    $OUT/font/full_test $OUT/font/full.bin && $OUT/font/cache_small_test $OUT/font/cache_small.bin && \
+    $OUT/font/cache_test $OUT/font/cache.bin && cmp $OUT/font/full.bin $OUT/font/cache_small.bin && \
+    cmp $OUT/font/full.bin $OUT/font/cache.bin"
 run template template/build/host/template_host template/tests/basic.txt template/build/host
 # the own Bluetooth stack (bt/, Optimist's: ble_stack = "own"): its link layer, host, pairing, BLE-MIDI, central, the
 # radio driver against a fake engine, FM-1 to FM-1, and BR/EDR (A2DP) pieces; UBSan, and ASan where its runtime runs
@@ -126,5 +171,49 @@ run host-data sh -c "printf '\\022\\064\\126\\170' > $OUT/data4.bin && \
     template/build/host/template_host tests/data.txt template/build/host"
 # plat_data_write clears bits in place, as the device's NOR (tests/data_bits.txt; plat.h's promise)
 run host-data-bits template/build/host/template_host tests/data_bits.txt template/build/host
+# an app with APP_BATTERY_RAW (plat_battery_raw) in the host simulator: tests/battery_app
+run battery-app sh -c "$PY tools/build.py tests/battery_app --host && \
+    tests/battery_app/build/host/battest_host tests/battery_app/tests/battery.txt tests/battery_app/build/host"
+# an app with APP_CPU_KHZ (plat_cpu_khz) in the host simulator: tests/cpukhz_app
+run cpukhz-app sh -c "$PY tools/build.py tests/cpukhz_app --host && \
+    tests/cpukhz_app/build/host/khztest_host tests/cpukhz_app/tests/cpukhz.txt tests/cpukhz_app/build/host"
+# plat_core on both cores (cpu2 = true) in the host simulator: tests/core_app
+run core-app sh -c "$PY tools/build.py tests/core_app --host && \
+    tests/core_app/build/host/coretest_host tests/core_app/tests/core.txt tests/core_app/build/host"
+# SysEx between the computer and an app (APP_SYSEX, plat_sysex_send) in the host simulator: tests/sysex_app
+run sysex-app sh -c "$PY tools/build.py tests/sysex_app --host && \
+    tests/sysex_app/build/host/sxtest_host tests/sysex_app/tests/sysex.txt tests/sysex_app/build/host"
+# the dim lights at any brightness (APP_DIM_LEVELS, plat_dim_ns) in the host simulator: tests/dim_app
+run dim-app sh -c "$PY tools/build.py tests/dim_app --host && \
+    tests/dim_app/build/host/dimtest_host tests/dim_app/tests/dim.txt tests/dim_app/build/host"
+# the browser emulator (tools/build.py --web, emcc): the template's worklet and app.wasm under node (boot, screen, a
+# key, MIDI in and out); its optional parts' build (fm1.toml emu); then each part's own test, tests/emu_NAME_test.mjs,
+# which builds what it needs (the template is left built without parts)
+if command -v emcc >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+    export PYTHON="$PY"
+    run emu-build "$PY" tools/build.py template --web
+    run emu node tests/emu_test.mjs template/build/emu
+    run emu-parts "$PY" tests/emu_parts_test.py
+    for t in tests/emu_*_test.mjs; do
+        [ -e "$t" ] || continue
+        run "$(basename "$t" _test.mjs)" node "$t"
+    done
+    run emu-plain "$PY" tools/build.py template --web
+else
+    echo "  skip emu (no emcc or node)"
+fi
+# and in the browser emulator (web/emu/emu_web.c web_sx_in, web_sx_out_*), its app.wasm under node
+if command -v emcc >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+    run emu-sysex sh -c "$PY tools/build.py tests/sysex_app --web && node tests/sysex_web_test.mjs tests/sysex_app/build/emu"
+    run companion-web sh -c "$PY tools/build.py tests/companion_app --web && node tests/companion_web_test.mjs tests/companion_app/build/emu"
+else
+    echo "  skip emu-sysex (no emcc or node)"
+fi
+# the backup in the host simulator (backup, expect value) on a small app with backup = true: tests/backup_app (the
+# emulator's part "backup" has its own test, emu_backup_test.mjs, on the same app)
+run backup-app sh -c "$PY tools/build.py tests/backup_app --host && mkdir -p tests/backup_app/build/out && \
+    tests/backup_app/build/host/bktest_host tests/backup_app/tests/backup.txt tests/backup_app/build/out"
+# the companion services (device/companion.c) in the host simulator, through tools/fm1_companion.py: tests/companion_app
+run companion "$PY" tests/companion_test.py $OUT/companion
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL

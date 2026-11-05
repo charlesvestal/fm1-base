@@ -44,6 +44,13 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   authors = ["Name"]         the .rfm1 manifest's authors (default: the app repository's first commit's author)
   words = "words.tsv"        the screen reader's words (fm1-reader), relative to APP_DIR
   font_full = ["L"]          font roles with lower case too (by default M and L have capitals and digits only)
+  font_trim = true           each glyph stored as its lit box only (tools/gen_font.py FM1_FONT_TRIM): the same
+                             pixels drawn, the fonts about 55 % smaller in flash
+  font_pack = true           (with font_trim) each glyph's alphas Huffman-coded too (FM1_FONT_PACK), decoded as
+                             device/gfx.c draws: the same pixels, Barlow's faces about a third smaller again; text
+                             then costs about 3x the instructions, which app.h's APP_FONT_CACHE gives back: that many
+                             bytes of RAM (e.g. 6144u, at least the header's FONT_BOX_MAX) keep the glyphs drawn lately
+                             decoded, APP_FONT_CACHE_BITS (default 7) the log2 of its slots, 6 B each
   ble_stack_kb = 6           the Bluetooth tasks' stacks, KB each (default 8: three of them, in the pool; radio.c
                              logs each one's deepest, "stacks", 10 s after Bluetooth is ready and as they grow)
   ble_heap_kb = 16           its heap, KB (default 24, in RAM; the same log line's "heap": its most ever)
@@ -71,7 +78,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   mirror = true              the screen and panel mirrored over USB (FM1B_MIRROR: device/mirror.c; web/mirror/,
                              tools/fm1_mirror.py), the panel played from the host; FM1B_MIRROR=1 in the environment
                              builds it in whatever fm1.toml says (an app's demo build), FM1B_POOL_SPARE=N the
-                             pool spare the build insists on (8192 B; a demo build may spend it)
+                             spare the build insists on (8192 B of the SRAM, device/app.ld; of the pool with WiFi;
+                             a demo build may spend it)
   msc = true                 disk mode: the FM-1 as a USB drive of the app's blocks (FM1B_MSC: device/msc.c, plat_disk_* in
                              plat.h; felucca-bsp usb.c FELUCCA_MSC), no USB MIDI or audio meanwhile
   backup = true              backup and restore of the app's saved objects over USB (FM1B_BACKUP: device/backup.c;
@@ -82,11 +90,36 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              (tools/fm1_resources.py, fm1_install.py and the installer page: build/NAME-res.bin beside
                              the package); the host and web builds have it compiled in. resources_what (and
                              resources_what_ja): what it holds, in the installer's words ("the 909 cymbals")
+  companion = true           the companion services over USB (FM1B_COMPANION: device/companion.c, docs/COMPANION.md;
+                             tools/fm1_companion.py): what the firmware is and has, for a generic page or tool
   cpu2 = true                the second core (FM1B_CPU2: device/cpu2.c, plat_cpu2_* in plat.h, on felucca-bsp's
                              chip/fm1_cpu1.*): a worker for a part of the render. A failure of it (a misread, a
                              fault, a late job) restarts the FM-1, the reason in the crash record (Melodee's releases)
   cpu2_fallback = true       instead, one core after a failure, until power-off (FM1_CPU1_FALLBACK); FM1B_BUILD, a
                              hash of the sources, lifts that bar for a new build
+  cpu2_stack = 4096          its jobs' stack, bytes (FM1_CPU1_USTACK_BYTES: default 2816, the lowest 256 a guard the
+                             core's stack limit traps in), a multiple of 8, 1024..16384: an app whose jobs go deeper
+                             (plat_cpu2_stack reads how deep they went)
+  cache_ram_ways = 2         2, 4 or 7 of the data cache's 8 ways of 4 KiB used as RAM at 0x01F28000 (FM1B_CACHE_RAM:
+                             felucca-bsp's chip/fm1_cache_ram.h, plat_cache_ram in plat.h): set and tested at the start,
+                             before anything uses them; a failed test puts the cache back and gives 0 bytes. The ways
+                             kept are the flash's data cache: fewer of them make big flash reads slower (7 as RAM: 57x
+                             over 16 KiB on an FM-1; 2 in daily use there). The host: a buffer of that size stands in.
+                             An app's own objects in section .cache_ram come first (the build checks they fit)
+  main_stack = 9216          the main loop's stack (crt0's sp), bytes above its 256-byte guard band, a multiple of 256,
+  irq_stack = 6400           2048..24320 (default 24320); the interrupts' (ssp), the same, 2048..7936 (default 7936):
+                             device/app.ld's SRAM ends that much lower or higher (its free RAM, an app's arena), the
+                             reset-kept record and the stacks' tops stay. Not with wifi_stack = "jieli" (app_wifi.ld)
+  stack_check = true         the stacks' static worst (tools/stack_depth.py: the deepest call path's frames, the
+                             interrupts nested at their worst, the fault path on top) checked against those: a stack
+                             whose worst is over its size fails the build; one within it but under its margin (25 % or
+                             1 KiB, the larger) is said. Each unit's optimised IR is written beside its code
+                             (OUT/*.opt.ll: the indirect calls' targets, stack_ir.py). stack_bounds: an app's
+                             function that calls itself at most N levels deep (its source's own bound): ["f=N", ..]
+  emu = ["midi", "data"]     the browser emulator's optional parts (--web): web/emu/parts/NAME.js on the page and
+                             NAME_worklet.js in the worklet, each file saying what it does; a part's own needs come
+                             with it; FM1B_EMU_NAME=1 for the C. FM1B_EMU="midi data" in the environment instead (""
+                             for none). Without any, the page, the worklet and app.wasm are what they were
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
 app.h); the build prints what it has.
   boot_pack = true           .ram_text and .data stored LZMA-packed (tools/boot_pack.py, Melodee's; device/boot_lzma.h): the
@@ -116,6 +149,13 @@ app.h); the build prints what it has.
                              `ir_pass IN.ll OUT.ll [UNIT]` (UNIT: an o2 unit's path relative to APP_DIR; none for
                              unity.c), then compiles OUT.ll at the unit's level (an app marking its cold code
                              minsize: Melodee's idea). Without changes the round trip makes the same code
+The app's own code that runs from RAM (out of the XIP cache's way: an audio path) goes in section .app_ram (plat.h
+PLAT_RAM_CODE): copied at boot with .ram_text, inside the guard's RAM code window (between _ar_start and _ar_end). It
+may call only RAM code, to any depth, and nothing through a pointer (tools/ramcode.py, over the disassembly). XIP code
+calls it through a pointer (PLAT_FAR: a direct call does not reach); a call from it into XIP, direct or through a
+pointer, the check refuses, unless:
+  ram_code_allow = ["fn"]    the app's RAM functions whose calls out of RAM or through a pointer it vouches for (a cold
+                             path; a pointer that only holds RAM code); printed by every build
 The second core's code that runs from RAM goes in section .c1_text: in .ram_text (copied at boot, inside the guard's
 RAM code window), between _c1_start and _c1_end; the check that RAM code calls nothing in the flash leaves it out
 (core 1 runs only while core 0 waits for it in the audio interrupt, and core 0 turns the flash off only with
@@ -140,6 +180,7 @@ SRC = Path(__file__).resolve().parents[1]        # fm1-base
 BSP = SRC / "bsp"                                 # felucca-bsp (git submodule)
 APP = OUT = GEN = LDR = ROOT = None               # set by main() from APP_DIR
 CONF = {}
+LAYOUT = {}                                       # the linked script's MEMORY regions: {name: (origin, length)}
 sys.path.insert(0, str(SRC / "tools"))
 import fm1pkg_make  # noqa: E402
 import boot_pack  # noqa: E402
@@ -282,7 +323,9 @@ def generate():
     tools = SRC / "tools"
     for c in [[tools / "gen_font.py", GEN / "felucca_font.h"],
               [tools / "gen_words.py", APP / CONF.get("words", "words.tsv"), APP / "web" / "words", GEN / "ann_words.h"]]:
-        env = {**os.environ, "FM1_FONT_FULL": " ".join(CONF.get("font_full", []))}
+        env = {**os.environ, "FM1_FONT_FULL": " ".join(CONF.get("font_full", [])),
+               "FM1_FONT_TRIM": "1" if CONF.get("font_trim") else "",
+               "FM1_FONT_PACK": "1" if CONF.get("font_pack") else ""}
         r = subprocess.run([sys.executable, *map(str, c)], capture_output=True, text=True, env=env)
         sys.stdout.write(r.stdout)
         if r.returncode:
@@ -615,8 +658,26 @@ def radio_units():
     return units, objs, libs
 
 
+def cache_ram_ways():
+    """fm1.toml cache_ram_ways: the data cache's ways used as RAM, 0 (none: off), 2, 4 or 7 (FM1B_CACHE_RAM=N in the
+    environment over it)"""
+    v = os.environ.get("FM1B_CACHE_RAM")
+    n = int(v) if v is not None and v.isdigit() else CONF.get("cache_ram_ways", 0)
+    if not isinstance(n, int) or isinstance(n, bool) or n not in (0, 2, 4, 7):
+        raise SystemExit(f"fm1.toml cache_ram_ways {n!r}: 0, 2, 4 or 7 (of the data cache's 8 ways)")
+    return n
+
 
 BOOT_PACKED = None                                # (raw, packed) bytes of the boot-packed load images, or None
+def cpu2_stack_flags():
+    """fm1.toml cpu2_stack: the second core's job stack, for its entry's unit and the platform's (none: felucca-bsp's
+    2816 B, the build as before)"""
+    n = CONF.get("cpu2_stack")
+    if n is None:
+        return []
+    if not isinstance(n, int) or isinstance(n, bool) or n % 8 or not 1024 <= n <= 16384:
+        raise SystemExit(f"fm1.toml cpu2_stack {n!r}: bytes, a multiple of 8, 1024..16384")
+    return [f"-DFM1_CPU1_USTACK_BYTES={n}"]
 
 
 def build_app():
@@ -666,6 +727,7 @@ def build_app():
         flags.append(f'-DAPP_VERSION="{VERSION}"')
     if CPU2:
         flags += ["-DFM1_CPU1=1", f"-DFM1B_BUILD={build_id():#010x}u", f"-DFM1_CPU1_FALLBACK={int(bool(CONF.get('cpu2_fallback')))}"]
+        flags += cpu2_stack_flags()
     o2 = [f if f != "-Os" else "-O2" for f in flags]
     unity_opt = CONF.get("unity_opt", "s")        # the unity build's level: -Os, or -Oz (the o2 units stay -O2)
     if unity_opt not in ("s", "z"):
@@ -679,7 +741,7 @@ def build_app():
              ("cc", *flags, *ir_out, "-c", SRC / "device" / "unity.c", "-o", OUT / ("unity.ll" if ir else "unity.o"))]
     objs = [OUT / "crt0.o", OUT / "fm1_vec.o", OUT / "fm1_isr.o", OUT / "unity.o"]
     if CPU2:                                      # the second core's entry and stacks
-        units.append(("cc", "-c", BSP / "chip" / "fm1_cpu1.S", "-o", OUT / "fm1_cpu1.o"))
+        units.append(("cc", *cpu2_stack_flags(), "-c", BSP / "chip" / "fm1_cpu1.S", "-o", OUT / "fm1_cpu1.o"))
         objs.append(OUT / "fm1_cpu1.o")
     for a in CONF.get("asm", []):                 # the app's own assembly units
         o = OUT / ("asm_" + "_".join((APP / a).relative_to(APP).with_suffix("").parts) + ".o")
@@ -710,16 +772,24 @@ def build_app():
         for f, o in o2_units:
             ir_pass(o.with_suffix(".ll"), o.with_suffix(".pass.ll"), str(f.relative_to(APP)))
         opt = [f for f in flags if not f.startswith(("-I", "-D", "-W"))]
-        tc_all(("cc", *opt, "-c", OUT / "unity.pass.ll", "-o", OUT / "unity.o"),
-               *[("cc", *[f if f not in ("-Os", "-Oz") else "-O2" for f in opt], "-c", o.with_suffix(".pass.ll"), "-o", o)
-                 for _, o in o2_units])
+        cg = [("cc", *opt, "-c", OUT / "unity.pass.ll", "-o", OUT / "unity.o"),
+              *[("cc", *[f if f not in ("-Os", "-Oz") else "-O2" for f in opt], "-c", o.with_suffix(".pass.ll"), "-o", o)
+                for _, o in o2_units]]
+        if os.environ.get("FM1B_OPT_IR") == "1" or CONF.get("stack_check"):   # each unit's IR as its code is made from it (the optimiser's
+            # output, the backend's input: tools/stack_depth.py resolves the indirect calls on it)
+            cg += [(*c[:-4], "-S", "-emit-llvm", c[-3], "-o", Path(str(c[-1])).with_suffix(".opt.ll")) for c in cg]
+        tc_all(*cg)
     elf = OUT / (NAME + ".elf")
     # unreferenced functions (each in its own section: -ffunction-sections) are dropped: the DSP keeps
     # mono reference paths for the host tests that the firmware no longer calls. The BT libraries are LTO
     # bitcode: the linker needs the toolchain's LLVM plugin
     lto = ["--plugin", "/opt/jieli/pi32v2/bin/LLVMgold.so" if use_docker() else str(toolchain() / "pi32v2/bin/LLVMgold.so"),
            f"--plugin-opt=mcpu={CPU}", "--plugin-opt=-pi32v2-large-program=true"] if jieli else []
+    global LAYOUT
     ld = SRC / "device" / ("app_wifi.ld" if WIFI else "app.ld")
+    if not WIFI and stacks() != STACKS:          # (other stack sizes: the SRAM's end and the bands moved)
+        ld = stack_script(ld)
+    LAYOUT = memory_regions(ld.read_text())
     tc("pi32v2/bin/ld", *lto, "--gc-sections", "-e", "_start", "-T", ld, *objs, *b_objs,
        *b_libs, "-o", elf)
     for sect in ("text.bin", "data.bin", "ramtext.bin"):
@@ -764,6 +834,82 @@ def build_app():
     return bytes(img), syms, dis, rt
 
 
+STACKS = (24320, 7936)          # device/app.ld's main and interrupt stacks, each above a 256-byte guard band
+STACK_TOP = 0x01C7C000          # (the interrupts' top: the reset-kept record, NOINIT, is above it)
+
+
+def stacks():
+    """fm1.toml main_stack / irq_stack -> (main, irq) bytes"""
+    out = []
+    for key, dflt, lo in (("main_stack", STACKS[0], 2048), ("irq_stack", STACKS[1], 2048)):
+        n = CONF.get(key, dflt)
+        if not isinstance(n, int) or n % 256 or not lo <= n <= dflt:
+            raise SystemExit(f"build: fm1.toml {key} = {n}: a multiple of 256, {lo}..{dflt}")
+        out.append(n)
+    if WIFI and tuple(out) != STACKS:
+        raise SystemExit("build: fm1.toml main_stack / irq_stack: not with JieLi's Wi-Fi (app_wifi.ld's fixed map)")
+    return tuple(out)
+
+
+def stack_script(ld):
+    """-> OUT/app.ld with the stacks of fm1.toml (stacks()): each above its guard band, under the interrupts' top
+    (STACK_TOP); SRAM up to the first band (the ASSERT keeps them together)"""
+    main, irq = stacks()
+    g1 = STACK_TOP - irq - 256
+    g0 = g1 - main - 256
+    text = ld.read_text()
+    text, n1 = re.subn(r"(SRAM\s*\(rwx\)\s*:\s*ORIGIN = 0x01C00000, LENGTH = )0x74000", rf"\g<1>{g0 - 0x01C00000:#x}", text)
+    text, n2 = re.subn(r"_guard0 = 0x01C74000; _ustack_lo = 0x01C74100; _ustack_top = 0x01C7A000;",
+                       f"_guard0 = {g0:#010x}; _ustack_lo = {g0 + 256:#010x}; _ustack_top = {g1:#010x};", text)
+    text, n3 = re.subn(r"_guard1 = 0x01C7A000; _sstack_lo = 0x01C7A100; _sstack_top = 0x01C7C000;",
+                       f"_guard1 = {g1:#010x}; _sstack_lo = {g1 + 256:#010x}; _sstack_top = {STACK_TOP:#010x};", text)
+    if (n1, n2, n3) != (1, 1, 1):
+        raise SystemExit(f"build: {ld.name}: the stacks' lines not found (main_stack / irq_stack)")
+    out = OUT / ld.name
+    out.write_text(text)
+    return out
+
+
+def stack_check(dis):
+    """fm1.toml stack_check: (errors, notes) of the stacks' static worst (tools/stack_depth.py) against their sizes"""
+    import stack_depth
+    irs = [p.read_text(errors="replace") for p in sorted(OUT.rglob("*.opt.ll"))]
+    if not irs:
+        return ["stack_check: no optimised IR (OUT/*.opt.ll)"], []
+    words = stack_depth.elf_words(OUT / (NAME + ".elf"))
+    bounds = {k: int(v) for k, v in (b.split("=") for b in CONF.get("stack_bounds", []))}
+    r = stack_depth.analyse(dis, words, irs, bounds)
+    errors, notes = [], []
+    bad = {k: v for k, v in r["notes"].items() if v and k in ("recursion", "var", "indirect, all taken")}
+    if stack_depth.STRADDLE:
+        bad["tables' ends"] = stack_depth.STRADDLE[:8]
+    for k, v in bad.items():
+        errors.append(f"stack_check: {k}: {', '.join(v[:8])} (not bounded: tools/stack_depth.py)")
+    main, irq = stacks()
+    for what, d, path, size in (("main", r["main"][0], r["main"][1], main),
+                                ("interrupt", r["irq_total"], [p[2][-1] for p in r["irq"] if p[2]], irq)):
+        line = f"{what} stack: {d:,} B at most (static) of {size:,} ({' > '.join(path[-4:])})"
+        if d > size:
+            errors.append(f"{line}: over (fm1.toml {'main' if what == 'main' else 'irq'}_stack)")
+        elif stack_depth.need(d) > size:
+            notes.append(f"{line}: under its margin, {stack_depth.need(d):,} B wanted")
+        else:
+            notes.append(line)
+    return errors, notes
+
+
+def memory_regions(script):
+    """a linker script's MEMORY regions: {name: (origin, length)} (lengths in hex, decimal or K)"""
+    block = re.search(r"\bMEMORY\s*\{(.*?)\}", script, re.S)
+    if not block:
+        raise SystemExit("build: the linker script has no MEMORY block")
+
+    def num(v):
+        return int(v[:-1]) * 1024 if v.endswith("K") else int(v, 0)
+    return {m.group(1): (num(m.group(2)), num(m.group(3))) for m in re.finditer(
+        r"^\s*(\w+)\s*\([a-z]+\)\s*:\s*ORIGIN\s*=\s*(\w+)\s*,\s*LENGTH\s*=\s*(\w+)", block.group(1), re.M)}
+
+
 def mul64_near_loads(dis, window=4):
     """functions with a load in flight beside a 32x32->64-bit multiply (rN_rM = rA * rB): one up to two instructions
     before it, or one after it before its product is used (using it waits for the multiply). On the FM-1 such code
@@ -802,6 +948,7 @@ def mul64_near_loads(dis, window=4):
 
 
 def check(img, syms, dis, rt):
+    import ramcode                                # (tools/, on the path above)
     errors, notes = [], []
     m = re.search(r"^([0-9a-f]+) .*\s_start$", syms, re.M)
     if not m or int(m.group(1), 16) != APP_XIP:
@@ -812,14 +959,25 @@ def check(img, syms, dis, rt):
           for m2 in [re.search(r"^([0-9a-f]+) .*\s" + n + r"$", syms, re.M)] if m2]
     in_c1 = (lambda ln: (mm2 := LINE.match(ln)) is not None and c1[0] <= int(mm2.group(1), 16) < c1[1]) \
         if len(c1) == 2 else (lambda ln: False)   # (the second core's loop: it may call into the flash, see the top)
-    rt_calls = [ln for ln in rt.splitlines() if re.search(r"\bcall\b", ln) and not in_c1(ln)]
+    ar = [symv for n in ("_ar_start", "_ar_end") for symv in [ramcode.symbol(syms, n)] if symv is not None]
+    in_ar = (lambda ln: (mm2 := LINE.match(ln)) is not None and ar[0] <= int(mm2.group(1), 16) < ar[1]) \
+        if len(ar) == 2 else (lambda ln: False)   # (the app's RAM code: checked apart, tools/ramcode.py)
+    rt_calls = [ln for ln in rt.splitlines() if re.search(r"\bcall\b", ln) and not in_c1(ln) and not in_ar(ln)]
     jieli = (BLE and not OWN) or WIFI
     if rt_calls and jieli:          # JieLi's .volatile_ram_code calls out; it runs with the flash on
         notes.append(f"the radio: .ram_text contains calls (JieLi's .volatile_ram_code): {rt_calls[:3]}")
     elif rt_calls:                  # RAM code runs with the flash off: no calls into XIP
         errors.append(f".ram_text contains calls: {rt_calls[:3]}")
     else:
-        notes.append(f".ram_text: {len([ln for ln in rt.splitlines() if LINE.match(ln)])} insns, no calls")
+        insns = [ln for ln in rt.splitlines() if LINE.match(ln) and not in_ar(ln)]
+        notes.append(f".ram_text: {len(insns)} insns, no calls")
+    if CONF.get("stack_check"):
+        st_errors, st_notes = stack_check(dis)
+        errors += st_errors
+        notes += st_notes
+    ar_errors, ar_notes = ramcode.check(syms, dis, CONF.get("ram_code_allow", []))
+    errors += ar_errors
+    notes += ar_notes
     import romref                                 # nothing may call the chip ROM or use its addresses (tools/romref.py;
     for val in romref.rom_refs(dis, set(CONF.get("rom_check_skip", []))):   # rom_check_skip: a vendored function whose
         errors.append(f"reference to ROM address {val:#010x}")              # constant only looks like a ROM address)
@@ -858,12 +1016,31 @@ def check(img, syms, dis, rt):
     def sym(name):
         mm = re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M)
         return int(mm.group(1), 16) if mm else 0
-    bss = sym("_bss_end") - 0x01C08000
-    pool = sym("_pool_end") - sym("_pool_start")
-    ram, pool_max, spare = (128 * 1024, 0x4C000, 2048) if WIFI else (96 * 1024, 0x54000, 8192)   # (app_wifi.ld)
+    rt, bss, pool = (sym("_rt_end") - sym("_rt_start"), sym("_bss_end") - sym("_data_start"),
+                     sym("_pool_end") - sym("_pool_start"))
+    spare = 2048 if WIFI else 8192
+    cr_ways, cr_used = cache_ram_ways(), sym("_cr_end") - sym("_cr_start")   # the cache RAM's own objects (.cache_ram)
+    if cr_used > cr_ways * 4096:
+        errors.append(f".cache_ram {cr_used} B in {cr_ways} cache ways ({cr_ways * 4096} B; fm1.toml cache_ram_ways)")
+    elif cr_ways:
+        notes.append(f"cache RAM: {cr_ways} data-cache ways ({cr_ways * 4096} B), {cr_used} B of objects in .cache_ram, "
+                     f"{cr_ways * 4096 - cr_used} B for the app (plat_cache_ram, after its test at the start)")
     if os.environ.get("FM1B_POOL_SPARE", "").isdigit():   # an app's own build for itself (a demo build with mirror)
         spare = int(os.environ["FM1B_POOL_SPARE"])
-    notes.append(f"image {len(img)} B; RAM .data+.bss {bss} B of {ram}; pool {pool} B of {pool_max}")
+    if "SRAM" in LAYOUT:                          # device/app.ld: one packed region, one budget
+        org, size = LAYOUT["SRAM"]
+        used = sym("_pool_end") - org
+        notes.append(f"image {len(img)} B; SRAM {used} B of {size}: RAM code {rt} B, .data+.bss {bss} B, pool {pool} B; "
+                     f"free {size - used} B ({spare} kept spare)")
+        if size - used < spare:                   # keep some of the SRAM spare
+            errors.append(f"SRAM headroom {size - used} B < {spare} B")
+        if BOOT_PACKED:                           # the boot decoder runs from the flash alone (tools/boot_pack.py)
+            errors += boot_pack.check_decoder(syms, dis, APP_XIP, APP_XIP + APP_SLOT)
+            notes.append(f"boot_pack: .ram_text + .data {BOOT_PACKED[0]} B stored as {BOOT_PACKED[1]} B (LZMA, unpacked at boot)")
+        return errors, notes
+    (_, rt_max), (_, ram), (_, pool_max) = LAYOUT["RAMTEXT"], LAYOUT["RAM"], LAYOUT["POOL"]   # (app_wifi.ld)
+    notes.append(f"image {len(img)} B; RAM code .ram_text {rt} B of {rt_max}; RAM .data+.bss {bss} B of {ram}; "
+                 f"pool {pool} B of {pool_max}")
     if BOOT_PACKED:                               # the boot decoder runs from the flash alone (tools/boot_pack.py)
         errors += boot_pack.check_decoder(syms, dis, APP_XIP, APP_XIP + APP_SLOT)
         notes.append(f"boot_pack: .ram_text + .data {BOOT_PACKED[0]} B stored as {BOOT_PACKED[1]} B (LZMA, unpacked at boot)")
@@ -983,9 +1160,17 @@ def build_id():
 
 def opt_flags():
     """the optional parts an fm1.toml turns on that need no SDK: the same on the device, the host and the web"""
-    return [f"-D{flag}=1" for key, flag in (("mirror", "FM1B_MIRROR"), ("backup", "FM1B_BACKUP"), ("cpu2", "FM1B_CPU2"), ("usb_host", "FM1B_USB_HOST"), ("msc", "FM1B_MSC"),
-                                                    ("resources", "FM1B_RES"))
+    flags = [f"-D{flag}=1" for key, flag in (("mirror", "FM1B_MIRROR"), ("backup", "FM1B_BACKUP"), ("cpu2", "FM1B_CPU2"), ("usb_host", "FM1B_USB_HOST"), ("msc", "FM1B_MSC"),
+                                           ("resources", "FM1B_RES"), ("companion", "FM1B_COMPANION"))
             if (CONF.get(key) and os.environ.get(flag) != "0") or os.environ.get(flag) == "1"]   # (FM1B_MIRROR=1: a build with it, fm1.toml as it is; FM1B_BACKUP=0: without)
+    if cache_ram_ways():
+        flags.append(f"-DFM1B_CACHE_RAM={cache_ram_ways()}")   # (the host and the web: plat_cache_ram's stand-in)
+    if "-DFM1B_COMPANION=1" in flags and PRODUCT:
+        flags.append(f'-DFELUCCA_ID="{PRODUCT}"')   # (the capability query's identity in the simulator and the browser too:
+                                                 # the device's build passes it anyway: the same define twice)
+    if "-DFM1B_COMPANION=1" in flags and "-DFM1B_BACKUP=1" in flags:
+        flags.append(f'-DFM1B_BACKUP_EXT="{CONF.get("backup_ext", "bak")}"')   # (the capability query tells the backup's extension)
+    return flags
 
 
 def build_host():
@@ -1009,6 +1194,85 @@ def build_host():
     return 0
 
 
+EMU_PARTS = SRC / "web" / "emu" / "parts"
+
+
+def emu_parts():
+    """the browser emulator's optional parts: fm1.toml emu = [...] (or FM1B_EMU="a b" in the environment), each one
+    web/emu/parts/NAME.js (the page's) and / or NAME_worklet.js (the worklet's); a part's file may start with a line
+    "// emu-needs: a b", parts it needs, which come before it. Names are lower-case letters and digits ("parts" is the
+    mechanism, web/emu/parts/parts.js and parts_worklet.js); NAME_*.js are a part's other files"""
+    env = os.environ.get("FM1B_EMU")
+    asked = re.split(r"[,\s]+", env.strip()) if env is not None else list(CONF.get("emu", []))
+    asked = [p for p in asked if p]
+    known = sorted({m[1] for f in EMU_PARTS.glob("*.js") if (m := re.fullmatch(r"([a-z0-9]+)(_worklet)?\.js", f.name))}
+                   - {"parts"}) if EMU_PARTS.is_dir() else []
+    out = []
+
+    def needs(p):
+        got = []
+        for f in (EMU_PARTS / f"{p}.js", EMU_PARTS / f"{p}_worklet.js"):
+            if f.exists():
+                m = re.match(r"(?://[^\n]*\n){0,4}//\s*emu-needs:([^\n]*)", f.read_text())
+                got += m[1].split() if m else []
+        return got
+
+    def add(p, chain):
+        if p not in known:
+            raise SystemExit(f"fm1.toml emu: no part {p!r} (web/emu/parts has: {', '.join(known) or 'none'})")
+        if p in chain:
+            raise SystemExit(f"web/emu/parts: {' -> '.join(chain + [p])} need each other")
+        if p not in out:
+            for n in needs(p):
+                add(n, chain + [p])
+            out.append(p)
+    for p in asked:
+        add(p, [])
+    return out
+
+
+def emu_parts_out(emu, parts):
+    """the app's own part of the page and of the worklet (APP_DIR/web/emu/app.js, app_worklet.js) as they are; with
+    parts, app.js and app_worklet.js are made to load the parts (web/emu/parts/parts.js, parts_worklet.js) and the app's
+    own files under new names (app_own.js, app_own_worklet.js). What an earlier build with other parts left goes"""
+    import json
+    import shutil
+    own = {f: APP / "web" / "emu" / f for f in ("app.js", "app_worklet.js") if (APP / "web" / "emu" / f).exists()}
+    for f in ("app.js", "app_worklet.js", "app_own.js", "app_own_worklet.js"):
+        if (emu / f).exists():
+            (emu / f).unlink()
+    if (emu / "parts").exists():
+        shutil.rmtree(emu / "parts")
+    if not parts:
+        for f, src in own.items():
+            shutil.copy(src, emu / f)
+        return
+    (emu / "parts").mkdir()
+    for p in ["parts", *parts]:
+        for f in sorted(EMU_PARTS.glob(f"{p}*.js")):
+            if re.fullmatch(rf"{p}(_[a-z0-9_]+)?\.js", f.name):
+                shutil.copy(f, emu / "parts" / f.name)
+    if "app.js" in own:
+        shutil.copy(own["app.js"], emu / "app_own.js")
+    if "app_worklet.js" in own:
+        shutil.copy(own["app_worklet.js"], emu / "app_own_worklet.js")
+    page = [p for p in parts if (EMU_PARTS / f"{p}.js").exists()]
+    (emu / "app.js").write_text(
+        "// made by tools/build.py: the emulator's parts (fm1.toml emu) and the app's own part of the page\n"
+        'import { compose } from "./parts/parts.js";\n'
+        + "".join(f'import * as {p} from "./parts/{p}.js";\n' for p in page)
+        + ('import * as own from "./app_own.js";\n' if "app.js" in own else "const own = {};\n")
+        + f"export const {{ attach, message }} = compose({{ {', '.join(page)} }}, own, "
+        + f"{{ id: {json.dumps(NAME)}, name: {json.dumps(CONF.get('name', NAME))}, "
+        + f"backupExt: {json.dumps(CONF.get('backup_ext', 'bak'))} }});\n")
+    (emu / "app_worklet.js").write_text(
+        "// made by tools/build.py: the app's own part of the worklet, then the emulator's parts (fm1.toml emu)\n"
+        + ('import "./app_own_worklet.js";\n' if "app_worklet.js" in own else "")
+        + 'import "./parts/parts_worklet.js";\n'
+        + "".join(f'import "./parts/{p}_worklet.js";\n' for p in parts if (EMU_PARTS / f"{p}_worklet.js").exists()))
+    print(f"emu      parts: {' '.join(parts)}")
+
+
 def build_web():
     """the host simulator in WebAssembly (web/emu/emu_web.c) and its page, in OUT/emu; the screen reader's voice
     (eSpeak NG, GPL: a separate program the page loads) from an fm1-reader checkout next to fm1-base, if there"""
@@ -1021,8 +1285,9 @@ def build_web():
                          emu / "o2")
     o2_objs += web_objects(["-O2", "-ffp-contract=off", "-std=gnu99", "-w", "-DPLAT_HOST", "-DPLAT_WEB", *wf, *web_inc],
                            emu / "web")
+    parts = emu_parts()
     cmd = ["emcc", "-O2", "-ffp-contract=off", "-std=gnu99", "-Wall", "-Wno-unused-function", "-Wno-unused-parameter",
-           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *opt_flags(), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
+           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *opt_flags(), *(f"-DFM1B_EMU_{p.upper()}=1" for p in parts), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
            *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            *wf, "--no-entry", "-sSTANDALONE_WASM", "-sSTACK_SIZE=1048576", "-sINITIAL_MEMORY=33554432", "-sFILESYSTEM=0",
            "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *o2_objs,
@@ -1039,9 +1304,7 @@ def build_web():
     page = page.replace("{{NAME}}", CONF.get("name", NAME)).replace("{{ID}}", NAME)
     (emu / "index.html").write_text(page)
     shutil.copy(web["worklet.js"], emu / "worklet.js")
-    for f in ("app.js", "app_worklet.js"):        # the app's own part of the page and of the worklet, if any
-        if (APP / "web" / "emu" / f).exists():
-            shutil.copy(APP / "web" / "emu" / f, emu / f)
+    emu_parts_out(emu, parts)
     # next to fm1-base, or next to the app's repository (fm1-base a submodule in it)
     found = [p / "fm1-reader" / "web" for base in (SRC.parent, APP.parent.parent) for p in (base, base / "fm1-parent")
              if (p / "fm1-reader" / "web").is_dir()]
@@ -1235,6 +1498,7 @@ def main():
              ("USB audio out", on("usb_audio_out", "FM1B_UAC_OUT", True) and on("usb_audio_in", "FM1B_UAC", True)),
              ("screen mirroring", bool(CONF.get("mirror")) or os.environ.get("FM1B_MIRROR") == "1"), ("backup and restore", bool(CONF.get("backup")) and os.environ.get("FM1B_BACKUP") != "0"),
              ("the second core", CPU2), ("USB MIDI host", on("usb_host", "FM1B_USB_HOST", False)),
+             ("companion services", on("companion", "FM1B_COMPANION", False)),
              ("velocity and pressure", any(re.search(r"^#define APP_TOUCH\b", f.read_text(errors="ignore"), re.M)
                                             for f in APP.glob("*.h")))]
     print("parts    " + ", ".join(n for n, x in parts if x) + "  (not built in: " +

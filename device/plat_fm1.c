@@ -61,6 +61,9 @@ int plat_battery(void)                           /* (a level moves once the read
         batt_bars--;
     return batt_bars;
 }
+#ifdef APP_BATTERY_RAW
+int32_t plat_battery_raw(void) { return batt_raw; }
+#endif
 
 /* LEDs: the picture is built off-line and copied one byte per column (Felucca: clearing
  * and relighting would let the 10 kHz scan catch the dark gap and flicker) */
@@ -76,16 +79,42 @@ static void led_pos_init(void)
                     led_pos[id] = (uint8_t)((p << 3) | r);
     }
 }
+#ifdef APP_DIM_LEVELS
+static uint32_t dim_ns, dim_glow;                   /* the app's pulse (0: the glow's), the glow plat_lights last got */
+static int dim_lvl = -1;                            /* the glow's strength the scan has */
+void plat_dim_ns(uint32_t ns)                       /* any width of the dim pulse (fm1_led_dim_ns clamps it) */
+{
+    dim_ns = ns;
+    if (ns)
+        fm1_led_dim_ns(ns);
+    else if (dim_glow > 0) {
+        fm1_led_dim_level(dim_glow == 1 ? 1u : 0u); /* handed back: the glow's strength again */
+        dim_lvl = (int)dim_glow;
+    } else {
+        dim_lvl = -1;                               /* (no glow now: the next one sets its strength) */
+    }
+}
+#endif
 /* the dim ones: felucca-bsp's glow, a short pulse on every scan frame, in two strengths (fm1_led_dim_level) */
 void plat_lights(uint32_t buttons, uint32_t keys, uint32_t dim_buttons, uint32_t dim_keys, int glow)
 {
+#ifndef APP_DIM_LEVELS
     static int level = -1;
+#endif
     uint8_t nl[FM1_NCOL] = {0}, dl[FM1_NCOL] = {0};
     uint32_t i, c;
+#ifdef APP_DIM_LEVELS
+    dim_glow = (uint32_t)glow;
+    if (glow > 0 && !dim_ns && glow != dim_lvl) {   /* (the app's own pulse stays until plat_dim_ns(0)) */
+        fm1_led_dim_level(glow == 1 ? 1u : 0u);
+        dim_lvl = glow;
+    }
+#else
     if (glow > 0 && glow != level) {
         fm1_led_dim_level(glow == 1 ? 1u : 0u);     /* 1: DIM LO, 2: DIM HI */
         level = glow;
     }
+#endif
     for (i = 0; i < NB + NKEYS; i++) {
         uint32_t id = i < NB ? panel.btn[i] : 14u + (i - NB);
         int on = i < NB ? (buttons >> i) & 1u : (keys >> (i - NB)) & 1u;
@@ -144,7 +173,76 @@ void plat_leds(uint32_t buttons, uint32_t keys)    /* PLAY green, unless red (re
  * that sends interrupts it) */
 static volatile uint8_t in_tick;
 #include "plat_lock.c"
-void plat_sysex_send(const uint8_t *frame, uint32_t n) { ota_wire_send(frame, n); }
+#ifdef APP_SYSEX
+/* (built for an app that talks SysEx, APP_SYSEX: another's image stays as it was, byte for byte) */
+int plat_sysex_send(const uint8_t *frame, uint32_t n) { return usb.config ? ota_wire_send(frame, n) : -1; }
+uint32_t plat_sysex_room(void)
+{
+    return !usb.config || usb.suspended || sx_busy ? 0u : (SXQ - (so_w - so_r)) * 3u;   /* (3 bytes a USB-MIDI packet) */
+}
+uint32_t plat_sysex_queued(void) { return (so_w - so_r) * 3u; }
+uint32_t plat_usb_session(void) { return usb.config ? usb.resets + 1u : 0u; }   /* (usb.c counts the bus resets) */
+/* a stream: usb.c's SysEx ring held (sx_busy: ep1_tx sends no note, ann_wire_send waits) from begin to end, a USB-MIDI
+ * packet into it each 3 bytes (CIN 4: more follow; 5..7: the last, with F7) */
+static struct {
+    uint8_t on, cut, k, acc[3];
+} sxs;
+int plat_sysex_begin(void)
+{
+    if (!usb.config || sx_busy)
+        return -1;
+    sx_busy = 1;
+    sxs.on = 1, sxs.cut = 0, sxs.k = 0;
+    return 0;
+}
+static int sxs_pkt(uint32_t cin)               /* the packet in sxs.acc into the ring, waiting while the computer reads */
+{
+    uint32_t t0 = fm1_ms, r = so_r;
+    while (so_w - so_r >= SXQ) {
+        if (so_r != r)
+            t0 = fm1_ms, r = so_r;
+        if (!usb.config || fm1_ms - t0 > PLAT_SYSEX_STALL_MS)
+            return -1;
+        ota_idle();
+    }
+    sx_out_q[so_w % SXQ] = cin | (uint32_t)sxs.acc[0] << 8 | (uint32_t)sxs.acc[1] << 16 | (uint32_t)sxs.acc[2] << 24;
+    RING_PUBLISH();
+    so_w++;
+    sxs.k = 0;
+    return 0;
+}
+int plat_sysex_put(const uint8_t *p, uint32_t n)
+{
+    uint32_t i;
+    if (!sxs.on || sxs.cut)
+        return -1;
+    for (i = 0; i < n; i++) {
+        if (sxs.k == 3u && sxs_pkt(4u)) {       /* (a full packet goes when the next byte comes: the last carries F7) */
+            sxs.cut = 1;
+            return -1;
+        }
+        sxs.acc[sxs.k++] = p[i];
+    }
+    return 0;
+}
+int plat_sysex_end(void)
+{
+    int rc = -1;
+    if (sxs.on && !sxs.cut && sxs.k) {
+        if (sxs.k < 3u)
+            sxs.acc[2] = 0;
+        if (sxs.k < 2u)
+            sxs.acc[1] = 0;
+        rc = sxs_pkt(4u + sxs.k);
+    }
+    if (sxs.on)
+        sx_busy = 0;
+    sxs.on = 0, sxs.k = 0;
+    return rc;
+}
+#else
+int plat_sysex_send(const uint8_t *frame, uint32_t n) { return ota_wire_send(frame, n); }
+#endif
 
 /* the data area and its two more windows (plat.h): read through the unencrypted XIP window (main_fm1.c
  * fl_plain_window_init, from 0x93000 up); erased and written by felucca-bsp's RAM driver (FL_RANGE_OK: the store, its
@@ -322,7 +420,29 @@ int plat_store_room(void) { return -1; }
 
 static volatile uint32_t audio_cpu_pct, audio_xruns;
 uint32_t plat_cpu_pct(void) { return audio_cpu_pct; }
+#ifdef APP_CPU_KHZ
+uint32_t plat_cpu_khz(void) { return fm1_clock_is_stock() ? 360000u : 0u; }   /* (PLL1 24 / 12 * 270 MHz, x 2/3) */
+#endif
 uint32_t plat_xruns(void) { return audio_xruns; }
 _Static_assert(PLAT_TICKS_PER_US == FM1_TICKS_PER_US, "plat_ticks24 is TIMER4's count");
 uint32_t plat_ticks24(void) { return fm1_ticks(); }
 void plat_code_window(const void *end) { fm1_guard_pc_extend((uint32_t)(uintptr_t)end); }
+uint32_t plat_core(void) { return fm1_cnum(); }
+/* the cache RAM (plat.h; felucca-bsp's fm1_cache_ram.h, set and tested in fm1_cstart): the ways less what .cache_ram
+ * holds (device/app.ld), 0 without the test passed */
+const struct plat_cache_ram *plat_cache_ram(void)
+{
+    static struct plat_cache_ram r;
+#if FM1B_CACHE_RAM
+    extern uint8_t _cr_start[], _cr_end[];
+    uint32_t all = fm1_cache_ram_bytes(), used = (uint32_t)(_cr_end - _cr_start);
+    r.ways = fm1_cr.ways;
+    r.status = fm1_cr.status;
+    r.dway = fm1_cr.dway;
+    r.iway = fm1_cr.iway;
+    r.bad_at = fm1_cr.bad_at;
+    r.bytes = all > used ? all - used : 0u;
+    r.base = r.bytes ? _cr_end : 0;
+#endif
+    return &r;
+}
