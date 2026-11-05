@@ -67,7 +67,7 @@ enum { PORT_USB, PORT_BLE, PORT_TRS, NPORTS };
 #define TO_BLE (TO_BLE_HOST | TO_BLE_DEV)
 int plat_midi_in(uint32_t *pkt, int *port);   /* 1 = got one, from port PORT_* (port may be 0) */
 /* when the last message plat_midi_in gave came in, on plat_ticks24's clock (called where plat_midi_in is): USB's and the
- * TRS jack's within 0.05 ms of landing on the FM-1 (a 10 kHz look at the endpoint and the jack's ring, inside the render
+ * TRS jack's, with fm1.toml midi_stamp = true (FM1B_MIDI_STAMP; else when it was read), within 0.05 ms of landing on the FM-1 (a 10 kHz look at the endpoint and the jack's ring, inside the render
  * too, while the 2 kHz poll that takes them may wait for it); Bluetooth's: when it was read, or with fm1.toml ble_midi_time (ble_stack = "own") when the sender stamped it, the connection's bunching taken out (the transport then comes at once, not held to the sender's time). For an app that follows a
  * clock or places notes by time; host: when it was read */
 uint32_t plat_midi_in_t24(void);
