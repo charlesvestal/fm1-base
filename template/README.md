@@ -54,7 +54,8 @@ rebuilt. For the site, download that package and give it to `publish_site.sh`, s
 3. In `fm1.toml`, set the name, an `id_prefix` of your own (`FM-1_` and digits; each firmware has its own), the USB
    names, the site's tagline, source and credits, and your name, a description, tags and your install page. The
    build writes them to `firmware.json` at your repository's root, which firmware hubs read (fm1-base's
-   docs/FIRMWARE-JSON.md); commit it.
+   docs/FIRMWARE-JSON.md); commit it. A release build refuses until your name, the description, the tags, the
+   install page, the tagline, the source and the licence are set.
 4. In `words.tsv`, set the `# url:` line to where your site publishes its words.
 5. Write your app in `app.c`: `app_render` for the sound, `app_frame` for the screen and the controls, and the rest
    of the contract in `app.h`.

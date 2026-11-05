@@ -133,7 +133,9 @@ the site's (tools/make_site.py). A key left out is left out of the file.
   install = "https://..."    the page that installs it
   site = "https://..."       its site
 The name is usb_manufacturer (else app.h's APP_NAME), the id fm1.toml's name in lower case; the hardware's features
-are the parts this build has (printed as "parts").
+are the parts this build has (printed as "parts"). A --release build of the firmware refuses without author (or
+authors), licence, tagline, description, tags, install and repo; any other build warns and writes the file without
+them.
 Outputs in APP_DIR/build/: NAME.bin (app), loader/ota.bin (update loader), NAME.fwsc (package), firmware.json
 (firmware-usb.json from --no-ble; every build writes it, --host, --web and --rfm1 too). An app in a firmware's
 repository (APP_DIR named app) also has the repository's firmware.json written, when it changes.
@@ -1221,6 +1223,8 @@ def main():
         PRODUCT = prefix + "%02d%02d%02d" % (int(m[1]), int(m[2]), int(m[3] or 0))
         VERSION = a.release.upper()
         name = f"{STEM}-{a.release}.fwsc"
+    # a release package needs firmware.json's keys; the simulator, the emulator, the .rfm1 and dev builds only warn
+    firmware_json.require(CONF, bool(a.release) and not (a.host or a.web or a.rfm1), APP / "fm1.toml")
     touch = any(re.search(r"^#define APP_TOUCH\b", f.read_text(errors="ignore"), re.M) for f in APP.glob("*.h"))
     words = firmware_json.words_published(APP / CONF.get("words", "words.tsv"))
     have = firmware_json.parts(CONF, BLE, OWN, WIFI, CPU2, touch, words)

@@ -41,6 +41,9 @@ FEATURE_NAMES = tuple(f for f, _ in FEATURES)
 # the models a firmware on fm1-base runs on
 MODELS = ("FM-1",)
 
+# the fm1.toml keys a release build needs (a dev build only warns without them); author may be the .rfm1's authors
+REQUIRED = ("author", "licence", "tagline", "description", "tags", "install", "repo")
+
 # the order of the file's keys
 KEYS = ("schema", "id", "name", "author", "license", "tagline", "description", "tags", "install", "site", "source",
         "hardware", "credits")
@@ -101,6 +104,27 @@ def display_name(conf, app_dir):
         if m:
             return m[1]
     return conf.get("name", Path(app_dir).name)
+
+
+def missing(conf):
+    """the REQUIRED keys fm1.toml leaves out or leaves empty, in REQUIRED's order"""
+    have = {k for k in REQUIRED if conf.get(k) not in (None, "", [])}
+    if conf.get("authors"):
+        have.add("author")
+    return [k for k in REQUIRED if k not in have]
+
+
+def require(conf, release, toml="fm1.toml"):
+    """a release build (release true) refuses an fm1.toml without the REQUIRED keys; any other build prints one
+    warning line naming them and goes on. Returns the missing keys"""
+    gone = missing(conf)
+    if gone and release:
+        raise SystemExit(f"{toml}: a release needs {', '.join(gone)} (firmware.json, for firmware hubs: "
+                         f"fm1-base's docs/FIRMWARE-JSON.md says what each is)")
+    if gone:
+        print(f"warning: {toml} has no {', '.join(gone)}: firmware.json goes without them, and a release build "
+              f"refuses (docs/FIRMWARE-JSON.md)")
+    return gone
 
 
 def _url(conf, key):

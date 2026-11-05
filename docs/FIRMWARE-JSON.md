@@ -10,6 +10,8 @@ tools/build.py writes it on every build, from fm1.toml and the parts the build t
 `fm1-ctl/app`) it also writes the repository's `firmware.json`, only when its content has changed. fm1-base's own
 template gets only `template/build/firmware.json`.
 
+It has no version: it describes the firmware, not a release, and the release's package carries its own.
+
 The format was shaped after Schwung's module catalog and RemoteFM1's metadata proposal
 (Quixotic7/RemoteFM1FW, docs/REMOTEFM1-METADATA.md). Its JSON Schema is [firmware.schema.json](firmware.schema.json).
 
@@ -61,6 +63,16 @@ CTL-1's:
 
 URLs are `https://` addresses. The build writes the keys in this order, with a 2-space indent and each list of
 strings on one line, in UTF-8 with a newline at the end.
+
+## What a release needs
+
+A release build (`tools/build.py APP_DIR --release X.Y`, as `./build.sh --release X.Y` and the release workflow run
+it) refuses until fm1.toml has all of these, and names the ones missing:
+
+`author` (or `authors`), `licence`, `tagline`, `description`, `tags`, `install` and `repo`.
+
+Any other build (a dev build, `--host`, `--web`, `--rfm1`) prints one warning line naming the missing keys and writes
+the file without them. `site` and `credits` are never required.
 
 ## Tags
 

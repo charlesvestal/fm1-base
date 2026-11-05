@@ -2,10 +2,13 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Charles Vestal
 """tools/firmware_json.py: firmware.json for a few fm1.toml files (no Bluetooth; every part; a key left out; an
-unknown tag or a long description refused), where a build writes it, the flash parts against device/fm1_flash_ok.h,
+unknown tag or a long description refused), the keys a release needs (refused without them, a dev build warned),
+where a build writes it, the flash parts against device/fm1_flash_ok.h,
 and the vocabularies the same in the code, docs/firmware.schema.json and docs/FIRMWARE-JSON.md. The output is
 checked against the schema when jsonschema is there.
   python3 tests/firmware_json_test.py"""
+import contextlib
+import io
 import json
 import re
 import sys
@@ -133,6 +136,47 @@ ok(not refused(lambda: F.make({**base, "description": "x" * 600}, "x", "X", {}),
    "one of 600 taken")
 ok(refused(lambda: F.make({**base, "install": "http://example.org/"}, "x", "X", {}), "https"),
    "an install page not https refused")
+
+# what a release needs: refused without, by name; any other build warned on one line
+full = {k: "x" for k in F.REQUIRED} | {"tags": ["synth"]}
+
+
+def warned(conf):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        gone = F.require(conf, False)
+    return gone, out.getvalue()
+
+
+ok(F.REQUIRED == ("author", "licence", "tagline", "description", "tags", "install", "repo"), "the keys a release needs")
+ok(F.missing(full) == [] and F.require(full, True) == [], "a release with all of them: taken")
+ok(F.missing({**full, "author": "", "authors": ["A", "B"]}) == [], "  authors (the .rfm1's) for author")
+lacking = {k: v for k, v in full.items() if k not in ("tags", "install")} | {"description": ""}
+ok(F.missing(lacking) == ["description", "tags", "install"], "left out or empty: missing, in order")
+ok(refused(lambda: F.require(lacking, True), "a release needs description, tags, install") and
+   refused(lambda: F.require(lacking, True), "FIRMWARE-JSON.md"), "a release without them refused, by name and doc")
+gone, said = warned(lacking)
+ok(gone == ["description", "tags", "install"] and said.count("\n") == 1 and "warning:" in said and
+   "description, tags, install" in said, "a dev build: one warning line naming them, and on")
+ok(warned(full) == ([], ""), "a dev build with all of them: no warning")
+ok(warned({"name": "X"})[0] == list(F.REQUIRED), "  an fm1.toml with none: every one named")
+tmpl = B.read_conf(ROOT / "template" / "fm1.toml")
+ok(F.missing(tmpl) == [], "the template's fm1.toml: everything a release needs")
+ok(" and ".join([", ".join(f"`{k}`" + (" (or `authors`)" if k == "author" else "") for k in F.REQUIRED[:-1]),
+                 f"`{F.REQUIRED[-1]}`"]) + "." in DOC, "doc: the keys a release needs")
+
+# the build: --release refuses before anything is built; --host, --web and --rfm1 do not ask
+with tempfile.TemporaryDirectory() as tmp:
+    app = Path(tmp) / "app"
+    app.mkdir()
+    (app / "fm1.toml").write_text('name = "Bare"\nid_prefix = "FM-1_99"\nlicence = "MPL-2.0"\n')
+    argv = sys.argv
+    try:
+        sys.argv = ["build.py", str(app), "--release", "1.0"]
+        ok(refused(B.main, "a release needs author, tagline, description, tags, install, repo") and
+           not (app / "build").exists(), "build.py --release: refused, nothing written")
+    finally:
+        sys.argv = argv
 
 # where it is written
 with tempfile.TemporaryDirectory() as tmp:
