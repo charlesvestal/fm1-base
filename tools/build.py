@@ -154,6 +154,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   headphones = true          the headphone jack read every main-loop pass, debounced (FM1B_HEADPHONES: device/plat_hp.c,
                              felucca-bsp's boards/fm1/fm1_jack.h, PB5): plat_headphones 1 / 0; without it -1 on the
                              device, nothing read (the host simulator's script jack in / jack out either way)
+  audio_aside = true         each audio half rendered into a buffer of its own and copied into the DMA's half only
+                             while that half is still free (FM1B_AUDIO_ASIDE, device/audio_commit.c, Henri David's): a
+                             late render leaves the half playing whole instead of tearing it. 2 KiB of RAM; off by default
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
 app.h); the build prints what it has.
   boot_pack = true           .ram_text and .data stored LZMA-packed (tools/boot_pack.py, Melodee's; device/boot_lzma.h): the
@@ -795,6 +798,8 @@ def build_app():
     if VERSION:
         flags.append(f'-DAPP_VERSION="{VERSION}"')
     flags.append(f"-DFM1B_BUILD={build_id():#010x}u")   # (the crash history's records carry it: device/crashlog.c)
+    if CONF.get("audio_aside"):                  # each half rendered aside, copied in while the DMA's half is free
+        flags.append("-DFM1B_AUDIO_ASIDE=1")
     if CPU2:
         flags += ["-DFM1_CPU1=1", f"-DFM1_CPU1_FALLBACK={int(bool(CONF.get('cpu2_fallback')))}"]
         flags += cpu2_stack_flags()
