@@ -358,7 +358,10 @@ uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B) has gone, 
  *   APP_BACKUP_BUF io_buf             optional: the app's own buffer of at least 3840 B (uint8_t name[], not static,
  *                                     4-aligned) lent to a restore, which then needs none of its own (3840 B of the
  *                                     pool); a scratch buffer the app fills and empties within a call (a restore runs
- *                                     with the app's frame stopped and reloads everything after)
+ *                                     with the app's frame stopped and reloads everything after). Never one an
+ *                                     interrupt or the second core uses. A resource transfer (res.c) borrows it too,
+ *                                     and a refused or failed restore leaves it overwritten as well (no
+ *                                     app_backup_restored then: the app's frame starts again from app_ui_init)
  * and these: int app_backup_playing(void) (1: no restore now, STOP FIRST), void app_backup_flush(void) (what is not
  * saved yet, saved: a backup starts), void app_backup_hold(int on) (no saving while a backup streams),
  * void app_backup_restored(void) (everything from the flash again) */

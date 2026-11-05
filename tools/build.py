@@ -863,7 +863,7 @@ def check(img, syms, dis, rt):
     bss = sym("_bss_end") - 0x01C08000
     pool = sym("_pool_end") - sym("_pool_start")
     ram, pool_max, spare = (128 * 1024, 0x4C000, 2048) if WIFI else (96 * 1024, 0x54000, 8192)   # (app_wifi.ld)
-    if isinstance(CONF.get("pool_spare"), int):   # an app that has spent the margin knowingly (fm1.toml)
+    if isinstance(CONF.get("pool_spare"), int) and not isinstance(CONF.get("pool_spare"), bool):   # an app that has spent the margin knowingly (fm1.toml)
         spare = CONF["pool_spare"]
     if os.environ.get("FM1B_POOL_SPARE", "").isdigit():   # an app's own build for itself (a demo build with mirror)
         spare = int(os.environ["FM1B_POOL_SPARE"])
