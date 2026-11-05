@@ -120,8 +120,9 @@ def parse_request(pkt):
 
 
 class Identity:
-    def __init__(self, text, model, version):
+    def __init__(self, text, model, version, flash=0):
         self.text, self.model, self.version = text, model, version
+        self.flash = flash                       # the flash's JEDEC ID from bytes 24..26 (felucca-bsp#29), 0: not sent
 
     @property
     def open(self):
@@ -139,10 +140,14 @@ def parse_identity(pkt):
     if len(d) != 34 or d[:3] != b"\x00\x59\x11":
         return None
     txt = d[6:33].split(b"\0", 1)[0].decode("latin-1")   # the text up to its first zero (bytes after it may carry data)
+    flash = int.from_bytes(d[30:33], "big") if len(txt) < 24 else 0   # bytes 24..26: the flash's JEDEC ID
     if OPEN_RE.fullmatch(txt):
-        return Identity(txt, "FM-1", 0)
+        return Identity(txt, "FM-1", 0, flash)
     m = re.fullmatch(r"([^_]+)_(\d+)", txt)
-    return Identity(txt, m[1], int(m[2])) if m else None
+    return Identity(txt, m[1], int(m[2]), flash) if m else None
+
+
+FLASH_PARTS = {0x856014: "Puya P25Q80", 0xB36014: "UC25HQ80"}   # (device/fm1_flash_ok.h)
 
 
 # --------------------------------------------------------------- package ---
@@ -529,7 +534,8 @@ def run(a, backend, out, ask):
             raise not_found(up)
         dev.link.close()
         mode = "update loader (update not finished)" if dev.id.loader else "running"
-        print(f"{dev.id.text}  [{mode}]  port: {dev.name}", file=out)
+        flash = f"  flash: {FLASH_PARTS.get(dev.id.flash, 'unknown')} ({dev.id.flash:06X})" if dev.id.flash else ""
+        print(f"{dev.id.text}  [{mode}]  port: {dev.name}{flash}", file=out)
         return 0
     product, image, digest = load_package(a.package, a.force)
     print(f"package: {product}  ({a.package})", file=out)
