@@ -65,7 +65,11 @@ int plat_battery(void)                           /* (a level moves once the read
 int32_t plat_battery_raw(void) { return batt_raw; }
 #endif
 
+#if FM1B_HEADPHONES
 #include "plat_hp.c"                       /* the headphone jack, debounced (plat_headphones) */
+#else
+int plat_headphones(void) { return -1; }  /* (fm1.toml headphones = true reads it) */
+#endif
 
 /* LEDs: the picture is built off-line and copied one byte per column (Felucca: clearing
  * and relighting would let the 10 kHz scan catch the dark gap and flicker) */

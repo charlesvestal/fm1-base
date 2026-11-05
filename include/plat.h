@@ -41,7 +41,8 @@ int32_t plat_battery_raw(void);        /* the reading plat_battery's bars come f
                                         * the main loop's slow average, in the converter's counts (the bars' thresholds
                                         * 531 / 561 / 591); 0 = not read yet. Whether USB powers the FM-1 or not. For an
                                         * app that shows the volts itself; built for an app with APP_BATTERY_RAW (below) */
-int plat_headphones(void);             /* the headphone jack's switch (PB5: 0 with a plug in), read by the main loop every
+int plat_headphones(void);             /* the headphone jack's switch (PB5: 0 with a plug in), with fm1.toml headphones = true
+                                        * (FM1B_HEADPHONES; without it -1 on the device, never read), read by the main loop every
                                         * pass and debounced (a state counts once the pin held it 100 ms: the contact
                                         * bounces ~150 ms a plug): 1 headphones in, 0 nothing plugged; -1 not read yet (the
                                         * host: its script's "jack"). The speaker mutes itself in hardware on a plug */

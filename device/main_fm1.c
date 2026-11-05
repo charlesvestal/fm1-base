@@ -1022,7 +1022,9 @@ static void fm1_main(void)
     app_ui_init();
 
     for (;;) {
+#if FM1B_HEADPHONES
         plat_hp_read();                             /* the headphone jack, every pass (plat_headphones) */
+#endif
         fm1_wdt_feed();
 #if FELUCCA_USB_HOST
         usb_host_task(fm1_ms);                      /* the host's mode change and connecting (plat_usb_host) */

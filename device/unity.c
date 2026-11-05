@@ -132,6 +132,10 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
                                    * plat_midi_in_t24); 0: when the app read it */
 #endif
 #define FELUCCA_MIDI_STAMP FM1B_MIDI_STAMP
+#ifndef FM1B_HEADPHONES
+#define FM1B_HEADPHONES 0         /* 1: the headphone jack read every main-loop pass (fm1.toml headphones = true;
+                                   * plat_headphones); 0: not read, plat_headphones -1 */
+#endif
 #if defined APP_USB_HOST_NAME && FM1B_USB_HOST
 #define FELUCCA_USB_HOST_NAME 1      /* the device's product string (plat_usb_host_name) */
 #endif

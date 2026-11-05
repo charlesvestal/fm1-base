@@ -116,6 +116,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   xdata2 = true              a fourth plat_data window, PLAT_XDATA2 0xFC000..0xFEFFF (FM1B_XDATA2: plat.h; Felucca's
                              globals' sectors, for an app that was a Felucca firmware); the store's objects there are
                              refused to plat_data_erase / plat_data_write
+  headphones = true          the headphone jack read every main-loop pass, debounced (FM1B_HEADPHONES: device/plat_hp.c,
+                             felucca-bsp's boards/fm1/fm1_jack.h, PB5): plat_headphones 1 / 0; without it -1 on the
+                             device, nothing read (the host simulator's script jack in / jack out either way)
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
 app.h); the build prints what it has.
   boot_pack = true           .ram_text and .data stored LZMA-packed (tools/boot_pack.py, Melodee's; device/boot_lzma.h): the
@@ -1055,7 +1058,8 @@ def build_id():
 def opt_flags():
     """the optional parts an fm1.toml turns on that need no SDK: the same on the device, the host and the web"""
     return [f"-D{flag}=1" for key, flag in (("mirror", "FM1B_MIRROR"), ("backup", "FM1B_BACKUP"), ("cpu2", "FM1B_CPU2"), ("usb_host", "FM1B_USB_HOST"), ("msc", "FM1B_MSC"),
-                                                    ("resources", "FM1B_RES"), ("lcd_panel", "FM1B_LCD_PANEL"), ("xdata2", "FM1B_XDATA2"))
+                                                    ("resources", "FM1B_RES"), ("lcd_panel", "FM1B_LCD_PANEL"), ("xdata2", "FM1B_XDATA2"),
+                                                    ("headphones", "FM1B_HEADPHONES"))
             if (CONF.get(key) and os.environ.get(flag) != "0") or os.environ.get(flag) == "1"]   # (FM1B_MIRROR=1: a build with it, fm1.toml as it is; FM1B_BACKUP=0: without)
 
 
