@@ -87,6 +87,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              fault, a late job) restarts the FM-1, the reason in the crash record (Melodee's releases)
   cpu2_fallback = true       instead, one core after a failure, until power-off (FM1_CPU1_FALLBACK); FM1B_BUILD, a
                              hash of the sources, lifts that bar for a new build
+  audio_aside = true         each audio half rendered into a buffer of its own and copied into the DMA's half only
+                             while that half is still free (FM1B_AUDIO_ASIDE, device/audio_commit.c, Henri David's): a
+                             late render leaves the half playing whole instead of tearing it. 2 KiB of RAM; off by default
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
 app.h); the build prints what it has.
   boot_pack = true           .ram_text and .data stored LZMA-packed (tools/boot_pack.py, Melodee's; device/boot_lzma.h): the
@@ -664,6 +667,8 @@ def build_app():
             flags.append(f'-D{macro}="{CONF[key]}"')
     if VERSION:
         flags.append(f'-DAPP_VERSION="{VERSION}"')
+    if CONF.get("audio_aside"):                  # each half rendered aside, copied in while the DMA's half is free
+        flags.append("-DFM1B_AUDIO_ASIDE=1")
     if CPU2:
         flags += ["-DFM1_CPU1=1", f"-DFM1B_BUILD={build_id():#010x}u", f"-DFM1_CPU1_FALLBACK={int(bool(CONF.get('cpu2_fallback')))}"]
     o2 = [f if f != "-Os" else "-O2" for f in flags]

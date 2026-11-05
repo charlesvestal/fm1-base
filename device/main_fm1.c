@@ -103,11 +103,11 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
 }
 
 #ifndef FM1B_AUDIO_ASIDE
-#define FM1B_AUDIO_ASIDE 1
+#define FM1B_AUDIO_ASIDE 0                          /* fm1.toml audio_aside = true: 1 */
 #endif
 #if FM1B_AUDIO_ASIDE
 #include "audio_commit.c"                           /* the half rendered aside, copied in while its half is free;
-                                                     * FM1B_AUDIO_ASIDE 0: straight into the DMA's half, as before */
+                                                     * FM1B_AUDIO_ASIDE 0 (the default): straight into the DMA's half */
 #endif
 
 void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_isr.S) */
