@@ -849,13 +849,14 @@ def wifi_own_flags(host=False):
     """the own Wi-Fi stack's switches and include directories (the host's: its simulated radio, host/wifi_air.c)"""
     if not WIFI_OWN:
         return []
-    f = ["-DFM1B_WIFI=1", "-DFM1B_WIFI_OWN=1", *inc(SRC / "wifi")]
+    I = (lambda *d: [f"-I{Path(x).resolve()}" for x in d]) if host else inc   # (the host's compiler: absolute paths)
+    f = ["-DFM1B_WIFI=1", "-DFM1B_WIFI_OWN=1", *I(SRC / "wifi")]
     if host:
-        f = [*inc(SRC / "host" / "wifi_fake"), *f]
+        f = [*I(SRC / "host" / "wifi_fake"), *f]
     else:                                           # felucca-bsp fm1_ble_rf.h: the radio's start keeps the Wi-Fi IQ entries
         f.append("-DFM1_RF_WIFI_IQ=1")              # (the tuning's stored calibration); Bluetooth-only builds keep none
     if LINK:
-        f += ["-DFM1B_LINK=1", *inc(SRC / "link")]
+        f += ["-DFM1B_LINK=1", *I(SRC / "link")]
     if WIFI_AP:
         f.append("-DFM1B_WIFI_AP=1")
     if CONF.get("wifi_jam"):                        # MODE JAM, JAM HOST: a public key (plat.h FM1B_WIFI_JAM)
