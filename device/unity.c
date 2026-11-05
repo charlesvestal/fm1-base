@@ -132,6 +132,14 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
                                    * plat_midi_in_t24); 0: when the app read it */
 #endif
 #define FELUCCA_MIDI_STAMP FM1B_MIDI_STAMP
+#ifndef FM1B_CRASHLOG
+#define FM1B_CRASHLOG 0           /* 1: the crash history in flash, 0xE2000..0xE3FFF, and the stacks' room at a crash
+                                   * (fm1.toml crash_history = true: crashlog.c, stacks.c) */
+#endif
+#ifndef FM1B_DBGSTATS
+#define FM1B_DBGSTATS 0           /* 1: the debug stats in flash, 0xE4000..0xE4EFF (fm1.toml debug_stats = true:
+                                   * dbgstats.c; with FM1B_CRASHLOG) */
+#endif
 #ifndef FM1B_HEADPHONES
 #define FM1B_HEADPHONES 0         /* 1: the headphone jack read every main-loop pass (fm1.toml headphones = true;
                                    * plat_headphones); 0: not read, plat_headphones -1 */

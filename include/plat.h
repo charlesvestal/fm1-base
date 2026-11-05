@@ -510,7 +510,7 @@ uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B; fm1.toml c
  * while the simulated second core runs a job (an app with APP_HOST_CPU2 has its own) */
 uint32_t plat_core(void);
 
-/* Debug stats (device/dbgstats.c): a 64-byte snapshot of the platform's counters (the audio's halves, late ones and
+/* Debug stats (device/dbgstats.c; fm1.toml debug_stats = true, FM1B_DBGSTATS): a 64-byte snapshot of the platform's counters (the audio's halves, late ones and
  * longest render, the timer's gaps, the longest interrupts-off and main-loop pass, the second core's and the radios'
  * state, starts and crashes) and the app's own PLAT_STATS_APP bytes, kept in flash every 5 minutes of uptime while
  * on, and one with every crash whatever the switch; the last 60 (5 hours) read over USB-MIDI (F0 7D 4C 53 F7,
@@ -524,8 +524,9 @@ uint32_t plat_core(void);
  *                    snapshot is written at once
  * The host simulator keeps them too (its flash dump has the sector) */
 #define PLAT_STATS_APP 7u
-/* The stacks' room (device/stacks.c): CPU0's main and interrupt stacks are painted at every start, the second core's
- * marked by felucca-bsp; the bytes never used. plat_stack_left: since this start (-1: not measured, the second core
+/* The stacks' room (device/stacks.c, fm1.toml crash_history = true or debug_stats = true; without them plat_stack_left
+ * and plat_stack_least_ever are -1 on the device, and the stats are off): CPU0's main and interrupt stacks are painted
+ * at every start, the second core's marked by felucca-bsp; the bytes never used. plat_stack_left: since this start (-1: not measured, the second core
  * off or not built). plat_stack_least_ever: the least ever seen, across restarts (.noinit) and power-offs (the debug
  * stats' newest record in flash, and the crash records' room at each crash); -1 not known yet. Main loop. Each crash
  * record keeps every stack's room at the crash (F0 7D 4C 48 F7's "stk" line) */

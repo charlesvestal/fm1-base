@@ -86,6 +86,13 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              FELUCCA_MIDI_STAMP, usb_midi_peek and midi_uart.c's uart_midi_peek from TIMER5's 10 kHz
                              tick, the render's ticks too): plat_midi_in_t24 within 0.05 ms of the arrival instead of
                              when the app read it; off by default; FM1B_MIDI_STAMP=0 / 1 in the environment over it
+  crash_history = true       the crash records kept in flash across power-offs (FM1B_CRASHLOG: device/crashlog.c, the
+                             update's staging area's 0xE2000..0xE3FFF, which an install erases; read with F0 7D 4C 48 F7,
+                             tools/fm1_remote.py crashes), and each stack's room at a crash (stacks.c: plat_stack_left;
+                             the stacks painted at every start); off by default
+  debug_stats = true         and the debug stats (FM1B_DBGSTATS: device/dbgstats.c, a snapshot every 5 minutes while the
+                             app has plat_stats_enable on, and one at each crash, in the staging's last sector
+                             0xE4000..0xE4EFF; F0 7D 4C 53 F7, fm1_remote.py stats); with the crash history
   usb_host = true            the USB port as a MIDI host when the app asks (FM1B_USB_HOST: felucca-bsp's
                              FELUCCA_USB_HOST, docs/USB_HOST.md; plat_usb_host in plat.h): a USB-MIDI controller or
                              synth, directly or behind one powered hub (the FM-1 gives no power). Boot is a device
@@ -726,6 +733,10 @@ def build_app():
         flags.append("-DFELUCCA_UAC_IAD=1")
     if CONF.get("usb_console") and "FM1B_CDC" not in os.environ:
         flags.append("-DFM1B_CDC=1")              # the USB serial console (device/console.c)
+    if CONF.get("crash_history") or CONF.get("debug_stats"):
+        flags.append("-DFM1B_CRASHLOG=1")         # the crash history in flash (device/crashlog.c, stacks.c)
+    if CONF.get("debug_stats"):
+        flags.append("-DFM1B_DBGSTATS=1")         # the debug stats in flash (device/dbgstats.c)
     if CONF.get("midi_stamp") and "FM1B_MIDI_STAMP" not in os.environ:
         flags.append("-DFM1B_MIDI_STAMP=1")       # MIDI in stamped where it lands (plat_midi_in_t24; unity.c)
     for flag in ("FM1B_CDC", "FM1B_UAC", "FM1B_UAC_OUT", "FM1B_TRS", "FM1B_MIDI_STAMP"):
