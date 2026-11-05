@@ -55,13 +55,30 @@
 #include "fm1_timer.h"
 #include "fm1_audio.h"
 #include "fm1_adc.h"
+#if !PLAT_SMK37
 #include "fm1_jack.h"               /* the headphone jack's switch (PB5): plat_headphones */
+#endif
 #include "fm1_lcd_hw.h"
 #if FM1B_WIFI || FM1B_BLE
 #define FL_UID 1                          /* the flash's unique ID: the WiFi MAC, the Bluetooth name (plat_chip_uid) */
 #endif
 #include "fm1_flash.h"
 #include "fm1_xip.h"
+#if PLAT_SMK37
+#define OTA_AREA FL_OTA_LO        /* the update's staging: the board's window (chip/ota.c's default is the FM-1's) */
+#define OTA_BOARD_FL_LEN FL_APP_HI   /* a package must be laid out for this board (chip/ota.c) */
+#define OTA_BOARD_RT_OFF 0x4060u     /* the region table, in flash.bin and in this flash */
+#define OTA_BOARD_RT_LEN 0xC0u
+#define OTA_BOARD_USR_LO FL_PROT2_LO
+#define OTA_BOARD_USR_LEN (FL_PROT2_HI - FL_PROT2_LO)
+#if PLAT_SMK37_MODEL == 1            /* the update record names the model, as the stock app's does */
+#define OTA_PARM_ID "ota-SMK-37 Pro_016"
+#elif PLAT_SMK37_MODEL == 2
+#define OTA_PARM_ID "ota-SMK-37 Elite_016"
+#else
+#define OTA_PARM_ID "ota-MKE-P37_016"
+#endif
+#endif
 #include "fm1_perf.h"
 #include "fm1_clock.h"
 #ifndef FM1B_CACHE_RAM
@@ -171,7 +188,9 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #ifndef FM1B_TRS
 #define FM1B_TRS 1
 #endif
-#if FM1B_TRS
+#if FM1B_TRS && PLAT_SMK37
+#include "midi_trs_out.c"         /* the SMK's jack: MIDI OUT (boards/smk37/fm1_uart.h) */
+#elif FM1B_TRS
 #include "midi_uart.c"
 #endif
 

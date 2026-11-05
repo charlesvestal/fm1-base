@@ -6,9 +6,10 @@ it and what the hardware needs to have. It sits at the root of the firmware's re
 beside the package.
 
 tools/build.py writes it on every build, from fm1.toml and the parts the build turns on, to `APP_DIR/build/firmware.json`
-(`firmware-usb.json` from a `--no-ble` build). For an app in a firmware's repository (`APP_DIR` named `app`, as
-`fm1-ctl/app`) it also writes the repository's `firmware.json`, only when its content has changed. fm1-base's own
-template gets only `template/build/firmware.json`.
+(`firmware-usb.json` from a `--no-ble` build; an SMK-37 build, fm1.toml `board = "smk37"`, its own beside it,
+`firmware-smk37.json`, `firmware-smk37-elite.json` or `firmware-smk37-mke.json`). For an app in a firmware's
+repository (`APP_DIR` named `app`, as `fm1-ctl/app`) the FM-1 build also writes the repository's `firmware.json`, only
+when its content has changed. fm1-base's own template gets only `template/build/firmware.json`.
 
 It has no version: it describes the firmware, not a release, and the release's package carries its own.
 
@@ -58,8 +59,8 @@ CTL-1's:
 | `site` | URL | `site` | Its site. |
 | `source` | URL | `repo` | Its source code. |
 | `screenshot` | path | `screenshot` | A picture of its screen for a hub's card: a PNG in its repository, relative to the repository's root (`docs/img/screen.png`). |
-| `hardware.models` | list of strings | | The models it runs on. A firmware on fm1-base says `FM-1`. |
-| `hardware.flash` | list of strings | device/fm1_flash_ok.h | The flash parts it can save to and update on, as their JEDEC IDs in upper-case hex. |
+| `hardware.models` | list of strings | | The models it runs on. A firmware on fm1-base says `FM-1`; its SMK-37 build says its model: `SMK-37 Pro`, `SMK-37 Elite` or `MKE-P37`. |
+| `hardware.flash` | list of strings | device/fm1_flash_ok.h | The flash parts it can save to and update on, as their JEDEC IDs in upper-case hex (an SMK-37 build: felucca-bsp's boards/smk37/fm1_flash.h, `FL_JEDEC_OK`). |
 | `hardware.features` | list of strings | the build's parts | What the build has, from the feature vocabulary. |
 | `credits` | string | `credits` | A sentence on what it is built from. |
 

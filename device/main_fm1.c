@@ -45,6 +45,9 @@ static int bta_frame(const uint8_t *p, uint32_t n);
 static int dev_frame(const uint8_t *p, uint32_t n);   /* bt_own_central.c */
 #endif
 #include "uac_mix.h"                                /* the USB recording, the computer's audio, in that order */
+#if PLAT_SMK37
+#define FM1B_FLASH_JEDEC_OK(id) FL_JEDEC_OK(id)        /* the board's accepted parts (bsp boards/smk37/fm1_flash.h) */
+#endif
 #include "fm1_flash_ok.h"                          /* the flash parts the storage may use (FM1B_FLASH_JEDEC_OK) */
 #if FM1B_BT_AUDIO
 static volatile uint8_t bta_streamed;               /* the last render went to Bluetooth (plat_bta_streams) */
@@ -201,6 +204,9 @@ void fm1_timer5_irq(void)
     if (fm1b_dbg.in_audio)
         fm1b_dbg.nested++;
     fm1_input_tick();
+#if PLAT_SMK37 && FM1B_TRS
+    trs_out_tick();                                 /* the jack: one byte a tick, never waiting (midi_trs_out.c) */
+#endif
     /* 2 kHz: all USB SIE traffic lives here. This ISR now nests into the audio render (so the key
      * matrix keeps its rhythm, below); USB shares the MIDI queues with the audio ISR, so a poll that
      * falls inside the render waits for the first tick outside it, as it did before the nesting. */
@@ -1211,8 +1217,10 @@ static void splash(void)                           /* the app's (APP_SPLASH), or
 
 static void fm1_main(void)
 {
+#if !PLAT_SMK37
     int32_t knob = 512 * 16;
     uint32_t batt_t = 0;                            /* (the battery's last reading, fm1_ms) */
+#endif
     uint32_t last_frame = 0;
     int took;                                       /* a SysEx frame taken this pass (not the updater's) */
     {
@@ -1255,6 +1263,9 @@ static void fm1_main(void)
 #endif
             ota_boot_cleanup();
             fl_plain_window_init();                 /* the data area read in place, unencrypted (plat_data) */
+#if PLAT_SMK37
+            smk_store_owner();                      /* the store is this firmware's, or is cleared first (plat_smk37.c) */
+#endif
 #if FM1B_RES
             res_check();                            /* the resource region: this build's? (res.c, plat_res) */
 #endif
@@ -1299,6 +1310,10 @@ static void fm1_main(void)
     fm1_adc_init();
     panel_init();
     led_pos_init();
+#if PLAT_SMK37
+    smk_input_start();                              /* the pads, faders, wheels, pedal and battery sampled */
+    smk_master_load();                              /* the virtual MASTER's saved level */
+#endif
 #if FM1B_CPU2
     cpu2_boot();
     cpu2_booting = 1;                               /* (plat_cpu2_set: the second core starts in app_init or never) */
@@ -1318,7 +1333,8 @@ static void fm1_main(void)
     fm1_guard_lock_top();
     fm1_irq_enable_all();
     fm1_delay_ms(30);
-    if ((fm1_in.buttons & 3u) == 3u)
+    if ((fm1_in.buttons & ((1u << FM1_BTN_OCT_DOWN) | (1u << FM1_BTN_OCT_UP))) ==
+        ((1u << FM1_BTN_OCT_DOWN) | (1u << FM1_BTN_OCT_UP)))
         panel_setup();                              /* OCT- + OCT+ held at power-on */
     if (fm1_in.buttons & (1u << panel.btn[B_REC]))
         enter_uboot("UPDATE MODE (REC)");           /* REC held at power-on: the chip's update mode, the same key as
@@ -1357,6 +1373,9 @@ static void fm1_main(void)
             bootguard.pending = 0;
             bootguard.failed = 0;
         }
+#if PLAT_SMK37
+        smk_main_poll();                            /* the virtual MASTER (K5), the battery's average */
+#else
         {   /* MASTER: smoothed, 0..4092; with the keys' readings on, the scan owns the converter and reads it too */
             int32_t a = fm1_an.con || fm1_an.pend ? (int32_t)fm1_an.master : fm1_adc_read(FM1_ADC_MASTER);
             if (a >= 0) {
@@ -1376,6 +1395,7 @@ static void fm1_main(void)
             if (b > 0)
                 batt_raw = batt_raw ? batt_raw + (b - batt_raw) / 16 : b;
         }
+#endif
         fm1b_dbg.stage = 2;                         /* (breadcrumbs: where a watchdog reset found the loop) */
         ble_poll();                                 /* Bluetooth's tasks, once started */
 #if FM1B_WIFI
@@ -1433,6 +1453,9 @@ static void fm1_main(void)
             fm1b_dbg.ui_frames++;
             fm1b_dbg.stage = 5;
             app_frame();
+#if PLAT_SMK37
+            smk_pads_flush();                       /* the pad LEDs, if a colour changed: one frame between LCD transfers */
+#endif
         } else {
             fm1b_dbg.stage = 6;
             app_input_only();

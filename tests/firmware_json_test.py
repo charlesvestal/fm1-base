@@ -119,6 +119,21 @@ ok(json.loads(text) == d and json.loads(F.dumps({"a": [{"b": []}], "c": {}})) ==
    "reads back as it was")
 ok(valid(d), "  validates against the schema" + (" (skipped: no jsonschema)" if jsonschema is None else ""))
 
+# an SMK-37 build (tools/build.py board = "smk37"): its model, the parts felucca-bsp's board map accepts (FL_JEDEC_OK)
+smk_h = ROOT / "bsp" / "boards" / "smk37" / "fm1_flash.h"
+if smk_h.is_file():
+    smk = F.flash_ids(smk_h, "FL_JEDEC_OK")
+    m = re.search(r"#define\s+FL_JEDEC_OK\(id\)(.*)", smk_h.read_text())
+    ok(smk == [f"{int(x, 16):06X}" for x in re.findall(r"0x([0-9A-Fa-f]+)u?", m[1])] and {"856014", "B36014"} <= set(smk),
+       f"the SMK-37's flash parts: its board map's ({', '.join(smk)})")
+    e = F.make(c, "full", F.display_name(c, ROOT), have, flash=smk, models=["SMK-37 Elite"])
+    ok(e["hardware"]["models"] == ["SMK-37 Elite"] and e["hardware"]["flash"] == smk and
+       {k: v for k, v in e.items() if k != "hardware"} == {k: v for k, v in d.items() if k != "hardware"},
+       "an SMK-37 build: its model and flash parts, the rest as the FM-1's")
+    ok(valid(e), "  validates against the schema" + (" (skipped: no jsonschema)" if jsonschema is None else ""))
+else:
+    print("  skip the SMK-37's flash parts (no bsp/boards/smk37)")
+
 # the environment's overrides and the dependent parts, as the build reads them
 have = F.parts(c, ble=False, own=True, wifi=False, cpu2=False, touch=False, words=False,
                env={"FM1B_MIRROR": "0", "FM1B_UAC": "0"})
@@ -262,6 +277,10 @@ with tempfile.TemporaryDirectory() as tmp:
        "--no-ble: build/firmware-usb.json only")
     ok(F.targets(ROOT / "template") == [ROOT / "template" / "build" / "firmware.json"],
        "the template: template/build/ only, never fm1-base's root")
+    ok(F.targets(repo / "app", board="-smk37-elite") == [(repo / "app" / "build" / "firmware-smk37-elite.json").resolve()],
+       "an SMK-37 build: build/firmware-smk37-elite.json only (the repository's is the FM-1 build's)")
+    ok(F.targets(repo / "app", no_ble=True, board="-smk37") == [(repo / "app" / "build" / "firmware-smk37-usb.json").resolve()],
+       "an SMK-37 build with --no-ble: build/firmware-smk37-usb.json")
     f = repo / "firmware.json"
     ok(F.write(f, "a\n") and not F.write(f, "a\n") and F.write(f, "b\n"), "written only when changed")
 

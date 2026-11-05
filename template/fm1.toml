@@ -1,5 +1,7 @@
 # The template's build settings (tools/build.py)
 name = "TEMPLATE"              # APP_NAME is in app.h; this names the build's files
+# board = "fm1"                # "fm1" (the default) or "smk37": the M-VAVE SMK-37, with model = "pro" | "elite" | "mke"
+# model = "elite"              # (FM1B_BOARD / FM1B_MODEL in the environment override them: tools/build.py)
 id_prefix = "FM-1_11"          # package identity (each firmware its own): dev FM-1_1100, releases FM-1_11XXYYZZ
 usb_manufacturer = "fm1-base"
 usb_product = "TEMPLATE FM-1"

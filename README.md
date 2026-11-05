@@ -54,6 +54,39 @@ USB connection); `plat_store_size` and `plat_store_head` (an object whole or not
 flash beyond the store with `plat_data*`, in the data area and two more windows (`PLAT_XDATA0`, `PLAT_XDATA1`), and a
 third on request (`xdata2 = true`: `PLAT_XDATA2`, 0xFC000..0xFEFFF).
 
+## Boards: the FM-1 and the SMK-37
+
+A firmware builds for the M-VAVE FM-1 by default. `board = "smk37"` in fm1.toml, with `model = "pro"`, `"elite"` or
+`"mke"`, builds the same app for the M-VAVE SMK-37 Pro, Elite or MKE-P37 (the same hardware under three names) on
+felucca-bsp's `boards/smk37/` layer: 37 velocity keys, 16 pads, 8 encoders, 4 faders, two wheels, a sustain pedal,
+the FM-1's screen, a 1 MiB flash with the stock firmware's protected windows kept, and the TRS jack as MIDI OUT.
+`FM1B_BOARD=smk37 FM1B_MODEL=elite` in the environment do the same without editing fm1.toml. The outputs are
+`NAME-smk37.fwsc` (Pro), `NAME-smk37-elite.fwsc` and `NAME-smk37-mke.fwsc`, their identities `SMK-37 Pro_`,
+`SMK-37 Elite_` and `MKE-P37_` with id_prefix's digits (the FM-1's scheme: the stock updater takes each unit's own),
+and the USB product string gets ` SMK-37` after it; firmware.json goes beside the FM-1's as
+`firmware-smk37[-elite|-mke].json`, with the model's name and the board's flash parts. The installers take a package
+for exactly the connected model (the identity's model: an FM-1 package is refused on an SMK-37, an Elite's on a Pro).
+The FM-1 build is unchanged, byte for byte.
+
+In the app, plat.h's FM-1 controls work as on the FM-1 (the middle 27 keys, the 14 functions on the SMK's buttons,
+the seven knob roles on K1..K4 and K6..K8, a virtual MASTER on K5), and behind `PLAT_SMK37` it adds `B_KBANK`,
+`B_FBANK`, `B_LEFT`, `B_RIGHT`, `plat_keys37` / `plat_key_vel`, `plat_pads` / `plat_pad_vel` / `plat_pad_press` /
+`plat_pad_rgb`, `plat_fader`, `plat_wheel`, `plat_pedal`, `plat_master_set` and `TO_TRS`; the store's windows move
+(`PLAT_DATA_*`, `PLAT_XDATA*`, `PLAT_GLOB`: an app's `APP_STORE_MAP` picks its offsets per board, as the template
+does; `xdata2 = true` is the SMK's settings pair, 0xEB000..0xEDFFF), and so does the update's staging, where the
+crash history and the debug stats live (`PLAT_STAGE_*`: 0xBB000..0xBFFFF). The host
+simulator has the same, with script words for the keys, pads, faders, wheels and pedal (host/plat_host.c,
+template/tests/smk37.txt).
+
+**Status: blind.** The SMK layer is written from M. Geisler's analysis of the stock firmware
+([fm1-to-smk37](https://github.com/genkigenki/fm1-to-smk37)) and follows Melodee's own SMK-37 port, which runs on an
+Elite ([keremimo/melodee](https://github.com/keremimo/melodee)); this layer has not been confirmed on a unit yet.
+Here the packages build, the flash map is checked against the protected windows (`tests/smk37_flash_test.c`) and the
+simulator runs (`template/tests/smk37.txt`); the Pro and MKE-P37 packages are the same firmware under their model's
+names. Not there yet: the
+power-on LED sweep, WiFi's linker script (`wifi = true` is refused), the headphone switch (`headphones = true` is
+refused), the dim lights at any brightness (`APP_DIM_LEVELS`), the codec measured.
+
 ## Bluetooth and WiFi
 
 A firmware has Bluetooth or WiFi, not both: each fills most of what the FM-1 has (the chip has no external RAM),

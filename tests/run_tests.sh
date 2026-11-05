@@ -54,6 +54,9 @@ run trs-stamp sh -c "$CC -O2 -w -DFELUCCA_MIDI_STAMP=1 -Ibsp/chip -Ibsp/boards/f
 # each stamp against its message's landing (within +-0.05 ms; the poll's and the read's stamps beside it)
 run midi-stamp sh -c "$CC -std=c11 -O2 -Wall -Wextra -Werror -Wno-unused-function -Ibsp/chip -Ibsp/boards/fm1 -Idevice -o $OUT/midi_stamp_test tests/midi_stamp_test.c && $OUT/midi_stamp_test"
 run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/storage_test"
+# the SMK-37's flash map (felucca-bsp boards/smk37/fm1_flash.h): its windows against the stock layout's protected ranges
+run smk37-flash sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -Ibsp/boards/smk37 -Iinclude \
+    -o $OUT/smk37_flash_test tests/smk37_flash_test.c && $OUT/smk37_flash_test"
 run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts
 # plat_headphones' debounce (device/plat_hp.c) over a simulated jack: a plug's bounce gives one change, 100 ms on
@@ -141,6 +144,9 @@ else
     echo "  skip update path (no $PKG: tools/build.py template)"
 fi
 run host-build "$PY" tools/build.py template --host
+# the template on the simulated SMK-37 (board = "smk37"): the host build and its script (the SMK's words)
+run host-build-smk37 env FM1B_BOARD=smk37 FM1B_MODEL=elite "$PY" tools/build.py template --host
+run template-smk37 template/build/host/template-smk37-elite_host template/tests/smk37.txt template/build/host
 # the screen mirrored over USB (device/mirror.c; the fonts: the template's build/gen): its pixel code on drawn bands,
 # rows not sent twice, drops and redraws, the input reports, off, the remote; then the viewer's own decoder
 # (web/mirror) on a session's stream against the device's screen, and tools/fm1_mirror.py making a PNG of it

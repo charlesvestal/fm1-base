@@ -21,7 +21,11 @@ static uint8_t set_dirty;                /* changed since the last save: SAVE is
 static const char *const WAVE_NAME[] = {"SINE", "TRIANGLE"};
 /* the controls by their names in plat.h, in its order */
 static const char *const BTN_NAME[NB] = {"FX", "SEL", "ENV", "LFO", "EDIT", "GLO", "HOME", "SAVE", "ARP", "SEQ",
-                                         "PLAY", "REC", "OCT-", "OCT+"};
+                                         "PLAY", "REC", "OCT-", "OCT+"
+#if PLAT_SMK37                           /* the SMK-37's four more (plat.h) */
+                                         , "KBANK", "FBANK", "<", ">"
+#endif
+};
 static const char *const ENC_NAME[NE] = {"SELECT", "ALGO", "PRESET", "K1", "K2", "K3", "K4"};
 
 /* ------------------------------------------------------------------ voice --- */

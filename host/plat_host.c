@@ -96,6 +96,16 @@
  *   sysex_log FILE|off           every frame the app sends from now on, appended to FILE as it went out (raw)
  *   usb unplug|plug|stall|read   the computer: the cable out, in again (a new plat_usb_session), the computer stops
  *                                reading the device's SysEx, reads again
+ * The SMK-37 (PLAT_SMK37: fm1.toml board = "smk37"; the buttons KBANK FBANK LEFT RIGHT too):
+ *   key37 K down [VEL] | key37 K up | tapkey37 K [VEL]   one of the 37 keys (0 = C3; the middle 27 are the FM-1's
+ *                                keys 0..26 too); VEL 1..127 (default 100) is what plat_key_vel reports
+ *   pad P down [VEL] | pad P up | pad P press N   a pad hit (VEL default 100), held with pressure N (0..127)
+ *   fader I V                    fader I (0..3) at V (0..127)
+ *   wheel pitch V | wheel mod V  the pitch wheel at V (-8192..8191, 0 at rest), the mod wheel at V (0..127)
+ *   pedal down | pedal up        the sustain pedal
+ *   padleds                      print the pads' lights (plat_pad_rgb), 0xRRGGBB each
+ *   expect pads N | pedal N | fader0..3 N | wheel_pitch N | wheel_mod N | pad_rgb_sets N (calls of plat_pad_rgb
+ *                                since the start)
  * FILE "out:NAME" for backup, restore, backup_damage and mirror: NAME in OUTDIR (fbdump: always there).
  * NAME_host --serve [OUTDIR] (FM1B_MIRROR): driven over stdin by a tool, as an FM-1 over USB:
  *   sx HEX      one SysEx message from the host (F0 .. F7, hex): the mirror's requests (cmd 0x50, 0x54)
@@ -216,6 +226,55 @@ static void mirror_leds(uint32_t buttons, uint32_t keys, uint32_t db, uint32_t d
 static void mirror_mid(uint32_t buttons, uint32_t keys) { (void)buttons, (void)keys; }
 #endif
 static uint32_t now_ms, held_btn, held_keys, master = 2048;
+#if PLAT_SMK37
+/* the SMK-37's controls, as the script sets them */
+static uint64_t held_keys37, pressed_keys37;
+static uint8_t key37_vel[NKEYS37];
+static uint32_t held_pads, pressed_pads;
+static uint8_t pad_vel[NPADS], pad_press[NPADS];
+static int faders[4], wheel_pitch, wheel_mod, pedal_down;
+static uint32_t pad_rgb[NPADS], pad_rgb_sets;
+uint64_t plat_keys37(void) { return held_keys37 | (uint64_t)(held_keys | mirror_in_keys()) << 5; }
+uint64_t plat_keys37_pressed(void) { uint64_t p = pressed_keys37; pressed_keys37 = 0; return p; }
+uint64_t plat_keys37_retrig(void) { return 0; }
+void plat_vel_curve(int mode) { (void)mode; }
+void plat_trs_out(int on) { (void)on; }
+int plat_key_vel(int k) { return k >= 0 && k < NKEYS37 ? key37_vel[k] : 0; }
+uint32_t plat_pads(void) { return held_pads; }
+uint32_t plat_pads_pressed(void) { uint32_t p = pressed_pads; pressed_pads = 0; return p; }
+int plat_pad_vel(int p) { return p >= 0 && p < NPADS ? pad_vel[p] : 0; }
+int plat_pad_press(int p) { return p >= 0 && p < NPADS ? pad_press[p] : 0; }
+void plat_pad_rgb(int p, uint32_t rgb) { if (p >= 0 && p < NPADS) { pad_rgb[p] = rgb & 0xFFFFFFu; pad_rgb_sets++; } }
+int plat_fader(int i) { return i >= 0 && i < 4 ? faders[i] : 0; }
+int plat_wheel(int w) { return w == PLAT_WHEEL_PITCH ? wheel_pitch : w == PLAT_WHEEL_MOD ? wheel_mod : 0; }
+int plat_pedal(void) { return pedal_down; }
+void plat_master_set(uint32_t q12) { master = q12 > 4096u ? 4096u : q12; }
+static void host_key37(int k, int down, uint32_t vel, int report)   /* a key of the 37: the FM-1's 27 see it too
+                                                                     * (report: the app's readings for it too) */
+{
+    if (k < 0 || k >= NKEYS37)
+        return;
+#ifdef APP_KEY_SENSE
+    if (report && k >= 5 && k < 5 + NKEYS)
+        app_host_key((uint32_t)(k - 5), down ? (vel ? vel : 100u) : 0u, 0);
+#else
+    (void)report;
+#endif
+    if (down) {
+        held_keys37 |= (uint64_t)1 << k;
+        pressed_keys37 |= (uint64_t)1 << k;
+        key37_vel[k] = (uint8_t)(vel ? vel : 100u);
+    } else {
+        held_keys37 &= ~((uint64_t)1 << k);
+    }
+    if (k >= 5 && k < 5 + NKEYS) {
+        if (down)
+            held_keys |= 1u << (k - 5);
+        else
+            held_keys &= ~(1u << (k - 5));
+    }
+}
+#endif
 static int32_t enc_acc[NE];
 static uint32_t lit_btn, lit_keys, dim_btn, dim_keys;
 static uint32_t lights_b, lights_db;    /* plat_lights' buttons as given (PLAY's green apart), and its glow */
@@ -992,13 +1051,13 @@ void plat_log(const char *line) { ble_say(line); }
 /* the data area and its two more windows (plat.h): a simulated flash from the first window to the last (the gap
  * between, the update's staging, refused as on the device), erased at the start, kept across a simulated reboot.
  * FM1B_XDATA2: the fourth window too, just above the third, the store's objects there refused as on the device */
-#define DATA_BASE PLAT_XDATA0_LO
+#define DATA_BASE PLAT_WIN_LO                  /* (the lowest window: the FM-1's or the SMK's) */
 #if FM1B_XDATA2
 #include "plat_xdata2.h"
 #define DATA_TOP PLAT_XDATA2_HI
 #define DATA_STORE_HIT(off, n) plat_xdata2_store_hit((off), (n))
 #else
-#define DATA_TOP PLAT_XDATA1_HI
+#define DATA_TOP PLAT_WIN_HI
 #define DATA_STORE_HIT(off, n) 0
 #endif
 #ifdef PLAT_DATA_AREA
@@ -1252,8 +1311,8 @@ static void hcr_boot(void)                          /* main_fm1.c fm1_main's: a 
 #define DS_LAYOUT 0
 #endif
 #include "dbgstats.c"
-#define HDS_OTA_AREA 0xE0000u                       /* ota.c's OTA_AREA and OTA_RES (0xE4F00) */
-#define HDS_OTA_RES 0xE4F00u
+#define HDS_OTA_AREA PLAT_STAGE_LO                  /* ota.c's OTA_AREA and OTA_RES (0xE0000, 0xE4F00 on the FM-1) */
+#define HDS_OTA_RES (PLAT_STAGE_HI - 0x100u)
 static int ds_in(uint32_t off, uint32_t n) { return off >= DS_LO && n <= DS_SLOTS * DS_REC - (off - DS_LO); }
 static int ds_read(uint32_t off, void *dst, uint32_t n)
 {
@@ -2137,7 +2196,11 @@ static void run_ms(uint32_t ms)
 
 /* ---------------------------------------------------------- script --- */
 static const char *const BTN_N[NB] = {"FX", "SEL", "ENV", "LFO", "EDIT", "GLO", "HOME", "SAVE", "ARP", "SEQ",
-                                      "PLAY", "REC", "OCT-", "OCT+"};
+                                      "PLAY", "REC", "OCT-", "OCT+"
+#if PLAT_SMK37
+                                      , "KBANK", "FBANK", "LEFT", "RIGHT"
+#endif
+};
 static const char *const ENC_N[NE] = {"SELECT", "ALGO", "PRESET", "K1", "K2", "K3", "K4"};
 
 static int find_name(const char *const *t, int n, const char *s)
@@ -2274,6 +2337,20 @@ static int expect(const char *what, const char *val)
         got = (int)plat_midi_count(PORT_USB, 0);
     else if (!strcmp(what, "headphones"))           /* plat_headphones: the script's jack (1 in, 0 out) */
         got = plat_headphones();
+#if PLAT_SMK37
+    else if (!strcmp(what, "pads"))
+        got = (int)held_pads;
+    else if (!strcmp(what, "pedal"))
+        got = pedal_down;
+    else if (!strncmp(what, "fader", 5) && what[5] >= '0' && what[5] <= '3' && !what[6])
+        got = faders[what[5] - '0'];
+    else if (!strcmp(what, "wheel_pitch"))
+        got = wheel_pitch;
+    else if (!strcmp(what, "wheel_mod"))
+        got = wheel_mod;
+    else if (!strcmp(what, "pad_rgb_sets"))
+        got = (int)pad_rgb_sets;
+#endif
     else if (!strcmp(what, "peak_db_max") || !strcmp(what, "peak_db_min")) {
         double db = 20.0 * log10(peak_out > 1e-9f ? peak_out : 1e-9f);
         int bad = what[8] == 'm' && what[9] == 'a' ? db > atof(val) : db < atof(val);
@@ -2576,16 +2653,89 @@ int main(int argc, char **argv)
                 held_keys |= 1u << k;
             else
                 held_keys &= ~(1u << k);
+#if PLAT_SMK37
+            host_key37(k + 5, down, vel, 0);        /* (the FM-1's key k is the SMK's k + 5) */
+#endif
             if (cmd[0] == 't') {
                 run_ms(60);
 #ifdef APP_KEY_SENSE
                 app_host_key((uint32_t)k, 0, 0);
 #endif
                 held_keys &= ~(1u << k);
+#if PLAT_SMK37
+                host_key37(k + 5, 0, 0, 0);
+#endif
                 run_ms(30);
             } else {
                 run_ms(2);
             }
+#if PLAT_SMK37
+        } else if (!strcmp(cmd, "key37") || !strcmp(cmd, "tapkey37")) {
+            int k = atoi(a), tap = cmd[0] == 't', down = tap || !strcmp(b, "down");
+            uint32_t vel = (uint32_t)atoi(tap ? b : c);
+            if (k < 0 || k >= NKEYS37) {
+                printf("line %d: no key %s of the 37\n", lineno, a);
+                return 2;
+            }
+            host_key37(k, down, vel, 1);
+            if (tap) {
+                run_ms(60);
+                host_key37(k, 0, 0, 1);
+                run_ms(30);
+            } else {
+                run_ms(2);
+            }
+        } else if (!strcmp(cmd, "pad")) {             /* pad P down [VEL] | up | press N */
+            int p = atoi(a);
+            if (p < 0 || p >= NPADS) {
+                printf("line %d: no pad %s\n", lineno, a);
+                return 2;
+            }
+            if (!strcmp(b, "down")) {
+                uint32_t vel = (uint32_t)atoi(c);
+                held_pads |= 1u << p;
+                pressed_pads |= 1u << p;
+                pad_vel[p] = (uint8_t)(vel ? vel : 100u);
+                pad_press[p] = 64;
+            } else if (!strcmp(b, "up")) {
+                held_pads &= ~(1u << p);
+                pad_press[p] = 0;
+            } else if (!strcmp(b, "press")) {
+                pad_press[p] = (uint8_t)(atoi(c) > 127 ? 127 : atoi(c) < 0 ? 0 : atoi(c));
+            } else {
+                printf("line %d: pad %s %s?\n", lineno, a, b);
+                return 2;
+            }
+            run_ms(2);
+        } else if (!strcmp(cmd, "fader")) {           /* fader I V */
+            int i = atoi(a), v = atoi(b);
+            if (i < 0 || i > 3) {
+                printf("line %d: no fader %s\n", lineno, a);
+                return 2;
+            }
+            faders[i] = v < 0 ? 0 : v > 1023 ? 1023 : v;
+            run_ms(2);
+        } else if (!strcmp(cmd, "wheel")) {           /* wheel pitch V | wheel mod V */
+            int v = atoi(b);
+            if (!strcmp(a, "pitch"))
+                wheel_pitch = v < -8192 ? -8192 : v > 8191 ? 8191 : v;
+            else if (!strcmp(a, "mod"))
+                wheel_mod = v < 0 ? 0 : v > 127 ? 127 : v;
+            else {
+                printf("line %d: wheel %s?\n", lineno, a);
+                return 2;
+            }
+            run_ms(2);
+        } else if (!strcmp(cmd, "pedal")) {
+            pedal_down = !strcmp(a, "down");
+            run_ms(2);
+        } else if (!strcmp(cmd, "padleds")) {
+            int i;
+            printf("  padleds:");
+            for (i = 0; i < NPADS; i++)
+                printf(" %06X", pad_rgb[i]);
+            printf("\n");
+#endif
         } else if (!strcmp(cmd, "strum")) {          /* strum A B [MS]: a finger across the white keys */
             int x = atoi(a), y = atoi(b), gap = c[0] ? atoi(c) : 25, s = y >= x ? 1 : -1;
             for (;; x += s) {
@@ -2731,7 +2881,7 @@ int main(int argc, char **argv)
             if (!df || !hi) {
                 printf("FAIL data %s %s: no such file, or outside the data area\n", a, b);
                 fails++;
-            } else {                              /* (data_area starts at DATA_BASE: the first window) */
+            } else {                              /* (data_area starts at DATA_BASE: the windows below too) */
                 size_t n = fread(&data_area[off - DATA_BASE], 1, hi - off, df);
                 printf("  ok   data: %u B at %#x\n", (unsigned)n, (unsigned)off);
             }
@@ -2783,7 +2933,7 @@ int main(int argc, char **argv)
             if (cmd[4] == 's')
                 memset(&data_area[HDS_OTA_AREA - DATA_BASE], 0x00, 4u);
             else
-                memset(&data_area[HDS_OTA_AREA - DATA_BASE], 0xFF, 0x5000u);
+                memset(&data_area[HDS_OTA_AREA - DATA_BASE], 0xFF, PLAT_STAGE_HI - PLAT_STAGE_LO);
         } else if (!strcmp(cmd, "listen")) {
             static const uint8_t HELLO[] = {ANN_H0, ANN_H1, ANN_H2, ANN_HELLO, ANN_VER};
             sim_listen = 1;

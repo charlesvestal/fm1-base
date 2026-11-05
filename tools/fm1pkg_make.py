@@ -15,16 +15,36 @@
 The SDK files come from the JieLi AC79 SDK (AC79_SDK, or --sdk).
 All integrity checks in the format are CRC16 (poly 0x1021, init 0).
 
-  fm1pkg_make.py APP.bin OTA.bin OUT.fwsc [--product FM-1_9XY] [--sdk DIR]
+  fm1pkg_make.py APP.bin OTA.bin OUT.fwsc [--product FM-1_9XY] [--sdk DIR] [--board fm1|smk37]
 """
 import argparse
 import os
 import struct
 from pathlib import Path
 
-APP_SLOT = 0x8DFBC
+APP_SLOT = 0x8DFBC                  # the FM-1's (BOARDS below: the SMK-37's)
 FLASH_SIZE = 0x93000
 KEY = 0x980F
+# the boards: flash.bin's size (the app area with its head: the PRCT region), app.bin's slot in it, and the region
+# descriptors after the app entries (offset, size, flags, resvd, index, the 16 name bytes with the SDK packer's
+# trailing fields). The FM-1's are M-VAVE's own; the SMK-37's follow the stock v016 table (fm1-to-smk37 docs/01 §2,
+# M. Geisler's analysis: VM 0x9D000 + 0x23000, BTIF 0xC0000, USRTRIM 0xC1000, USRFLASH 0xC2000 + 0x29000,
+# USR 0xF4000 + 0xA000), their trailing fields as the FM-1's analogues; the slot is the FM-1's + 0xA000, so the tail
+# of the app area (cfg_tool.bin, the cfg directory) lies as on the FM-1. Untried on a unit
+BOARDS = {
+    "fm1": {"flash_size": 0x93000, "app_slot": 0x8DFBC, "regions": [
+        (0x93000, 352256, 0x12, 0x80, 0, bytes.fromhex("564d00ffffffffffffffffff00800000")),
+        (0, 0x93000, 0x92, 0x82, 0, bytes.fromhex("5052435400ffffffffffffff434f4445")),
+        (0xE9000, 0x1000, 0x92, 0x80, 0, bytes.fromhex("4254494600ffffffffffffff4155544f")),
+        (0xEA000, 0x12000, 0x92, 0x81, 1, "USR")]},
+    "smk37": {"flash_size": 0x9D000, "app_slot": 0x97FBC, "regions": [
+        (0x9D000, 0x23000, 0x12, 0x81, 0, bytes.fromhex("564d00ffffffffffffffffff00800000")),
+        (0, 0x9D000, 0x92, 0x82, 0, bytes.fromhex("5052435400ffffffffffffff434f4445")),
+        (0xC0000, 0x1000, 0x92, 0x82, 0, bytes.fromhex("4254494600ffffffffffffff4155544f")),
+        (0xC1000, 0x1000, 0x92, 0x81, 0, bytes.fromhex("5553525452494d00ffffffff4155544f")),
+        (0xC2000, 0x29000, 0x92, 0x81, 0, bytes.fromhex("555352464c41534800ffffff4155544f")),
+        (0xF4000, 0xA000, 0x92, 0x81, 1, "USR")]},
+}
 # flash header: JieLi SDK defaults (burner_size 544, VID "0.01", flash_size 0xFF000,
 # fs_ver 0x10, PID "AC791N_STORY"), plain, without its CRC
 FLASH_HDR = bytes.fromhex("20022f104cc900f00f001010a4ff4e5d0b41e0cd781dc856417fb367cf9f")
@@ -99,12 +119,14 @@ def sdk_file(rel):
         raise SystemExit(f"fm1pkg_make: {path}: {e.strerror}. Set AC79_SDK to a JieLi AC79 SDK checkout.")
 
 
-def flash_image(app, key):
+def flash_image(app, key, board="fm1"):
+    b = BOARDS[board]
+    flash_size, app_slot = b["flash_size"], b["app_slot"]
     spl = sdk_file("uboot.boot")                         # SDK SPL, BANKCB-encoded as in the SDK
     cfg_tool = sdk_file("cfg_tool.bin")
     eq = sdk_file("cfg/eq_cfg_hw.bin")
     isd = key_blob(key) + b"[FELUCCA]\r\n"
-    f = bytearray(b"\xFF" * FLASH_SIZE)
+    f = bytearray(b"\xFF" * flash_size)
     # ---- head
     spl_off = 0xA0
     isd_off = spl_off + len(spl)
@@ -121,20 +143,18 @@ def flash_image(app, key):
         enc(head, o, 32)
     f[0:len(head)] = head
     # ---- app area (plain first, then SFC)
-    if len(app) > APP_SLOT:
-        raise SystemExit(f"app is {len(app)} B, the slot is {APP_SLOT} B")
-    app = app + b"\xFF" * (APP_SLOT - len(app))
-    blk = 0x120 + APP_SLOT + len(cfg_tool)              # app_area_head block size
+    if len(app) > app_slot:
+        raise SystemExit(f"app is {len(app)} B, the slot is {app_slot} B")
+    app = app + b"\xFF" * (app_slot - len(app))
+    blk = 0x120 + app_slot + len(cfg_tool)              # app_area_head block size
     area = bytearray(b"\xFF" * blk)
-    area[0x120:0x120 + APP_SLOT] = app
-    area[0x120 + APP_SLOT:blk] = cfg_tool
-    ents = [entry(crc16(app), 0x120, APP_SLOT, 0x82, 0xFF, 0, "app.bin"),
-            entry(crc16(cfg_tool), 0x120 + APP_SLOT, len(cfg_tool), 0x82, 0xFF, 0, "cfg_tool.bin"),
-            # region descriptors; the bytes after the names are SDK packer fields (VM size, "CODE", "AUTO")
-            entry(0xFFFF, 0x93000, 352256, 0x12, 0x80, 0, bytes.fromhex("564d00ffffffffffffffffff00800000")),
-            entry(0xFFFF, 0, FLASH_SIZE, 0x92, 0x82, 0, bytes.fromhex("5052435400ffffffffffffff434f4445")),
-            entry(0xFFFF, 0xE9000, 0x1000, 0x92, 0x80, 0, bytes.fromhex("4254494600ffffffffffffff4155544f")),
-            entry(0xFFFF, 0xEA000, 0x12000, 0x92, 0x81, 1, "USR")]
+    area[0x120:0x120 + app_slot] = app
+    area[0x120 + app_slot:blk] = cfg_tool
+    ents = [entry(crc16(app), 0x120, app_slot, 0x82, 0xFF, 0, "app.bin"),
+            entry(crc16(cfg_tool), 0x120 + app_slot, len(cfg_tool), 0x82, 0xFF, 0, "cfg_tool.bin"),
+            # region descriptors (BOARDS); the bytes after the names are SDK packer fields (VM size, "CODE", "AUTO")
+            *[entry(0xFFFF, off, size, flags, resvd, index, name) for off, size, flags, resvd, index, name in b["regions"]]]
+    assert 32 + len(b"".join(ents)) <= 0x120
     area[32:32 + len(b"".join(ents))] = b"".join(ents)
     area[0:32] = entry(crc16(area[32:blk]), 0x02000120, blk, 0x83, 0xFF, 0, "app_area_head")
     # nested cfg directory right after the block: SDK default EQ table
@@ -195,10 +215,11 @@ def main():
     ap.add_argument("--product", default="FM-1_900")
     ap.add_argument("--key", type=lambda s: int(s, 0), default=KEY)
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
+    ap.add_argument("--board", default="fm1", choices=sorted(BOARDS), help="the layout: fm1 (default) or smk37")
     a = ap.parse_args()
     global SDK
     SDK = a.sdk
-    pkg = ufw(flash_image(a.app.read_bytes(), a.key), a.ota.read_bytes(), a.product)
+    pkg = ufw(flash_image(a.app.read_bytes(), a.key, a.board), a.ota.read_bytes(), a.product)
     a.out.write_bytes(pkg)
     print(f"package {a.out}: {len(pkg)} B, identity {a.product}, chip key {a.key:#06x}")
 
