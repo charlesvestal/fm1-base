@@ -20,6 +20,7 @@
 #define SMK_MASTER_ENC 4u                          /* K5 (0-based) */
 _Static_assert(FM1_TRIM_BASE == FL_USRTRIM, "the input layer reads the calibration record where the flash map puts it");
 _Static_assert(FL_DATA_LO == PLAT_DATA_LO && FL_DATA_HI == PLAT_DATA_HI, "plat.h's data window is the SMK's");
+_Static_assert(FL_OWNER == PLAT_OWNER, "plat.h's owner sector is the SMK's (plat_data_erase / plat_data_write refuse it)");
 
 uint64_t plat_keys37(void)                         /* (the remote's and the mirror's 27 land in the middle) */
 {

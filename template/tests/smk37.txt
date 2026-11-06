@@ -27,8 +27,8 @@ pad 3 press 90
 pad 3 up
 wait 20
 expect pads 0
-fader 1 512
-expect fader1 512
+fader 1 100
+expect fader1 100
 wheel pitch 4000
 expect wheel_pitch 4000
 wheel pitch 0
@@ -49,3 +49,10 @@ wait 30
 expect octave 1
 leds
 padleds
+# the owner tag's sector (PLAT_OWNER, inside PLAT_XDATA1) is the platform's: an app's erase and writes there are refused
+data_erase 0xAF000
+expect data_rc -1
+data_write 0xAEFFF 0000
+expect data_rc -1
+data_erase 0xAE000
+expect data_rc 0

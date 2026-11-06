@@ -386,6 +386,11 @@ void plat_log(const char *line);
 #define PLAT_WIN_HI PLAT_DATA_HI
 #define PLAT_STAGE_LO 0xBB000u         /* the update's staging (felucca-bsp FL_OTA), between PLAT_XDATA1 and the data */
 #define PLAT_STAGE_HI 0xC0000u
+#define PLAT_OWNER 0xAF000u            /* the store's owner tag (felucca-bsp FL_OWNER), a sector inside PLAT_XDATA1: the
+                                        * platform's, so plat_data_erase and plat_data_write refuse it (an app's data
+                                        * there would read as another firmware's at the next boot, and every window
+                                        * would be cleared) */
+#define PLAT_RESERVED(off, n) ((off) < PLAT_OWNER + 0x1000u && (off) + (n) > PLAT_OWNER)
 #else
 #define PLAT_DATA_LO 0x97000u
 #define PLAT_DATA_HI 0xE0000u
@@ -402,6 +407,7 @@ void plat_log(const char *line);
  * the platform's, never an app's; backup.c's journal, the crash history and the debug stats keep to it */
 #define PLAT_STAGE_LO 0xE0000u
 #define PLAT_STAGE_HI 0xE5000u
+#define PLAT_RESERVED(off, n) 0         /* (a sector inside the windows that is the platform's: none on the FM-1) */
 #endif
 #if FM1B_XDATA2
 #define PLAT_DATA_OK(off, n) (plat_in((off), (n), PLAT_DATA_LO, PLAT_DATA_HI) || \

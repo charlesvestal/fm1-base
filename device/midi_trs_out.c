@@ -18,6 +18,7 @@ static uint8_t trs_wait, trs_stuck, trs_off, trs_user_off;
 
 static void uart_midi_init(void) { fm1_uart1_tx_init(); }   /* before TIMER5 starts (an IOMAP read-modify-write) */
 static void uart_midi_poll(void) {}                /* (the FM-1's MIDI IN poll: nothing comes in; the out goes by the tick) */
+static void uart_midi_peek(uint32_t t) { (void)t; }   /* (midi_stamp's landing time for MIDI IN: none comes in here) */
 
 static uint32_t trs_len(uint32_t pkt)             /* a packet's byte count from its CIN; 0: not for the jack (SysEx, a
                                                     * status that does not fit its CIN, a data byte with bit 7) */

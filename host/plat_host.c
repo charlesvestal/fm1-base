@@ -1055,10 +1055,10 @@ void plat_log(const char *line) { ble_say(line); }
 #if FM1B_XDATA2
 #include "plat_xdata2.h"
 #define DATA_TOP PLAT_XDATA2_HI
-#define DATA_STORE_HIT(off, n) plat_xdata2_store_hit((off), (n))
+#define DATA_STORE_HIT(off, n) (plat_xdata2_store_hit((off), (n)) || PLAT_RESERVED((off), (n)))
 #else
 #define DATA_TOP PLAT_WIN_HI
-#define DATA_STORE_HIT(off, n) 0
+#define DATA_STORE_HIT(off, n) PLAT_RESERVED((off), (n))
 #endif
 #ifdef PLAT_DATA_AREA
 static uint8_t *const data_area = PLAT_DATA_AREA;   /* the embedder's own (host/rfm1.c: in its flash image) */
@@ -2713,7 +2713,7 @@ int main(int argc, char **argv)
                 printf("line %d: no fader %s\n", lineno, a);
                 return 2;
             }
-            faders[i] = v < 0 ? 0 : v > 1023 ? 1023 : v;
+            faders[i] = v < 0 ? 0 : v > 127 ? 127 : v;
             run_ms(2);
         } else if (!strcmp(cmd, "wheel")) {           /* wheel pitch V | wheel mod V */
             int v = atoi(b);

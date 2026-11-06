@@ -264,9 +264,9 @@ _Static_assert(PLAT_STAGE_LO == OTA_AREA && PLAT_STAGE_HI == OTA_AREA + OTA_AREA
                                                    * store's objects there refused (plat_xdata2.h) */
 #include "plat_xdata2.h"
 _Static_assert(FL_GLOB_LO == PLAT_XDATA2_LO && FL_GLOB_HI == PLAT_XDATA2_HI, "PLAT_XDATA2 is felucca-bsp's FL_GLOB");
-#define DATA_STORE_HIT(off, n) plat_xdata2_store_hit((off), (n))
+#define DATA_STORE_HIT(off, n) (plat_xdata2_store_hit((off), (n)) || PLAT_RESERVED((off), (n)))
 #else
-#define DATA_STORE_HIT(off, n) 0
+#define DATA_STORE_HIT(off, n) PLAT_RESERVED((off), (n))
 #endif
 const uint8_t *plat_data(uint32_t off)
 {
