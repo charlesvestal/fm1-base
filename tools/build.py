@@ -991,6 +991,11 @@ def build_app():
             flags.append(f'-D{macro}="{CONF[key]}"')
     if CONF.get("usb_serial"):                    # a serial number from the chip's ID (device/plat_fm1.c)
         flags.append("-DFELUCCA_USB_SERIAL_FN=fm1_usb_serial")
+    if CONF.get("usb_name_fn"):                   # the product name asked of the app at run time (felucca-bsp chip/usb.c)
+        fn = CONF["usb_name_fn"]
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", fn):
+            raise SystemExit(f"build: usb_name_fn = {fn!r}: a C function name")
+        flags.append(f"-DFELUCCA_USB_NAME_FN={fn}")
     if VERSION:
         flags.append(f'-DAPP_VERSION="{VERSION}"')
     flags.append(f"-DFM1B_BUILD={build_id():#010x}u")   # (the crash history's records carry it: device/crashlog.c)

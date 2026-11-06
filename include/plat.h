@@ -488,6 +488,12 @@ uint32_t plat_analog_mask(void);       /* bit k: key k is on an analog row (PA7 
 /* 16 bytes unique to this FM-1 (its flash part's factory ID; the same across updates, firmwares and a wiped store):
  * for an address that must not change (the WiFi MAC, the Bluetooth name); 0 = unknown (and in a build without a radio) */
 const uint8_t *plat_chip_uid(void);
+/* the four hex digits that tell this FM-1 from another, 0..0xFFFF (-1: no ID; plat_uid.h): the hash of plat_chip_uid, also
+ * the low two octets of the Bluetooth address the own stack makes (bt_own.c), so a name "FM1-XXXX" (plat_dev_name) is the
+ * same on the radio, on USB (fm1.toml usb_name_fn) and for the tools. Needs the ID read: a build with Wi-Fi, Bluetooth or
+ * usb_name_fn */
+int plat_dev_id(void);
+#include "plat_uid.h"                  /* plat_uid_hash16, plat_dev_name(out[9], id): "FM1-XXXX" */
 
 /* persistent storage (Felucca storage.c objects: A/B sectors, CRC, torn-write safe) */
 int plat_store_load(uint32_t obj, void *dst, uint32_t max);   /* bytes loaded, < 0 = none / bad (an empty object is
