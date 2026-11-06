@@ -355,8 +355,11 @@ void plat_yield(void);
 void plat_restart(void);
 void plat_log(const char *line);
 /* the flash's data area, 0x97000..0xDFFFF, for an app's own big data (a table it builds, samples): its store objects
- * live there too, at the offsets it gave them (APP_STORE_MAP), so it keeps to the rest. Main loop only; an erase or a
- * write stops everything for a moment (the sound too: no flash reads meanwhile).
+ * live there too, at the offsets it gave them (APP_STORE_MAP), so it keeps to the rest. Main loop only; a write stops
+ * everything for a moment (no flash reads meanwhile: a 256-byte page at a time). An erase (here and the store's) runs in
+ * windows of about 1 ms, the interrupts and the sound on between them, the sector reading anything until it is done
+ * (felucca-bsp's sliced erase; FM1B_ERASE_SLICED 0 in app.h or the environment: one window of 8-17 ms, the sound
+ * silenced, as for a flash part that does not suspend an erase: plat_flash_held counts those).
  * Two more windows for big data, outside the store: PLAT_XDATA0 (16 KiB, just above the app area) and PLAT_XDATA1
  * (92 KiB, above the update's staging). The update loader clears an update record it finds in the last 256 bytes of
  * a sector there (bsp/loader/ldr_core.c: "AT" at bytes 0xF06..0xF07, a nonzero CRC-16 at 0xF00 over the 78 bytes
@@ -396,6 +399,7 @@ const uint8_t *plat_data(uint32_t off);   /* read in place; 0 = outside the wind
  * that tells the installers which bootloader the FM-1 has. Read only; main loop; 0 = read */
 int plat_boot_read(uint32_t off, void *dst, uint32_t n);
 int plat_data_erase(uint32_t off);        /* the 4 KiB sector at off (aligned); 0 = done */
+uint32_t plat_flash_held(void);           /* erases since boot that held the sound for the whole erase (above) */
 int plat_data_write(uint32_t off, const void *src, uint32_t n);   /* src in RAM; 0 = done */
 /* plat_data_write programs, as NOR flash does: each byte becomes what it was AND what is written (bits go from 1 to
  * 0 only, and only an erase sets them again). So it writes into erased flash, and it may also clear bits in place, in

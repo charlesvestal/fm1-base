@@ -189,6 +189,22 @@ static void audio_silence(void)                     /* IRQs off (flash erase): t
         abuf[i] = 0;
 }
 
+/* a 4 KiB sector of the store or the data area (st_erase, plat_data_erase), main loop only. felucca-bsp's
+ * fl_erase4k_sliced: windows of about 1 ms, the interrupts and the render on between them; a part that does not
+ * suspend is waited out in one window, abuf silenced by it (FL_ERASE_HELD: plat_flash_held). The render's job on the
+ * second core is waited for before the render returns, so the main loop never starts a window under one (the XIP is
+ * off in each window). FM1B_ERASE_SLICED 0: one window, silenced first */
+static int data_erase(uint32_t off)
+{
+    uint32_t took;
+#if FM1B_ERASE_SLICED
+    return fl_erase4k_sliced(off, &took, abuf, sizeof abuf / sizeof abuf[0]);
+#else
+    audio_silence();
+    return fl_erase4k(off, &took);
+#endif
+}
+
 /* ------------------------------------------------------------ timer --- */
 static uint8_t usb_due;
 static uint32_t t5_gap_max, t5_late, t5_run_max;                /* the longest gap between ticks (us), and gaps over 3 ticks
@@ -303,16 +319,6 @@ static void hexs(char *b, uint32_t v)
 #endif
 #if FM1B_CRASHLOG
 #include "stacks.c"                                 /* the stacks' room: painted at the start, read at a crash */
-
-/* a sector of the crash history or the debug stats, main loop only: one window, the sound silenced, as plat_data_erase
- * (Henri's crashlog.c / dbgstats.c call his data_erase, felucca-bsp's sliced erase from w0ts/fm1-base
- * feat/sliced-erase, which is not taken here) */
-static int data_erase(uint32_t off)
-{
-    uint32_t took;
-    audio_silence();
-    return fl_erase4k(off, &took);
-}
 
 /* the crash history in flash (crashlog.c: the staging area's 0xE2000..0xE3FFF), the boot's save and the readouts */
 #ifndef FM1B_BUILD

@@ -97,6 +97,12 @@
 #if FM1B_WIFI || FM1B_BLE || defined(FELUCCA_USB_SERIAL_FN)
 #define FL_UID 1                          /* the flash's unique ID: the WiFi MAC, the Bluetooth name (plat_chip_uid) */
 #endif
+#ifndef FM1B_ERASE_SLICED
+#define FM1B_ERASE_SLICED 1
+#endif
+#define FL_ERASE_SLICED FM1B_ERASE_SLICED
+static uint32_t flash_held;               /* erases that held the sound for the whole erase (plat_flash_held) */
+#define FL_ERASE_HELD() (flash_held++)
 #include "fm1_flash.h"
 #include "fm1_xip.h"
 #include "fm1_perf.h"
@@ -227,6 +233,7 @@ static uint8_t flash_ok;          /* JEDEC id matched at boot */
 static uint8_t flash_uid[16];     /* the flash's factory unique ID (plat_chip_uid), read at boot */
 #endif
 static void audio_silence(void);
+static int data_erase(uint32_t off);   /* (main_fm1.c) */
 static int st_read(uint32_t off, void *dst, uint32_t n)   /* 256-byte IRQ-off windows: audio keeps up */
 {
     uint8_t *d = dst;
@@ -244,11 +251,9 @@ static int st_read(uint32_t off, void *dst, uint32_t n)   /* 256-byte IRQ-off wi
 }
 static int st_erase(uint32_t off)
 {
-    uint32_t took;
     if (!FL_STORE_OK(off, 0x1000u))
         return -8;
-    audio_silence();
-    return fl_erase4k(off, &took);
+    return data_erase(off);
 }
 static int st_prog(uint32_t off, const void *src, uint32_t n)
 {
