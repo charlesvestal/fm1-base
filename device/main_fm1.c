@@ -45,6 +45,7 @@ static int bta_frame(const uint8_t *p, uint32_t n);
 static int dev_frame(const uint8_t *p, uint32_t n);   /* bt_own_central.c */
 #endif
 #include "uac_mix.h"                                /* the USB recording, the computer's audio, in that order */
+#include "update_begin.h"                          /* the app's stop before an update, PLAT_UPDATE_BEGIN_MS at most */
 #include "fm1_flash_ok.h"                          /* the flash parts the storage may use (FM1B_FLASH_JEDEC_OK) */
 #if FM1B_BT_AUDIO
 static volatile uint8_t bta_streamed;               /* the last render went to Bluetooth (plat_bta_streams) */
@@ -1151,6 +1152,25 @@ void plat_restart(void)
 }
 #endif
 
+/* an update (the upgrade command, F0 22 24 35 7F F7) or the soft key's UBOOT from the host begins, in the app's main
+ * loop: the app stops cleanly first (APP_UPDATE_BEGIN: its transport stopped, its notes and MIDI let go), before
+ * anything is staged or erased and before the restart. Asked once per pass until the app says it is done, and no
+ * longer than PLAT_UPDATE_BEGIN_MS (update_begin.h): the update never waits for the app beyond that. 1 = go ahead.
+ * Not in safe mode (no app running there). The watchdog fed on both sides of the app's ask */
+static int update_ready(void)
+{
+    static update_begin_t st;
+#ifdef APP_UPDATE_BEGIN
+    int r;
+    fm1_wdt_feed();
+    r = update_begin_ready(&st, fm1_ms, app_update_begin);
+    fm1_wdt_feed();
+    return r;
+#else
+    return update_begin_ready(&st, fm1_ms, 0);
+#endif
+}
+
 static void enter_uboot(const char *why)
 {
     fm1_clock_restore();                            /* (the chip's update mode at the stock clock) */
@@ -1488,7 +1508,7 @@ static void fm1_main(void)
 #if FM1B_COMPANION
         comp_step();                                /* the companion: what a watched parameter did */
 #endif
-        if (usb.ota_req) {
+        if (usb.ota_req && update_ready()) {        /* (the app stopped cleanly first, or its time is up) */
             usb.ota_req = 0;
             app_panic();                            /* silence: the update rewrites the flash */
             fm1_clock_restore();                    /* (the update loader at the stock clock) */
@@ -1508,7 +1528,8 @@ static void fm1_main(void)
 #endif
             app_ui_init();
         }
-        if (usb.uboot_req)
+        if (usb.uboot_req && update_ready())        /* the soft key (F0 22 24 35 7D F7): the chip's update mode;
+                                                     * enter_uboot stops the audio, no app_panic (nothing of the app's) */
             enter_uboot("UBOOT (USB)");
         if (fm1_ms - last_frame >= 16u) {           /* ~60 frames/s at most; input in between */
             last_frame = fm1_ms;
