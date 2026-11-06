@@ -39,6 +39,7 @@ static int near(long a, long b) { return a - b < 2 && b - a < 2; }
 static void feed(uint32_t n)            /* the computer's packets into the output ring */
 {
     uint32_t i;
+    UO_RING();                          /* (felucca-bsp: the ring may be lent, so a pointer to it) */
     for (i = 0; i < n; i++)
         uo_ring[(uo_w + i) & (UO_N - 1u)] = (uint32_t)(uint16_t)PC | (uint32_t)(uint16_t)(-PC) << 16;
     uo_w += n;
@@ -50,6 +51,7 @@ static void block(uint32_t gain, uint32_t master, int full, uint32_t play, int32
 {
     int32_t o[2u * N];
     uint32_t i, w = ua_w;
+    UA_RING();
     for (i = 0; i < N; i++)
         o[2u * i] = o[2u * i + 1u] = APP;
 #if FELUCCA_UAC_OUT
