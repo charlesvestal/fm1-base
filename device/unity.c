@@ -140,6 +140,10 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define FM1B_UAC_CH 2             /* the USB audio input's channels: the master, and the app's on 3..N (plat_usb_ch) */
 #endif
 #define FELUCCA_UAC_CH FM1B_UAC_CH
+#ifndef FM1B_UAC_24
+#define FM1B_UAC_24 0             /* 1: 24-bit too (the input's alt setting 2; alt 1 stays 16-bit) */
+#endif
+#define FELUCCA_UAC_24 FM1B_UAC_24
 #ifndef FM1B_UAC_HOST_CLOCK
 #define FM1B_UAC_HOST_CLOCK 0     /* 1: the input on the computer's clock (felucca-bsp resamples it to 44.1 kHz) */
 #endif
