@@ -73,6 +73,7 @@ static void slide(uint32_t g0, uint32_t gain, uint32_t master)
 {
     int32_t o[2u * N];
     uint32_t i, w = ua_w;
+    UA_RING();
     const long d = ((long)APP * gain - (long)APP * g0) / 4096 / (long)N;
     for (i = 0; i < N; i++)
         o[2u * i] = o[2u * i + 1u] = APP;
