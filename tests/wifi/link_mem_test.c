@@ -14,6 +14,7 @@ uint32_t plat_ms(void) { return ms; }
 uint32_t plat_ticks24(void) { return ms * 24000u; }
 const uint8_t *plat_chip_uid(void) { return 0; }
 int plat_ble_state(void) { return BLE_READY; }
+int plat_ble_radio(void) { return BLE_READY; }
 void plat_ble_start(void) {}
 enum { OBJ_WIFI = 2 };
 int plat_store_load(uint32_t obj, void *dst, uint32_t max) { (void)obj, (void)dst, (void)max; return -1; }

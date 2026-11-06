@@ -780,6 +780,7 @@ extern int ble_midi_peripheral_linked(void);
 extern void ble_midi_enable(int on);
 static uint8_t ble_off;                           /* switched off by the player (plat_ble_enable) */
 int plat_ble_state(void) { return ble_off ? BLE_OFF : ble_state; }
+int plat_ble_radio(void) { return ble_state; }   /* (switched off or not: WiFi's start) */
 int plat_ble_connected(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_connected(); }
 extern int ble_midi_rssi(int link);
 int plat_ble_rssi(int link) { return !ble_off && ble_state == BLE_READY ? ble_midi_rssi(link) : 0; }
