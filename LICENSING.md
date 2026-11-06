@@ -53,6 +53,14 @@ under the Apache License 2.0 (`LICENSES/Apache-2.0.txt`): the connection handlin
 values in `ble/shim/rf_const.c` (Apache-2.0 only). Each file's header says which parts, and carries
 `MPL-2.0 AND Apache-2.0`.
 
+## Panel messages (panelmsg.h, panelmsg.c)
+
+`device/panelmsg.h` and `device/panelmsg.c` (Copyright (C) 2026 Bitbazooka LLC) are dual-licensed `MIT OR MPL-2.0`.
+fm1-base takes them under MPL-2.0, like every other file here; the same two files go into GPL and MIT firmwares under
+MIT. They are built only with `panel_messages = true`. Their place in fm1-base, `device/panelmsg_base.c`, and its
+test, `tests/panelmsg_test.c` and `tests/panelmsg_test.sh`, are MPL-2.0; the test's USB register model,
+`tests/panelmsg/fm1_usb.h`, is `MIT OR MPL-2.0` like the module.
+
 The GPL copies in Felucca and in those firmwares stay under the GPL; the copies here are MPL-2.0. No code by other
 Felucca contributors is in fm1-base: the history of every file was checked when it was imported (from fm1-fomni
 `7e7547f`).

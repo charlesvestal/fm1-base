@@ -200,7 +200,11 @@ void fm1_timer5_irq(void)
     fm1b_dbg.timer_irqs++;
     if (fm1b_dbg.in_audio)
         fm1b_dbg.nested++;
+#if FM1B_PANELMSG
+    panelmsg_tick();                                /* fm1_input_tick, its edges and turns to a listening computer */
+#else
     fm1_input_tick();
+#endif
     /* 2 kHz: all USB SIE traffic lives here. This ISR now nests into the audio render (so the key
      * matrix keeps its rhythm, below); USB shares the MIDI queues with the audio ISR, so a poll that
      * falls inside the render waits for the first tick outside it, as it did before the nesting. */
@@ -1401,6 +1405,9 @@ static void fm1_main(void)
 #if FM1B_BLE_OWN && FM1B_BLE_CENTRAL
                                           || dev_frame(p, n)
 #endif
+#if FM1B_PANELMSG
+                                          || panelmsg_frame(p, n)
+#endif
 #ifdef APP_SYSEX
                                           || app_sysex(p, n)
 #endif
@@ -1419,8 +1426,15 @@ static void fm1_main(void)
 #if FM1B_MIRROR
         mirror_step();                              /* the screen mirrored: input reports, redraws, timeouts */
 #endif
+#if FM1B_PANELMSG
+        panelmsg_poll();                            /* the panel as played, to a listening computer: only into an
+                                                     * empty SysEx ring, after this pass's answers */
+#endif
         if (usb.ota_req) {
             usb.ota_req = 0;
+#if FM1B_PANELMSG
+            panelmsg_stop();                        /* quiet from the update on, until a new HELLO */
+#endif
             app_panic();                            /* silence: the update rewrites the flash */
             if (flash_ok)
                 ota_session();                      /* returns only if nothing was committed */

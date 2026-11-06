@@ -164,6 +164,11 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   audio_aside = true         each audio half rendered into a buffer of its own and copied into the DMA's half only
                              while that half is still free (FM1B_AUDIO_ASIDE, device/audio_commit.c, Henri David's): a
                              late render leaves the half playing whole instead of tearing it. 2 KiB of RAM; off by default
+  panel_messages = true      panel messages (FM1B_PANELMSG: device/panelmsg_base.c over device/panelmsg.h and
+                             panelmsg.c, MIT OR MPL-2.0): silent until an app on the computer says HELLO, then the
+                             panel as played (presses, releases, turns, what is held) and the firmware's name and
+                             version, over USB only and only into an empty SysEx ring; the device only.
+                             FM1B_PANELMSG=1 / 0 in the environment: with / without it
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
 app.h); the build prints what it has.
   boot_pack = true           .ram_text and .data stored LZMA-packed (tools/boot_pack.py, Melodee's; device/boot_lzma.h): the
@@ -768,6 +773,12 @@ def cpu2_stack_flags():
     return [f"-DFM1_CPU1_USTACK_BYTES={n}"]
 
 
+def panelmsg_on():
+    """fm1.toml panel_messages = true (FM1B_PANELMSG=1 / 0 in the environment: with / without it)"""
+    v = os.environ.get("FM1B_PANELMSG")
+    return v == "1" if v in ("0", "1") else bool(CONF.get("panel_messages"))
+
+
 def build_app():
     flags = [*CFLAGS, *FPU, *inc(BSP / "chip", BSP / "boards" / "fm1", SRC / "device", SRC / "include", SRC / "lib", APP, GEN,
                                  *(APP / d for d in CONF.get("include", []) + CONF.get("device_include", [])))]
@@ -798,6 +809,8 @@ def build_app():
     if WIFI:
         flags += ["-DFM1B_WIFI=1", "-DSHIM_WIFI=1", *inc(SRC / "ble" / "shim")]
     flags += opt_flags()
+    if panelmsg_on():
+        flags.append("-DFM1B_PANELMSG=1")              # panel messages (device/panelmsg_base.c): the device only
     for key, flag in (("usb_audio_in", "FM1B_UAC"), ("usb_audio_out", "FM1B_UAC_OUT")):
         if key in CONF and flag not in os.environ:
             flags.append(f"-D{flag}={int(bool(CONF[key]))}")
@@ -1659,7 +1672,7 @@ def main():
         print("  FAIL ", e)
     if errors:
         raise SystemExit("build: checks failed")
-    parts = [(label, have[f]) for f, label in firmware_json.FEATURES]
+    parts = [(label, have[f]) for f, label in firmware_json.FEATURES] + [("panel messages", panelmsg_on())]
     print("parts    " + ", ".join(n for n, x in parts if x) + "  (not built in: " +
           (", ".join(n for n, x in parts if not x) or "none") + ")")
     pkg = fm1pkg_make.ufw(fm1pkg_make.flash_image(img, fm1pkg_make.KEY), ota, PRODUCT)

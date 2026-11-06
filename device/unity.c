@@ -31,7 +31,9 @@
  *   FM1B_RES 0              the resource region (fm1.toml resources = FILE: res.c; with backup)
  *   FM1B_CPU2 0             the second core (fm1.toml cpu2 = true: cpu2.c, felucca-bsp's fm1_cpu1.h)
  *   FM1B_CACHE_RAM 0        data-cache ways as RAM, 2, 4 or 7 (fm1.toml cache_ram_ways: plat_cache_ram, felucca-bsp's
- *                           fm1_cache_ram.h; set and tested in fm1_cstart, main_fm1.c) */
+ *                           fm1_cache_ram.h; set and tested in fm1_cstart, main_fm1.c)
+ *   FM1B_PANELMSG 0         panel messages: the panel as played, to an app on the computer that asks (fm1.toml
+ *                           panel_messages = true: panelmsg_base.c, panelmsg.h, panelmsg.c) */
 #include <stdint.h>
 #include "plat.h"
 #include "app.h"                  /* first: the scan's hooks below may call the app */
@@ -274,6 +276,12 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)   /* never waits: no room
     return ota_wire_send(p, n);
 }
 #include "panel.c"
+#ifndef FM1B_PANELMSG
+#define FM1B_PANELMSG 0
+#endif
+#if FM1B_PANELMSG
+#include "panelmsg_base.c"                  /* panel messages: the panel as played, to an app that says HELLO */
+#endif
 #if FM1B_BLE || FM1B_WIFI
 #include "radio.c"                /* the shim's platform, a radio's start; Bluetooth MIDI (FM1B_BLE, ble/: the shim, the
                                    * MIDI service) */
