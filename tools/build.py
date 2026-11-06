@@ -899,6 +899,20 @@ def radio_units():
     return units, objs, libs
 
 
+def usb_audio_flags():
+    """fm1.toml's USB audio settings -> flags (the device's build, and the host simulator's: its USB audio model)"""
+    flags = []
+    for key, flag in (("usb_audio_in", "FM1B_UAC"), ("usb_audio_out", "FM1B_UAC_OUT")):
+        if key in CONF and flag not in os.environ:
+            flags.append(f"-D{flag}={int(bool(CONF[key]))}")
+    if "usb_audio_in_host_clock" in CONF:
+        flags.append(f"-DFM1B_UAC_HOST_CLOCK={int(bool(CONF['usb_audio_in_host_clock']))}")
+    return flags
+
+
+    return flags
+
+
 def cache_ram_ways():
     """fm1.toml cache_ram_ways: the data cache's ways used as RAM, 0 (none: off), 2, 4 or 7 (FM1B_CACHE_RAM=N in the
     environment over it)"""
