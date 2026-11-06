@@ -206,7 +206,7 @@ void fm1_timer5_irq(void)
      * falls inside the render waits for the first tick outside it, as it did before the nesting. */
     if (sub % 5u == 0u) {
         usb_due = 1;
-#if FELUCCA_UAC
+#if FELUCCA_UAC && FELUCCA_UAC_CH == 2
         /* the USB audio stream cannot wait for the render (one packet per 1 ms frame, a render takes
          * up to ~11.6 ms): it runs nested too. It touches only EP4 (INDEX is set on every access) and
          * the consumer side of its ring, and usb_poll never runs nested, so the two never interleave */
@@ -214,6 +214,14 @@ void fm1_timer5_irq(void)
             uac_service();
 #endif
     }
+#if FELUCCA_UAC && FELUCCA_UAC_CH > 2
+    /* usb_audio_channels: every tick (0.1 ms), nested in the render or not (outside it, but for the ticks usb_poll
+     * runs: it services the stream itself). A packet of 10 channels takes ~0.6 ms on the bus: polled at 2 kHz, the next
+     * was often queued after the next frame's IN, which then found none (on an FM-1: 38,400 frames/s instead of
+     * 44,100, the ring overflowing, halves dropped: crackles and a lower pitch). The stall count: FELUCCA_UAC_STALL_POLLS */
+    if (fm1b_dbg.in_audio || !usb_due)
+        uac_service();
+#endif
     if (usb_due && !fm1b_dbg.in_audio) {
         usb_due = 0;
         usb_poll();
