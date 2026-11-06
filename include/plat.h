@@ -386,6 +386,9 @@ static inline int plat_in(uint32_t off, uint32_t n, uint32_t lo, uint32_t hi)   
     return off >= lo && off <= hi && n <= hi - off;
 }
 const uint8_t *plat_data(uint32_t off);   /* read in place; 0 = outside the windows */
+/* the boot area [0, 0x4000) read as stored (the bootloader and its configuration; the flash driver's own read, not XIP): an app
+ * that tells the installers which bootloader the FM-1 has. Read only; main loop; 0 = read */
+int plat_boot_read(uint32_t off, void *dst, uint32_t n);
 int plat_data_erase(uint32_t off);        /* the 4 KiB sector at off (aligned); 0 = done */
 int plat_data_write(uint32_t off, const void *src, uint32_t n);   /* src in RAM; 0 = done */
 /* plat_data_write programs, as NOR flash does: each byte becomes what it was AND what is written (bits go from 1 to

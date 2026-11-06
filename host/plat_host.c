@@ -1047,6 +1047,12 @@ const uint8_t *plat_data(uint32_t off)
     data_init();
     return PLAT_DATA_OK(off, 1u) ? &data_area[off - DATA_BASE] : 0;
 }
+int plat_boot_read(uint32_t off, void *dst, uint32_t n)   /* (no boot area on the host: a bootloader not known) */
+{
+    (void)off, (void)dst, (void)n;
+    return -1;
+}
+uint32_t plat_flash_held(void) { return 0; }   /* (no erase holds anything here) */
 int plat_data_erase(uint32_t off)
 {
     data_init();

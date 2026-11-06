@@ -279,6 +279,10 @@ const uint8_t *plat_data(uint32_t off)
 {
     return flash_ok && PLAT_DATA_OK(off, 1u) ? (const uint8_t *)FL_XIP(off) : 0;
 }
+int plat_boot_read(uint32_t off, void *dst, uint32_t n)   /* (unity.c st_read: the RAM driver in 256-byte IRQ-off windows) */
+{
+    return flash_ok && plat_in(off, n, 0u, 0x4000u) ? st_read(off, dst, n) : -1;
+}
 int plat_data_erase(uint32_t off)
 {
     uint32_t took;
