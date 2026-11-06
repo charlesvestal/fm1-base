@@ -16,6 +16,8 @@
 #define FELUCCA_BT_DIAG 0
 #define FELUCCA_DUAL 0                            /* (the second core is fm1-base's: it keeps to RAM, cpu2.c) */
 #define IN_POOL PLAT_POOL
+#define BA_KEEP 2u                                /* a half's SBC frames kept for the app's render jobs (bt_acl.c,
+                                                   * plat_bta_job*: two a 256-frame half) */
 #ifndef BTI_RING
 #define BTI_RING 12u                              /* receptions waiting for the main loop (Optimist's 32 overflowed only while
                                                    * its console printed; there is none here): 7.3 KB of pool less */
@@ -191,6 +193,10 @@ static int own_bta_feed(const int32_t *o, uint32_t n)
 }
 
 /* ---- plat.h */
+int plat_bta_job_pending(void) { return ba_keep_n - ba_keep_done; }   /* (the render, before its split) */
+void plat_bta_job(void) { ba_keep_one(); }        /* (a render job, either core: the next kept frame encoded) */
+void plat_bta_job_keep(int on) { ba_keep_on = (uint8_t)(on != 0); }
+uint32_t plat_bta_job_inline(void) { return ba_feed_enc; }   /* (frames encoded at the feed, not as jobs) */
 uint32_t plat_bta_mem_bytes(void)
 {
 #if FM1B_BTA_MEM

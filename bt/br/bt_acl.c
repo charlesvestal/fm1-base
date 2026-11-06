@@ -316,6 +316,41 @@ _Static_assert(4u + 12u + 1u + BA_MFRAMES * (12u + (8u + 16u * BA_BITPOOL + 7u) 
 static uint8_t ba_mbuf[BA_MFRAMES * 128u];
 static uint32_t ba_mlen, ba_mn;
 static uint8_t ba_live;                            /* bt_audio_feed streams (the audio ISR's) */
+/* BA_KEEP (bt_own_audio.c, plat_bta_job*: 2026-11-01, an app with a second core): the frames a half completes are kept, their
+ * PCM copied, and encoded during the next render, one an app job (on either core), instead of
+ * inline here on CPU0 after the render (two a 256-frame half, ~4x a synth part's per-sample cost each). Sent at the next
+ * feed, in order, the same bytes, one half (5.8 ms) later. Not taken (keep off, CPU1 down and no job ran, the slots
+ * full): encoded here as before */
+#ifndef BA_KEEP
+#define BA_KEEP 0u
+#endif
+#if BA_KEEP
+static int16_t ba_keep_pcm[BA_KEEP][BT_SBC_SAMPLES_PER_FRAME * 2] IN_POOL;
+static uint8_t ba_keep_frm[BA_KEEP][128] IN_POOL;
+static uint32_t ba_keep_len[BA_KEEP];
+static volatile uint8_t ba_keep_n, ba_keep_done;   /* frames kept; encoded of them (in order) */
+static volatile uint8_t ba_keep_on;                /* the app runs the jobs (plat_bta_job_keep) */
+static uint32_t ba_feed_enc;                       /* frames encoded here at the feed, on CPU0 after the render (not a job;
+                                                    * plat_bta_job_inline: the app's CPU TIMES) */
+static void ba_keep_one(void)                      /* the next kept frame encoded (a job: either core; or the feed) */
+{
+    uint32_t k = ba_keep_done;
+    if (k < ba_keep_n) {
+        ba_keep_len[k] = bt_sbc_encode(&ba_sbc, ba_keep_pcm[k], ba_keep_frm[k]);
+        ba_keep_done = (uint8_t)(k + 1u);
+    }
+}
+static void ba_sbc_out(const uint8_t *frame, uint32_t slen);
+static void ba_keep_flush(void)                    /* every kept frame encoded (the rest here) and sent, in order */
+{
+    uint32_t k;
+    while (ba_keep_done < ba_keep_n)
+        ba_keep_one(), ba_feed_enc++;
+    for (k = 0; k < ba_keep_n; k++)
+        ba_sbc_out(ba_keep_frm[k], ba_keep_len[k]);
+    ba_keep_n = ba_keep_done = 0;
+}
+#endif
 static uint32_t ba_qavg;                           /* the audio packets queued (bt_page.c bp_mq), mean over ~0.7 s, Q8 */
 
 /* how much later than the FM-1's own output the Bluetooth stream leaves us, TIMER4 ticks; -1 not streaming
@@ -359,6 +394,18 @@ static void ba_media_send(const uint8_t *sbc_frame, uint32_t sbc_len, uint32_t f
     (void)bp_media_queue(pkt, 4u + payload_len);   /* (whole, one DH5; full: dropped whole, never cut) */
 }
 
+static void ba_sbc_out(const uint8_t *frame, uint32_t slen)   /* an encoded frame into the packet, sent when full */
+{
+    uint32_t k;
+    for (k = 0; k < slen && ba_mlen + k < sizeof ba_mbuf; k++)
+        ba_mbuf[ba_mlen + k] = frame[k];
+    ba_mlen += k;
+    if (++ba_mn == (bp.slots5 == 2u ? BA_MFRAMES : 1u)) {   /* (DH5: BA_MFRAMES frames; DH3: one) */
+        ba_media_send(ba_mbuf, ba_mlen, ba_mn);
+        ba_mlen = ba_mn = 0;
+    }
+}
+
 int bt_audio_feed(const int32_t *q15_pcm, uint32_t n)   /* 1: it streams (audio.c mutes the FM-1's own output) */
 {
     uint32_t i;
@@ -368,6 +415,9 @@ int bt_audio_feed(const int32_t *q15_pcm, uint32_t n)   /* 1: it streams (audio.
                                                     * disconnect, the user 2026-10-20) */
         ba_pcm_cnt = 0;
         ba_live = 0;
+#if BA_KEEP
+        ba_keep_n = ba_keep_done = 0;              /* (the frames of a stream that stopped: not sent) */
+#endif
         return 0;
     }
     if (!ba_live)
@@ -379,6 +429,10 @@ int bt_audio_feed(const int32_t *q15_pcm, uint32_t n)   /* 1: it streams (audio.
         bt_sbc_init(&ba_sbc, 44100, bp_max < ba.conf[2] ? ba.conf[2] : bp_max, 1);
         ba_sbc_init_done = 1;
     }
+#if BA_KEEP
+    if (ba_keep_n && ba_keep_done == ba_keep_n)    /* the last half's frames, encoded by the render's jobs: sent */
+        ba_keep_flush();
+#endif
     for (i = 0; i < n; i++) {
         int32_t l = q15_pcm[2u * i];
         int32_t r = q15_pcm[2u * i + 1u];
@@ -389,14 +443,21 @@ int bt_audio_feed(const int32_t *q15_pcm, uint32_t n)   /* 1: it streams (audio.
         ba_pcm_cnt++;
         if (ba_pcm_cnt >= BT_SBC_SAMPLES_PER_FRAME) {
             uint8_t frame[128];
-            uint32_t slen = bt_sbc_encode(&ba_sbc, ba_pcm_acc, frame), k;
-            for (k = 0; k < slen && ba_mlen + k < sizeof ba_mbuf; k++)
-                ba_mbuf[ba_mlen + k] = frame[k];
-            ba_mlen += k;
-            if (++ba_mn == (bp.slots5 == 2u ? BA_MFRAMES : 1u)) {   /* (DH5: BA_MFRAMES frames; DH3: one) */
-                ba_media_send(ba_mbuf, ba_mlen, ba_mn);
-                ba_mlen = ba_mn = 0;
+#if BA_KEEP
+            if (ba_keep_on && ba_keep_n < BA_KEEP) {   /* kept for the next render's jobs (its PCM copied) */
+                uint32_t k;
+                for (k = 0; k < 2u * BT_SBC_SAMPLES_PER_FRAME; k++)
+                    ba_keep_pcm[ba_keep_n][k] = ba_pcm_acc[k];
+                ba_keep_n++;
+                ba_pcm_cnt = 0;
+                continue;
             }
+            ba_keep_flush();                       /* (not kept: the kept ones first, in order) */
+#endif
+            ba_sbc_out(frame, bt_sbc_encode(&ba_sbc, ba_pcm_acc, frame));
+#if BA_KEEP
+            ba_feed_enc++;
+#endif
             ba_pcm_cnt = 0;
         }
     }
