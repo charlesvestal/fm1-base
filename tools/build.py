@@ -905,6 +905,16 @@ def usb_audio_flags():
     for key, flag in (("usb_audio_in", "FM1B_UAC"), ("usb_audio_out", "FM1B_UAC_OUT")):
         if key in CONF and flag not in os.environ:
             flags.append(f"-D{flag}={int(bool(CONF[key]))}")
+    if "usb_audio_in_channels" in CONF:
+        ch = CONF["usb_audio_in_channels"]
+        if "usb_audio_channels" in CONF:
+            raise SystemExit("build: usb_audio_in_channels (the app fills every channel) or usb_audio_channels (the master "
+                             "and the app's on 3..N): one way to fill the channels, not both")
+        if "usb_audio_in_24bit" in CONF:
+            raise SystemExit("build: usb_audio_in_24bit is gone: the depth follows usb_audio_in_channels")
+        if ch not in (2, 4, 8) or isinstance(ch, bool):
+            raise SystemExit(f"build: usb_audio_in_channels is 2, 4 or 8, not {ch!r}")
+        flags += [f"-DFM1B_UAC_CH={ch}", "-DFM1B_UAC_CAPTURE=1", f"-DFM1B_UAC_24={int(ch <= 4)}"]   # (24-bit up to 4 channels: 8 fills a packet at 16)
     if "usb_audio_in_host_clock" in CONF:
         flags.append(f"-DFM1B_UAC_HOST_CLOCK={int(bool(CONF['usb_audio_in_host_clock']))}")
     return flags
