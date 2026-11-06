@@ -67,6 +67,14 @@ t = dict(BASE, deep=["[--sp] = {rets, r4}", ("01 01", "tbh [r1]"), ("06 00", "<u
 r = sd.analyse(dis(t), set())
 check("a 'tbh' table is data up to its nearest target: its halfwords are no instructions, the code after it is",
       r["main"][0] == 20 + 100 + 8 + 1000 and not sd.STRADDLE)
+t = dict(BASE, deep=["[--sp] = {rets, r4}", "if (r3 > 1) goto 40 <deep+0x30 : 0 >", "r9 = 1 <deep+0x14 : TAB >",
+                      "r3 = [r9+r3<<2]", "goto r3", ("82 90 07 02", "sp += -448"), ("82 90 07 02", "sp += -448"),
+                      "sp += -1000"])
+d = dis(t)
+at = int(next(ln for ln in d.splitlines() if ln.endswith("goto r3")).split(":")[0], 16)
+r = sd.analyse(d.replace("TAB", f"{at + 4:x}"), set())
+check("a table of words a 'goto r' reads (r9 = the table just after it, 'if (r3 > 1)': 2 words) is data, the code after it"
+      " is code", r["main"][0] == 20 + 100 + 8 + 1000)
 t = dict(BASE, deep=["[--sp] = {rets, r4}", "sp += -16", "call 4 <deep>"])
 r = sd.analyse(dis(t), set())
 check("a recursion with no bound: listed, its cycle said", "deep" in r["notes"]["recursion"]
