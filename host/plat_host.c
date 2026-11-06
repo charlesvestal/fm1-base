@@ -2156,11 +2156,18 @@ static double now_ns(void)
     return (double)t.tv_sec * 1e9 + (double)t.tv_nsec;
 }
 
+#ifdef APP_SPLASH
+static uint16_t splash_fb[240 * 240];   /* the screen as the app's splash left it, the last boot's (boot) */
+#endif
 static void boot(void)
 {
     hcr_boot();                                     /* a crash before this boot into the flash history (main_fm1.c) */
     hds_boot();                                     /* the debug stats' queue, a crash's snapshot (main_fm1.c) */
     palette_set(APP_PALETTE);                       /* as the device does at boot */
+#ifdef APP_SPLASH
+    app_splash();                                   /* the app's boot screen, before app_init as main_fm1.c draws it */
+    memcpy(splash_fb, fb, sizeof fb);               /* (kept: expect splash_lit.Y0.Y1, splashshot) */
+#endif
     app_init();
     lcd_fill(0, 0, 240, 240, 0);
     ble_state = BLE_OFF;                            /* Bluetooth starts at every boot, as on the device */
@@ -2460,6 +2467,16 @@ static int expect(const char *what, const char *val)
     else if (!strcmp(what, "dim_ns"))               /* the dim pulse (plat_dim_ns, else the glow's), ns */
         got = (int)dim_pulse();
 #endif
+#ifdef APP_SPLASH
+    else if (!strncmp(what, "splash_lit.", 11)) {   /* splash_lit.Y0.Y1: the boot screen's (APP_SPLASH) pixels that are
+                                                     * not black in rows Y0..Y1 (a text in black on black: none) */
+        char *e;
+        long y0 = strtol(what + 11, &e, 10), y1 = *e == '.' ? strtol(e + 1, 0, 10) : y0, y, x;
+        for (got = 0, y = y0 < 0 ? 0 : y0; y <= y1 && y < 240; y++)
+            for (x = 0; x < 240; x++)
+                got += splash_fb[y * 240 + x] != 0;
+    }
+#endif
     else if (!strcmp(what, "clocks_out"))
         got = (int)clock_out_count;
     else if (!strcmp(what, "usb_play_gain"))        /* plat_usb_play_gain's level, 0..4096 */
@@ -2709,11 +2726,13 @@ static int hsx_in(const char *hex)
     }
     for (i = 1, ok = 1; i + 1u < n; i++)
         ok &= raw[i] < 0x80u;
+    if (!hsx_session)
+        return 0;                                 /* (no computer: nothing comes in) */
 #ifdef APP_SYSEX_BYTE
     for (i = 0; i < n && (i == 0 || i + 1u == n || raw[i] < 0x80u); i++)
         app_sysex_byte(raw[i]);                   /* (as the USB interrupt hands them over: to a status inside) */
 #endif
-    if (!ok || n - 2u > HOST_SX_MAX || !hsx_session)
+    if (!ok || n - 2u > HOST_SX_MAX)
         return 0;                                 /* (a status byte inside, or too long: the device drops it) */
     if (cl_request(raw + 1, n - 2u) || ds_request(raw + 1, n - 2u))
         return 0;                                 /* (the crash history, the stats: the platform's, before the app's) */
@@ -2974,6 +2993,15 @@ int main(int argc, char **argv)
         else if (!strcmp(cmd, "shot")) {
             snprintf(out, sizeof out, "%s/%s", dir, a);
             png_write(out);
+#ifdef APP_SPLASH
+        } else if (!strcmp(cmd, "splashshot")) {   /* splashshot FILE: the last boot's splash screen as a PNG */
+            static uint16_t now[240 * 240];
+            snprintf(out, sizeof out, "%s/%s", dir, a);
+            memcpy(now, fb, sizeof fb);
+            memcpy(fb, splash_fb, sizeof fb);
+            png_write(out);
+            memcpy(fb, now, sizeof fb);
+#endif
         } else if (!strcmp(cmd, "leds")) {
             int i;
             printf("  leds: buttons");
@@ -3196,7 +3224,10 @@ int main(int argc, char **argv)
             }
 #endif
         } else if (!strcmp(cmd, "sysex")) {
-            fails += hsx_in(strstr(line, "sysex") + 5);
+            if (usbh_port())                    /* (a USB host: no computer to send it) */
+                printf("  sysex: the port is a USB host, no computer: dropped\n");
+            else
+                fails += hsx_in(strstr(line, "sysex") + 5);
             run_ms(1);
         } else if (!strcmp(cmd, "sysex_out"))
             hsx_print();
