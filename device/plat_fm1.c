@@ -296,13 +296,12 @@ int plat_boot_read(uint32_t off, void *dst, uint32_t n)   /* (unity.c st_read: t
 }
 int plat_data_erase(uint32_t off)
 {
-    uint32_t took;
     if (!flash_ok || (off & 0xFFFu) || !PLAT_DATA_OK(off, 0x1000u) || DATA_STORE_HIT(off, 0x1000u))
         return -1;
     fm1_wdt_feed();                               /* (a run of erases: tens of ms each) */
-    audio_silence();
-    return fl_erase4k(off, &took);
+    return data_erase(off);
 }
+uint32_t plat_flash_held(void) { return flash_held; }
 int plat_data_write(uint32_t off, const void *src, uint32_t n)   /* page programs only (fl_prog_ram, 0x02): bits
                                                                  * clear in place, nothing erased, nothing read back
                                                                  * (plat.h's promise: keep it so) */

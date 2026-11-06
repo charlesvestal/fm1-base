@@ -1001,7 +1001,7 @@ def build_app():
         flags.append("-DFM1B_DBGSTATS=1")         # the debug stats in flash (device/dbgstats.c)
     if CONF.get("midi_stamp") and "FM1B_MIDI_STAMP" not in os.environ:
         flags.append("-DFM1B_MIDI_STAMP=1")       # MIDI in stamped where it lands (plat_midi_in_t24; unity.c)
-    for flag in ("FM1B_CDC", "FM1B_UAC", "FM1B_UAC_OUT", "FM1B_TRS", "FM1B_MIDI_STAMP"):
+    for flag in ("FM1B_CDC", "FM1B_UAC", "FM1B_UAC_OUT", "FM1B_TRS", "FM1B_MIDI_STAMP", "FM1B_ERASE_SLICED"):
         v = os.environ.get(flag)    # unset: fm1.toml's, the app's (app.h) or the platform's default (device/unity.c)
         if v in ("0", "1"):
             flags.append(f"-D{flag}={v}")
