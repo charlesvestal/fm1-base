@@ -56,6 +56,7 @@ parts it has.
 | USB audio input on the computer's clock (resampled to its 44.1 kHz): one clock for a computer that monitors the input to its output | `usb_audio_in_host_clock = true` | nothing |
 | USB audio output played as the computer sends it, nothing resampled: asynchronous, the computer sends at the FM-1's rate (explicit feedback) | `usb_audio_out_feedback = true` (not with the USB console, `FM1B_CDC`) | nothing |
 | USB audio output in 24-bit too (the computer's 24 bits whole to the app's mixer track) | `usb_audio_out_24bit = true` | nothing (`plat_usb_audio_play` gives them) |
+| USB audio input and output as two named devices on the computer (each on its own clock; MIDI apart), the input's channels named | `usb_audio_split = true`, `usb_audio_in_name`, `usb_audio_out_name`, `usb_audio_in_channel_names` (not with `FM1B_CDC`) | nothing |
 | USB audio's counters (packets, rings run dry or full, the feedback, the streams chosen) for the app's own page | `#define APP_USB_STATS` in app.h | `plat_usb_audio_stats` |
 | The USB audio in the host simulator: a computer's recording and playing as WAV files (one clock) | nothing | the script's `usb_rec FILE`, `usb_recstop`, `usb_play FILE`, `usb_play off`; `expect usb_rec_frames` / `usb_play_frames` |
 | USB audio from the computer mixed by the app (a mixer track: level, pan, inserts) instead of at MASTER | `#define APP_USB_PLAY` in app.h, with the output | `plat_usb_audio_play` in the render |
