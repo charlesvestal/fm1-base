@@ -74,6 +74,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              fm1-base's stand-in for plat_bta_* (the script's "bta add NAME"); off by default, so an
                              app keeps its own stand-in there (without FM1B_BT_AUDIO)
   usb_audio_in = true        the FM-1 recordable over USB (FM1B_UAC; the default: true)
+  usb_audio_mem = "app"      the USB audio rings (in and out, 16 KB) lent by the app only while the computer streams, not
+                             static RAM (FM1B_UAC_MEM; plat.h plat_usb_audio_mem); "static" (the default)
   usb_audio_out = true       a computer plays through the FM-1 over USB (FM1B_UAC_OUT; the default: true)
   usb_audio_channels = 10    the USB audio input's channels, 4, 6, 8 or 10 (the default 2: the master alone): the master on 1 and
                              2, the app's own on 3..N (FM1B_UAC_CH: plat_usb_ch in plat.h; felucca-bsp FELUCCA_UAC_CH).
@@ -942,6 +944,11 @@ def usb_audio_flags():
         flags.append(f"-DFM1B_UAC_OUT_FEEDBACK={int(bool(CONF['usb_audio_out_feedback']))}")
     if "usb_audio_out_24bit" in CONF:
         flags.append(f"-DFM1B_UAC_OUT_24={int(bool(CONF['usb_audio_out_24bit']))}")
+    v = CONF.get("usb_audio_mem", "static")
+    if v not in ("app", "static"):
+        raise SystemExit(f'build: fm1.toml usb_audio_mem = "{v}": "app" or "static"')
+    if v == "app":                                  # the rings lent by the app while the computer streams (plat_usb_audio_mem)
+        flags.append("-DFM1B_UAC_MEM=1")
     flags += usb_audio_names()
     return flags
 

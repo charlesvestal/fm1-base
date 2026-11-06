@@ -486,6 +486,16 @@ typedef struct {
     uint8_t in_alt, out_alt;
 } plat_usb_audio_stats_t;
 void plat_usb_audio_stats(plat_usb_audio_stats_t *s);
+/* USB audio's rings in the app's memory (fm1.toml usb_audio_mem = "app": FM1B_UAC_MEM 1): the input's and the output's
+ * rings (felucca-bsp chip/usb.c) are a block the app lends while the computer streams (plat_usb_audio_stats: an alt set),
+ * not static RAM; until it is lent the computer records silence and what it plays is dropped. Without it (FM1B_UAC_MEM
+ * 0, and the simulator) they are static: bytes 0, the block ignored.
+ *   plat_usb_audio_mem_bytes()  the block's size (a multiple of 4), 0: static rings
+ *   plat_usb_audio_mem(p)       the main loop, the interrupts off: p lent (zeroed, 4-aligned), or 0 taken back; the app
+ *                               frees it only after its next two audio blocks (a render under way finishes on it). Both
+ *                               streams prime again from silence */
+uint32_t plat_usb_audio_mem_bytes(void);
+void plat_usb_audio_mem(void *p);
 /* the computer's audio (FM1B_UAC_OUT, usb_audio_out: the computer plays through the FM-1): the level it is mixed in
  * at, 0 muted .. 4096 as sent (the default; above is 4096), times MASTER. Muted, the FM-1 still takes the stream, so
  * the computer sees no change and turning it up again starts in step. The USB recording (usb_audio_in) is taken

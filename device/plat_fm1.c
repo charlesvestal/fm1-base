@@ -347,6 +347,22 @@ void plat_usb_audio_stats(plat_usb_audio_stats_t *s)
 #endif
 }
 #endif
+uint32_t plat_usb_audio_mem_bytes(void)
+{
+#if FELUCCA_UAC && FELUCCA_UAC_MEM
+    return uac_mem_bytes();
+#else
+    return 0u;
+#endif
+}
+void plat_usb_audio_mem(void *p)
+{
+#if FELUCCA_UAC && FELUCCA_UAC_MEM
+    uac_mem(p);
+#else
+    (void)p;
+#endif
+}
 int plat_usb_audio_play(int32_t *lr, uint32_t n)
 {
 #if FELUCCA_UAC_OUT && defined APP_USB_PLAY
