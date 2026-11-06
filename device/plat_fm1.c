@@ -347,6 +347,17 @@ void plat_usb_audio_stats(plat_usb_audio_stats_t *s)
 #endif
 }
 #endif
+int plat_usb_audio_play(int32_t *lr, uint32_t n)
+{
+#if FELUCCA_UAC_OUT && defined APP_USB_PLAY
+    return uac_play_take(lr, n);
+#else
+    uint32_t i;                                 /* no USB audio output, or the platform mixes it at MASTER */
+    for (i = 0; i < 2u * n; i++)
+        lr[i] = 0;
+    return 0;
+#endif
+}
 /* the computer's USB audio's level in the mix, 0..4096 (uac_mix.h; read by the render: one word, no lock) */
 static volatile uint32_t usb_play_q12 = 4096u;
 void plat_usb_play_gain(uint32_t q12) { usb_play_q12 = q12 > 4096u ? 4096u : q12; }

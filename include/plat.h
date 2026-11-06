@@ -466,6 +466,7 @@ void plat_host_patience(uint32_t try_ms, uint32_t total_ms);   /* each try's wai
  * speaker and headphones only; 0, both at MASTER (the default) */
 void plat_usb_audio_full(int on);
 int plat_usb_audio_rec(void);
+int plat_usb_audio_play(int32_t *lr, uint32_t n);
 typedef struct {
     uint32_t in_packets, in_underruns, in_overruns, in_missed, in_stalls;
     uint32_t out_packets, out_frames, out_underruns, out_overruns, out_feedback;
@@ -819,6 +820,9 @@ int app_stats_quiet(void);
  *                   the render just made (lr, n frames, 24-bit; 0 = silence): for an app whose own output differs from
  *                   what Bluetooth should get. Audio interrupt, after each render (Bluetooth audio built). Without it
  *                   Bluetooth takes the output
+ *   APP_USB_STATS   (no function) plat_usb_audio_stats is built (the app shows USB audio's counters)
+ *   APP_USB_PLAY    (no function) the app mixes the computer's audio itself (plat_usb_audio_play in its render: a
+ *                   mixer track) instead of the platform adding it at MASTER after the render
  *   APP_FAULT       void app_fault(const fm1_crash_t *c)   a crash, before the crash screen (c: the record): an app's
  *                   own second core given up; or the crash is on that core (c->sp on its stacks): it stops there
  *   APP_LOG         void app_log(void (*line)(const char *t))   the development readout over USB-MIDI (F0 7D 4C 47 F7,
