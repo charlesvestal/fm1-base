@@ -280,6 +280,20 @@ const resealed = (b) => {                                      // its CRCs right
   check(got && got.name === "Arturia KeyStep" && PB.others(acc, ["Arturia KeyStep"]).join() === "Launchkey Mini", "picked: found from then on, no longer listed");
 }
 {
+  // a Bluetooth MIDI port (an FM-1 paired beside its USB cable) is never asked, allowed, tried or listed
+  const dev = new FakeFM1(img);
+  const port = (name) => ({ name, state: "connected", open: async () => {} });
+  const acc = { inputs: new Map([["i", port("Optimist 112D Bluetooth")], ["j", port("FM-1")]]),
+                outputs: new Map([["o", port("Optimist 112D Bluetooth")], ["p", port("FM-1")]]) };
+  const asked = [];
+  const got = await PB.find(acc, (i) => { asked.push(i.name); return dev; }, ["Optimist 112D Bluetooth"]);
+  check(got && got.name === "FM-1" && !asked.includes("Optimist 112D Bluetooth"), "Bluetooth port: skipped, the USB port is found");
+  check(!PB.others(acc, []).length, "Bluetooth port: not listed for Try");
+  const only = { inputs: new Map([["i", port("Optimist 112D Bluetooth")]]), outputs: new Map([["o", port("Optimist 112D Bluetooth")]]) };
+  const e = await err(PB.find(only, (i) => { asked.push(i.name); return dev; }, ["Optimist 112D Bluetooth"], "Optimist 112D Bluetooth"));
+  check(e && e.code === "notfound" && !asked.includes("Optimist 112D Bluetooth"), "Bluetooth port: not even Try asks it");
+}
+{
   // an FM-1 under another device's name that answers the screen reader's HELLO (every fm1-base firmware): found without
   // picking it; a loopback (an IAC bus: the HELLO comes back as it went) and other gear are never sent the identity query
   const dev = new FakeFM1(img);
