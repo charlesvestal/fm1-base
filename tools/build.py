@@ -1662,6 +1662,7 @@ def build_web():
         live = (SRC / "web" / "emu" / "live.html").read_text().replace("{{NAME}}", CONF.get("name", NAME))
         (emu / "live.html").write_text(live)
         shutil.copy(SRC / "web" / "fm1ports.js", emu / "fm1ports.js")
+    shutil.copytree(SRC / "web" / "fonts", emu.parent / "fonts", dirs_exist_ok=True)   # the pages' fonts (../fonts/fonts.css), no outside host
     # next to fm1-base, or next to the app's repository (fm1-base a submodule in it)
     found = [p / "fm1-reader" / "web" for base in (SRC.parent, APP.parent.parent) for p in (base, base / "fm1-parent")
              if (p / "fm1-reader" / "web").is_dir()]
