@@ -749,6 +749,10 @@ int app_stats_quiet(void);
  *   APP_MIRROR_TEST int app_mirror_test(int on)  the mirror's remote asks for a test session (on 1, off 0): 1 done
  *   APP_CSTART      void app_cstart(void)         first thing at a start, before the RAM is cleared and with nothing
  *                   set up (registers only, no RAM): an app's own second core that a reset left running, held
+ *   (fm1.toml boot_pack) void app_boot_unpack(const uint8_t *src)   at a start, after the RAM is cleared: .data's
+ *                   initial values and the RAM code (.ram_text) from the app's coded stream at src (the image's,
+ *                   right after the code) into _data_start.._data_end, then _rt_start.._rt_end, in place of the
+ *                   copies. It runs from the flash with its stack alone: no global, no RAM code (nothing is there yet)
  *                   (fm1-base's own, cpu2 = true, needs none of these)
  *   APP_BT_FRAMES   const int32_t *app_bt_frames(const int32_t *lr, uint32_t n)   the frames Bluetooth audio takes from
  *                   the render just made (lr, n frames, 24-bit; 0 = silence): for an app whose own output differs from
