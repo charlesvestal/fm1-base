@@ -378,7 +378,8 @@ void plat_log(const char *line);
  * Two more windows for big data, outside the store: PLAT_XDATA0 (16 KiB, just above the app area) and PLAT_XDATA1
  * (92 KiB, above the update's staging). The update loader clears an update record it finds in the last 256 bytes of
  * a sector there (bsp/loader/ldr_core.c: "AT" at bytes 0xF06..0xF07, a nonzero CRC-16 at 0xF00 over the 78 bytes
- * from 0xF02), so in these two an app keeps bytes 0xF00..0xF07 of every sector erased (0xFF), or else makes sure
+ * from 0xF02) in place: those bytes, 8 to 80 from 0xF00, programmed to 0, the rest of the sector kept. So in these
+ * two an app keeps bytes 0xF00..0xF07 of every sector erased (0xFF), or else makes sure
  * those bytes never read as a record: never "AT" at 0xF06 (LOOM-8's sample bank moves its data so, and refuses a
  * bank that has it).
  * A fourth, on request (fm1.toml xdata2 = true: FM1B_XDATA2): PLAT_XDATA2, the three sectors 0xFC000..0xFEFFF
@@ -387,9 +388,14 @@ void plat_log(const char *line);
  * looks for records below 0xFC000 only, so no 0xF00 rule here. Store objects may sit there too (the template's
  * settings pair is 0xFC000 / 0xFD000): with the window on, plat_data_erase and plat_data_write refuse a store
  * object's sectors in it, so an app with this window puts its objects elsewhere (or keeps to the rest) */
-#define PLAT_DATA_LO 0x97000u
+/* An app with a bigger slot (fm1.toml app_end: FM1B_APP_END, its code past 0x93000): the data area starts at its end,
+ * and XDATA0 is what is left of 0x93000..0x96FFF above it (none from 0x97000 on) */
+#ifndef FM1B_APP_END
+#define FM1B_APP_END 0x93000u
+#endif
+#define PLAT_DATA_LO (FM1B_APP_END > 0x97000u ? FM1B_APP_END : 0x97000u)
 #define PLAT_DATA_HI 0xE0000u
-#define PLAT_XDATA0_LO 0x93000u
+#define PLAT_XDATA0_LO (FM1B_APP_END < 0x97000u ? FM1B_APP_END : 0x97000u)
 #define PLAT_XDATA0_HI 0x97000u
 #define PLAT_XDATA1_LO 0xE5000u
 #define PLAT_XDATA1_HI 0xFC000u

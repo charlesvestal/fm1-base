@@ -140,6 +140,8 @@ run romref "$PY" tests/romref_test.py
 run cpu2-stack "$PY" tests/cpu2_stack_test.py
 # fm1.toml bt_audio_jobs (tools/build.py bta_jobs_flags): needs cpu2, refused with cpu2_fallback
 run bta-jobs-flags "$PY" tests/bta_jobs_flags_test.py
+# app.h APP_RES_BASE against the app area's end (tools/build.py res_base): a region inside the app area stops the build
+run res-base "$PY" tests/res_base_test.py
 # the check on an app's RAM code (tools/ramcode.py, plat.h PLAT_RAM_CODE): RAM -> RAM passes, into XIP fails
 run ramcode "$PY" tests/ramcode_test.py
 # the web installer's m-bootloader step (web/fm1ota.js installBoot) against a simulated FM-1, and finding the FM-1 by
@@ -193,6 +195,14 @@ if [ -f "$PKG" ]; then
     run update-loader sh -c "head -c 60000 template/build/template.bin > $OUT/old_app.bin && \
         $PY tools/fm1pkg_make.py $OUT/old_app.bin template/build/loader/ota.bin $OUT/old.fwsc >/dev/null && \
         $CC -w -o $OUT/ldr_test tests/ldr_test.c && $OUT/ldr_test $OUT/old.fwsc $PKG"
+    # a bigger app slot (tools/build.py app_end): the template's app in a package with the slot to 0xCE000, installed
+    # over the normal one (the loader built with that slot clears [0xCE000, 0xDA000) first) and back (the old code above
+    # 0x93000 erased)
+    run update-loader-slot sh -c "$PY tools/fm1pkg_make.py template/build/template.bin template/build/loader/ota.bin \
+        $OUT/big.fwsc --app-end 0xCE000 >/dev/null && \
+        $CC -w -DFL_APP_END=0xCE000u -DLDR_SLOT_SWITCH=1 -DLDR_CLEAR_END=0xDA000u -o $OUT/ldr_slot_up tests/ldr_slot_test.c && \
+        $CC -w -DLDR_SLOT_SWITCH=1 -o $OUT/ldr_slot_down tests/ldr_slot_test.c && \
+        $OUT/ldr_slot_up $PKG $OUT/big.fwsc 0x93000 && $OUT/ldr_slot_down $OUT/big.fwsc $PKG 0xCE000"
 else
     echo "  skip update path (no template package: tools/build.py template)"
 fi
