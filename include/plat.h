@@ -706,8 +706,21 @@ void plat_host_patience(uint32_t try_ms, uint32_t total_ms);   /* each try's wai
 /* USB audio full (FM1B_UAC): 1, the USB audio input at full level (the app's render at gain 4096), MASTER for the
  * speaker and headphones only; 0, both at MASTER (the default) */
 void plat_usb_audio_full(int on);
+/* USB audio, an app's own channels and mixing (fm1.toml usb_audio_in_channels / usb_audio_in_24bit; app.h
+ * APP_USB_CAPTURE, APP_USB_PLAY, below). plat_usb_audio_rec: 1, the computer takes the USB audio input this render
+ * (read at the render's start: an app makes its stems only then); 0 without FM1B_UAC (the simulator: while its script's
+ * usb_rec records, and its usb_play plays the computer's audio).
+ * plat_usb_audio_play (an app with APP_USB_PLAY, from app_render, once a render with its n): the computer's audio, n
+ * stereo frames into lr at unity (24-bit as the render's: a 16-bit sample << 8, a 24-bit one as it is with
+ * usb_audio_out_24bit), resampled to the FM-1's clock (as sent with usb_audio_out_feedback); 1 =
+ * there is some, 0 = none (lr silent). Without APP_USB_PLAY (the platform mixes it at MASTER) it is always 0 */
 int plat_usb_audio_rec(void);
 int plat_usb_audio_play(int32_t *lr, uint32_t n);
+/* USB audio's counters since the start (an app with APP_USB_STATS: its own page of them; felucca-bsp's uac / uo): the
+ * input (the computer records: packets sent, ring run dry, ring full, an IN token that found nothing, the computer
+ * stopped reading) and the output (it plays: packets and frames in, ring run dry, ring full), the last feedback sent
+ * (usb_audio_out_feedback: 10.14 frames a ms, 0 none) and the alt settings the computer chose (0: no stream). The
+ * simulator: its usb_play's frames, the rest 0 */
 typedef struct {
     uint32_t in_packets, in_underruns, in_overruns, in_missed, in_stalls;
     uint32_t out_packets, out_frames, out_underruns, out_overruns, out_feedback;
