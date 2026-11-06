@@ -57,6 +57,9 @@ run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/
 # the SMK-37's flash map (felucca-bsp boards/smk37/fm1_flash.h): its windows against the stock layout's protected ranges
 run smk37-flash sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -Ibsp/boards/smk37 -Iinclude \
     -o $OUT/smk37_flash_test tests/smk37_flash_test.c && $OUT/smk37_flash_test"
+# the SMK-37's wheels and pedal (device/smk37_analog.h): the rest is the first look after the settling window
+run smk37-analog sh -c "$CC -std=c99 -Wall -Wextra -Werror -o $OUT/smk37_analog_test tests/smk37_analog_test.c && \
+    $OUT/smk37_analog_test"
 run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts
 # plat_headphones' debounce (device/plat_hp.c) over a simulated jack: a plug's bounce gives one change, 100 ms on
