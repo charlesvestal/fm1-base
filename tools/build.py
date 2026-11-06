@@ -82,7 +82,7 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              the default: true, with usb_audio_in): audio control, audio in, audio out, MIDI, and the
                              audio control collection in that order. macOS 13-15 show no USB audio device while MIDI is
                              interface 1, between audio control and audio streaming (bisected by darosh on macOS 15.8.1);
-                             bcdDevice +0.80. false: the order of fm1-base before 2026-10-31 (MIDI interface 1).
+                             bcdDevice +0.20 x 1 in its high byte (felucca-bsp's own +0.80 is usb_audio_out_feedback's here). false: the order of fm1-base before 2026-10-31 (MIDI interface 1).
                              2: MIDI left out of the collection too (a test build: no USB MIDI on Linux)
   usb_iad = true             without the USB console, an interface association descriptor over the audio function, the
                              device then misc / IAD (felucca-bsp FELUCCA_UAC_IAD; the default: false); bcdDevice +2.00
@@ -917,6 +917,10 @@ def usb_audio_flags():
         flags += [f"-DFM1B_UAC_CH={ch}", "-DFM1B_UAC_CAPTURE=1", f"-DFM1B_UAC_24={int(ch <= 4)}"]   # (24-bit up to 4 channels: 8 fills a packet at 16)
     if "usb_audio_in_host_clock" in CONF:
         flags.append(f"-DFM1B_UAC_HOST_CLOCK={int(bool(CONF['usb_audio_in_host_clock']))}")
+    if "usb_audio_out_feedback" in CONF:
+        flags.append(f"-DFM1B_UAC_OUT_FEEDBACK={int(bool(CONF['usb_audio_out_feedback']))}")
+    if "usb_audio_out_24bit" in CONF:
+        flags.append(f"-DFM1B_UAC_OUT_24={int(bool(CONF['usb_audio_out_24bit']))}")
     return flags
 
 
