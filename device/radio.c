@@ -82,8 +82,11 @@ void shim_idle(void)
 }
 #endif
 void shim_reboot(void) { fm1_reboot(); }
-/* the shim's delays (JieLi's delay_us and friends): from RAM, timed by TIMER4, nothing called */
+/* the shim's delays (JieLi's delay_us and friends): from RAM, timed by TIMER4, nothing called. Only where the shim is
+ * linked (JieLi's BLE or WiFi libraries: tools/build.py radio_units); the own stacks never call it (150 B of RAM) */
+#if !FM1B_BLE_OWN || SHIM_WIFI
 __attribute__((section(".ram_text"), noinline, used)) void shim_delay_us(uint32_t us) { fm1_busy_us_inl(us); }
+#endif
 
 
 /* the radio's interrupts sit above the input timer (4): JieLi asks for 0..2, mapped to 5..7 */
