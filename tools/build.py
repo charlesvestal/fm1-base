@@ -986,9 +986,7 @@ def build_app():
     if WIFI:
         flags += ["-DFM1B_WIFI=1", "-DSHIM_WIFI=1", *inc(SRC / "ble" / "shim")]
     flags += opt_flags()
-    for key, flag in (("usb_audio_in", "FM1B_UAC"), ("usb_audio_out", "FM1B_UAC_OUT")):
-        if key in CONF and flag not in os.environ:
-            flags.append(f"-D{flag}={int(bool(CONF[key]))}")
+    flags += usb_audio_flags()
     if CONF.get("usb_audio_first"):
         flags.append("-DFELUCCA_UAC_AS_FIRST=1")
     midi_last = CONF.get("usb_midi_last", True)   # (the bsp leaves it out without the USB audio input)
@@ -1567,8 +1565,10 @@ def build_host():
     inc_dirs = [f"-I{d}" for d in (SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))]
     o2_objs = o2_objects(os.environ.get("CC", "cc"), ["-O2", "-ffp-contract=off", "-std=c99", "-w", "-DPLAT_HOST", *opt_flags(), *inc_dirs],
                          out / "o2")
+    uac = [*usb_audio_flags(), *(f"-D{f}={os.environ[f]}" for f in ("FM1B_UAC", "FM1B_UAC_OUT") if os.environ.get(f) in ("0", "1"))]
     cmd = [os.environ.get("CC", "cc"), "-O2", "-ffp-contract=off", "-std=c99", "-Wall", "-Wextra",
            "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *opt_flags(), f"-DFM1B_BUILD={build_id():#010x}u", *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_BT_AUDIO=1"] * bta_sim(), *(bta_mem_flags() if bta_sim() else []), *["-DFM1B_WIFI=1"] * WIFI,
+           *uac,
            *(f"-I{d}" for d in (SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            "-o", str(exe), str(SRC / "host" / "plat_host.c"), *o2_objs, "-lm"]
     r = subprocess.run(cmd, capture_output=True, text=True)

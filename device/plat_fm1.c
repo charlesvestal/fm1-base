@@ -319,10 +319,38 @@ void plat_host_patience(uint32_t try_ms, uint32_t total_ms)
 /* USB audio full: the render at full level for the USB audio input, MASTER after it (main_fm1.c render_block) */
 static volatile uint8_t uac_full;
 void plat_usb_audio_full(int on) { uac_full = (uint8_t)(on != 0); }
+int plat_usb_audio_rec(void)
+{
+#if FELUCCA_UAC
+    return uac_capturing();
+#else
+    return 0;
+#endif
+}
+#ifdef APP_USB_STATS
+/* (built for an app that shows them, APP_USB_STATS: another's image stays as it was, byte for byte) */
+void plat_usb_audio_stats(plat_usb_audio_stats_t *s)
+{
+    uint32_t i;
+    for (i = 0; i < sizeof *s; i++)
+        ((uint8_t *)s)[i] = 0;
+#if FELUCCA_UAC
+    s->in_packets = uac.pkts, s->in_underruns = uac.underruns, s->in_overruns = uac.overruns;
+    s->in_missed = uac.missed, s->in_stalls = uac.stalls, s->in_alt = uac.alt;
+#endif
+#if FELUCCA_UAC_OUT
+    s->out_packets = uo.pkts, s->out_frames = uo.frames, s->out_underruns = uo.underruns, s->out_overruns = uo.overruns;
+    s->out_alt = uo.alt;
+#endif
+#if FELUCCA_UAC_OUT_FEEDBACK
+    s->out_feedback = uo.alt ? uo.fb : 0u;
+#endif
+}
+#endif
 /* the computer's USB audio's level in the mix, 0..4096 (uac_mix.h; read by the render: one word, no lock) */
 static volatile uint32_t usb_play_q12 = 4096u;
 void plat_usb_play_gain(uint32_t q12) { usb_play_q12 = q12 > 4096u ? 4096u : q12; }
-#if FM1B_UAC && FM1B_UAC_CH > 2
+#if FM1B_UAC && FM1B_UAC_CH > 2 && !FM1B_UAC_CAPTURE
 int16_t *plat_usb_ch(uint32_t off, uint32_t *run) { return uac_ch_frame(off, run); }
 #else
 int16_t *plat_usb_ch(uint32_t off, uint32_t *run) { (void)off; *run = 0; return 0; }

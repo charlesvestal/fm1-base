@@ -137,7 +137,7 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #endif
 #define FELUCCA_UAC_OUT FM1B_UAC_OUT
 #ifndef FM1B_UAC_CH
-#define FM1B_UAC_CH 2             /* the USB audio input's channels: the master, and the app's on 3..N (plat_usb_ch) */
+#define FM1B_UAC_CH 2             /* the USB audio input's channels: 2 the master, else the app's (APP_USB_CAPTURE) */
 #endif
 #define FELUCCA_UAC_CH FM1B_UAC_CH
 #ifndef FM1B_UAC_24
@@ -148,8 +148,15 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define FM1B_UAC_HOST_CLOCK 0     /* 1: the input on the computer's clock (felucca-bsp resamples it to 44.1 kHz) */
 #endif
 #define FELUCCA_UAC_HOST_CLOCK FM1B_UAC_HOST_CLOCK
+#ifndef FM1B_UAC_CAPTURE
+#define FM1B_UAC_CAPTURE 0        /* 1: the app fills every channel (usb_audio_in_channels, APP_USB_CAPTURE) */
+#endif
+#define FELUCCA_UAC_CAPTURE FM1B_UAC_CAPTURE
 #if FM1B_UAC_CH > 2
 #define FELUCCA_UAC_STALL_POLLS 200u     /* the stream serviced every 10 kHz tick (main_fm1.c): 20 ms of polls */
+#endif
+#if FM1B_UAC && FM1B_UAC_CAPTURE && !defined APP_USB_CAPTURE
+#error "usb_audio_in_channels: the app gives them (app.h APP_USB_CAPTURE, app_usb_capture)"
 #endif
 #ifndef FM1B_UAC_DEEP
 #define FM1B_UAC_DEEP 0           /* 1: the USB audio input holds a half more (renders past ~40 % of their time
@@ -186,6 +193,9 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define FM1B_USB_HOST 0
 #endif
 #define FELUCCA_USB_HOST FM1B_USB_HOST /* the USB MIDI host (plat_usb_host) */
+#if defined APP_USB_HOST_NAME && FM1B_USB_HOST
+#define FELUCCA_USB_HOST_NAME 1      /* the device's product string (plat_usb_host_name) */
+#endif
 #ifndef FM1B_MSC
 #define FM1B_MSC 0
 #endif
