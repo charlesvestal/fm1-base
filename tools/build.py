@@ -286,6 +286,7 @@ own instead, with the tree read-only (tc). The package's three SDK files come fr
 import argparse
 import functools
 import hashlib
+import json
 import os
 import platform
 import re
@@ -905,6 +906,17 @@ def cpu2_stack_flags():
     return [f"-DFM1_CPU1_USTACK_BYTES={n}"]
 
 
+def write_sizes(img, syms):
+    """OUT/sizes.json: this build's budgets, whether or not it fits (a caller that sizes configurations reads it, as
+    a configuration builder does): flash = the app image against the app slot, ram = .data+.bss, pool, ramtext = the RAM code"""
+    def sym(name):
+        mm = re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M)
+        return int(mm.group(1), 16) if mm else 0
+    sizes = {"flash": len(img), "ram": sym("_bss_end") - sym("_data_start"), "pool": sym("_pool_end") - sym("_pool_start"),
+             "ramtext": sym("_rt_end") - sym("_rt_start"), "app_slot": APP_SLOT}
+    (OUT / "sizes.json").write_text(json.dumps(sizes, indent=1) + "\n")
+
+
 def build_app():
     flags = [*CFLAGS, *FPU, *inc(BSP / "chip", BSP / "boards" / "fm1", SRC / "device", SRC / "include", SRC / "lib", APP, GEN,
                                  *(APP / d for d in CONF.get("include", []) + CONF.get("device_include", [])))]
@@ -994,11 +1006,11 @@ def build_app():
         raise SystemExit(f"fm1.toml: unity_opt is \"s\" or \"z\", not {unity_opt!r}")
     flags = [f"-O{unity_opt}" if f == "-Os" else f for f in flags]
     ir = CONF.get("ir_pass")                      # the app's pass over the IR (see the top)
-    ir_out = ["-S", "-emit-llvm", "-Xclang", "-disable-llvm-optzns"] if ir else []
+    ir_out = ["-S", "-emit-llvm", "-Xclang", "-disable-llvm-optzns"] if ir else ["-c"]   # (IR: -S, so no -c: clang warns "-c unused")
     units = [("cc", "-c", BSP / "chip" / "crt0.S", "-o", OUT / "crt0.o"),
              ("cc", "-c", BSP / "chip" / "fm1_vec.S", "-o", OUT / "fm1_vec.o"),
              ("cc", "-c", BSP / "chip" / "fm1_isr.S", "-o", OUT / "fm1_isr.o"),
-             ("cc", *flags, *ir_out, "-c", SRC / "device" / "unity.c", "-o", OUT / ("unity.ll" if ir else "unity.o"))]
+             ("cc", *flags, *ir_out, SRC / "device" / "unity.c", "-o", OUT / ("unity.ll" if ir else "unity.o"))]
     objs = [OUT / "crt0.o", OUT / "fm1_vec.o", OUT / "fm1_isr.o", OUT / "unity.o"]
     if CPU2:                                      # the second core's entry and stacks
         units.append(("cc", *cpu2_stack_flags(), "-c", BSP / "chip" / "fm1_cpu1.S", "-o", OUT / "fm1_cpu1.o"))
@@ -1014,7 +1026,7 @@ def build_app():
     for u in CONF.get("o2", []):
         for f in (sorted(APP.glob(u)) if any(ch in u for ch in "*?[") else [APP / u]):
             o = OUT / "o2" / ("_".join(f.relative_to(APP).with_suffix("").parts) + ".o")
-            units.append(("cc", *o2, *o2_more, *inc(f.parent), *ir_out, "-c", f, "-o", o.with_suffix(".ll") if ir else o))
+            units.append(("cc", *o2, *o2_more, *inc(f.parent), *ir_out, f, "-o", o.with_suffix(".ll") if ir else o))
             objs.append(o)
             o2_units.append((f, o))
     jieli = (BLE and not OWN) or WIFI             # JieLi's libraries linked (the shim, LTO)
@@ -1848,6 +1860,7 @@ def main():
         gen.result()
         ota = ldr.result()
     img, syms, dis, rt = build_app()
+    write_sizes(img, syms)
     errors, notes = check(img, syms, dis, rt)
     hal_err = mmio_check()
     errors += hal_err
