@@ -300,6 +300,11 @@ void plat_usb_audio_full(int on) { uac_full = (uint8_t)(on != 0); }
 /* the computer's USB audio's level in the mix, 0..4096 (uac_mix.h; read by the render: one word, no lock) */
 static volatile uint32_t usb_play_q12 = 4096u;
 void plat_usb_play_gain(uint32_t q12) { usb_play_q12 = q12 > 4096u ? 4096u : q12; }
+#if FM1B_UAC && FM1B_UAC_CH > 2
+int16_t *plat_usb_ch(uint32_t off, uint32_t *run) { return uac_ch_frame(off, run); }
+#else
+int16_t *plat_usb_ch(uint32_t off, uint32_t *run) { (void)off; *run = 0; return 0; }
+#endif
 void plat_yield(void)
 {
     ble_poll();                                   /* Bluetooth: its notifications go out while the screen draws */

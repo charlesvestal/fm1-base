@@ -75,6 +75,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              app keeps its own stand-in there (without FM1B_BT_AUDIO)
   usb_audio_in = true        the FM-1 recordable over USB (FM1B_UAC; the default: true)
   usb_audio_out = true       a computer plays through the FM-1 over USB (FM1B_UAC_OUT; the default: true)
+  usb_audio_channels = 10    the USB audio input's channels, 4, 6, 8 or 10 (the default 2: the master alone): the master on 1 and
+                             2, the app's own on 3..N (FM1B_UAC_CH: plat_usb_ch in plat.h; felucca-bsp FELUCCA_UAC_CH).
+                             44.1 kHz only; the ring takes 2 N bytes a frame (768 frames with FM1B_UAC_DEEP: 15 KB at 10)
   usb_audio_first = true     the USB audio streaming interfaces listed first in the audio control collection
                              (felucca-bsp FELUCCA_UAC_AS_FIRST, from Felucca 1.5.1): macOS then shows the FM-1 as an audio
                              device beside its MIDI; bcdDevice +0.08 (a changed device to the computer). Not enough
@@ -1354,7 +1357,20 @@ def opt_flags():
             if (CONF.get(key) and os.environ.get(flag) != "0") or os.environ.get(flag) == "1"]   # (FM1B_MIRROR=1: a build with it, fm1.toml as it is; FM1B_BACKUP=0: without)
     if cache_ram_ways():
         flags.append(f"-DFM1B_CACHE_RAM={cache_ram_ways()}")   # (the host and the web: plat_cache_ram's stand-in)
+    if usb_audio_channels() > 2:
+        flags.append(f"-DFM1B_UAC_CH={usb_audio_channels()}")  # (the host and the web: plat_usb_ch's stand-in)
     return flags
+
+
+def usb_audio_channels():
+    """fm1.toml usb_audio_channels: the USB audio input's channels, 2 (the default: the master) or 4, 6, 8, 10 (the app's own
+    on 3..N: plat_usb_ch; felucca-bsp FELUCCA_UAC_CH, 44.1 kHz only)"""
+    n = CONF.get("usb_audio_channels", 2)
+    if isinstance(n, bool) or not isinstance(n, int) or n not in (2, 4, 6, 8, 10):
+        raise SystemExit(f"fm1.toml usb_audio_channels {n!r}: 2, 4, 6, 8 or 10")
+    if n > 2 and CONF.get("usb_audio_in") is False:
+        raise SystemExit("fm1.toml usb_audio_channels: needs usb_audio_in")
+    return n
 
 
 def build_host():

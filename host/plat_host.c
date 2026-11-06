@@ -24,6 +24,8 @@
  *   bta add NAME | bta drop NAME a Bluetooth audio device around, or gone (FM1B_BT_AUDIO: a link to it is lost)
  *   jack in | jack out           headphones into the jack, or out (plat_headphones; nothing plugged at the start)
  *   wav FILE | wavstop           start / stop recording the output
+ *   usbwav FILE | usbwavstop     start / stop recording the USB audio input as a computer gets it: usb_audio_channels
+ *                                (FM1B_UAC_CH) of 16 bits, the master on 1 and 2, the app's own after it (plat_usb_ch)
  *   peakreset                    restart the output peak (expect peak_db_min / peak_db_max)
  *   shot FILE.png                save the screen
  *   leds                         print the lit buttons and keys (keys: # bright, + dim)
@@ -1375,6 +1377,28 @@ static int uac_full;                            /* plat_usb_audio_full: the rend
 void plat_usb_audio_full(int on) { uac_full = on != 0; }
 static uint32_t usb_play_q12 = 4096u;            /* plat_usb_play_gain: no USB audio on the host; kept for a test */
 void plat_usb_play_gain(uint32_t q12) { usb_play_q12 = q12 > 4096u ? 4096u : q12; }
+#if FM1B_UAC_CH > 2
+static int16_t usb_ch[APP_BLOCK][FM1B_UAC_CH];      /* plat_usb_ch: the block's frames (1 and 2 the master, after it) */
+int16_t *plat_usb_ch(uint32_t off, uint32_t *run)
+{
+    if (off >= APP_BLOCK) {
+        *run = 0;
+        return 0;
+    }
+    *run = APP_BLOCK - off;
+    return &usb_ch[off][2];
+}
+static void usb_ch_master(const int32_t *blk)       /* the master into 1 and 2, as the device's tap takes it */
+{
+    for (uint32_t i = 0; i < APP_BLOCK; i++)
+        for (uint32_t c = 0; c < 2u; c++) {
+            int32_t v = (blk[2u * i + c] + 128) >> 8;
+            usb_ch[i][c] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+        }
+}
+#else
+int16_t *plat_usb_ch(uint32_t off, uint32_t *run) { (void)off; *run = 0; return 0; }
+#endif
 
 /* flash: one buffer per object, kept across a simulated reboot */
 static uint8_t store[OBJ_NOBJ][PLAT_STORE_MAX];
@@ -1924,13 +1948,42 @@ static void png_write(const char *path)
 static FILE *wav;
 static uint32_t wav_frames;
 static float peak_out;
-static void wav_open(const char *path)
+static FILE *uwav;                                  /* usbwav: the USB audio input's channels */
+static uint32_t uwav_frames;
+static FILE *wav_start(const char *path)
 {
     static const uint8_t h[44] = {0};
-    wav = fopen(path, "wb");
-    if (wav)
-        fwrite(h, 1, 44, wav);
+    FILE *f = fopen(path, "wb");
+    if (f)
+        fwrite(h, 1, 44, f);
+    return f;
+}
+static void wav_open(const char *path)
+{
+    wav = wav_start(path);
     wav_frames = 0;
+}
+static void wav_end(FILE *f, uint32_t frames, uint16_t ch)   /* the header, now the length is known */
+{
+    uint32_t bytes = frames * 2u * ch, v;
+    fseek(f, 0, SEEK_SET);
+    fwrite("RIFF", 1, 4, f);
+    v = 36 + bytes;
+    fwrite(&v, 4, 1, f);
+    fwrite("WAVEfmt ", 1, 8, f);
+    v = 16;
+    fwrite(&v, 4, 1, f);
+    {
+        uint16_t fmt[2] = {1, ch};
+        uint32_t r[2] = {44100, 44100u * 2u * ch};
+        uint16_t al[2] = {(uint16_t)(2u * ch), 16};
+        fwrite(fmt, 2, 2, f);
+        fwrite(r, 4, 2, f);
+        fwrite(al, 2, 2, f);
+    }
+    fwrite("data", 1, 4, f);
+    fwrite(&bytes, 4, 1, f);
+    fclose(f);
 }
 static void wav_close(void)
 {
@@ -2026,7 +2079,27 @@ static void sim_render(int32_t *blk)            /* one APP_BLOCK-frame block, as
 {
     double t0 = now_ns(), dt;
     uint32_t k;
+#if FM1B_UAC_CH > 2
+    memset(usb_ch, 0, sizeof usb_ch);
+#endif
     app_render(blk, APP_BLOCK, uac_full ? 4096u : APP_GAIN(master));
+#if FM1B_UAC_CH > 2
+    usb_ch_master(blk);
+    if (uwav) {
+        fwrite(usb_ch, sizeof usb_ch, 1, uwav);
+        uwav_frames += APP_BLOCK;
+    }
+#else
+    if (uwav) {                                 /* (two channels: the master, as the tap takes it) */
+        for (k = 0; k < APP_BLOCK; k++)
+            for (uint32_t c = 0; c < 2u; c++) {
+                int32_t v = (blk[2u * k + c] + 128) >> 8;
+                int16_t x = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+                fwrite(&x, 2, 1, uwav);
+            }
+        uwav_frames += APP_BLOCK;
+    }
+#endif
     if (uac_full) {                             /* (the USB audio input took it at full level) the speaker: MASTER */
         const float g = (float)APP_GAIN(master) * (1.0f / 4096.0f);
         for (k = 0; k < 2u * APP_BLOCK; k++)
@@ -2753,6 +2826,17 @@ int main(int argc, char **argv)
             wav_open(out);
         } else if (!strcmp(cmd, "wavstop"))
             wav_close();
+        else if (!strcmp(cmd, "usbwav")) {
+            snprintf(out, sizeof out, "%s/%s", dir, a);
+            if (uwav)
+                wav_end(uwav, uwav_frames, FM1B_UAC_CH);
+            uwav = wav_start(out);
+            uwav_frames = 0;
+        } else if (!strcmp(cmd, "usbwavstop")) {
+            if (uwav)
+                wav_end(uwav, uwav_frames, FM1B_UAC_CH);
+            uwav = 0;
+        }
         else if (!strcmp(cmd, "peakreset"))
             peak_out = 0.0f;
         else if (!strcmp(cmd, "shot")) {
@@ -3017,6 +3101,8 @@ int main(int argc, char **argv)
         }
     }
     wav_close();
+    if (uwav)
+        wav_end(uwav, uwav_frames, FM1B_UAC_CH);
     if (hsx_log)
         fclose(hsx_log);
     if (midi_log)
