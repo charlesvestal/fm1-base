@@ -250,11 +250,25 @@ static void t_ap(void)
     wn_save(&s, raw);
     ok(wn_load(&r, raw) && r.mode == WN_MODE_AP_MAN, "MODE AP MAN round trip");
     raw[2] = 5;
-    ok(wn_load(&r, raw) && r.mode == WN_MODE_JAM, "MODE JAM (5) is kept");
+    ok(wn_load(&r, raw) && r.mode == WN_MODE_JAM_AUTO, "an old MODE JAM JOIN (5) reads as JAM");
     raw[2] = 6;
-    ok(wn_load(&r, raw) && r.mode == WN_MODE_JAM_HOST, "MODE JAM HOST (6) is kept");
+    ok(wn_load(&r, raw) && r.mode == WN_MODE_JAM_AUTO, "an old MODE JAM HOST (6) reads as JAM");
     raw[2] = 7;
-    ok(wn_load(&r, raw) && r.mode == WN_MODE_OFF, "a mode above JAM HOST reads as OFF");
+    ok(wn_load(&r, raw) && r.mode == WN_MODE_JAM_AUTO, "MODE JAM AUTO (7) is kept");
+    raw[2] = 8;
+    ok(wn_load(&r, raw) && r.mode == WN_MODE_OFF, "a mode above JAM AUTO reads as OFF");
+    wn_reset(&s);
+    ok(s.ap.grp == 0u, "no group set: 0 (read as group 1)");
+    s.ap.grp = 5u;
+    wn_save(&s, raw);
+    ok(wn_load(&r, raw) && r.ap.grp == 5u, "the JAM group round trip");
+    s.ap.grp = 10u;
+    wn_save(&s, raw);
+    ok(wn_load(&r, raw) && r.ap.grp == 0u, "a group above 9 reads as none");
+    s.ap.grp = 7u;
+    ok(wn_ap_put(&s, (const uint8_t *)"net", 3, 6, (const uint8_t[32]){0}) == 0 && s.ap.grp == 7u, "a new access point record keeps the group");
+    wn_save(&s, raw);
+    ok(wn_load(&r, raw) && r.ap.set == 1u && r.ap.grp == 7u, "... through a save and load with a key set");
     old[1] = 3;
     ok(!wn_load(&r, old), "a version from the future is refused");
 }

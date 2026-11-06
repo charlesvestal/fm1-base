@@ -6,7 +6,8 @@
  * - IGMPv2 membership reports for one multicast group
  * - UDP: up to WIFI_IP_PORTS ports bound, their datagrams (unicast, broadcast, the group's) to one receive hook
  * - an early drop filter right after the RX DMA
- * MODE AP: the access point's side (FromDS frames, a DHCP server hook, ping answered). From Optimist's wifi/wifi_ip.c. */
+ * MODE AP: the access point's side (FromDS frames, a DHCP server hook, ping answered). MODE JAM: the same with no access
+ * point (ad-hoc frames, wifi_ip_ibss_init). From Optimist's wifi/wifi_ip.c. */
 #ifndef WIFI_IP_H
 #define WIFI_IP_H
 #include <stdint.h>
@@ -20,6 +21,7 @@
 #define WIFI_IP_DHCP_PORT_SERVER 67u
 #define WIFI_IP_DHCP_PORT_CLIENT 68u
 #define WIFI_IP_PORTS 4u                    /* UDP ports bound at once */
+#define WIFI_IP_IBSS 2u
 
 enum wifi_ip_dhcp_state {
     WIFI_IP_DHCP_IDLE = 0,
@@ -58,7 +60,8 @@ struct wifi_ip {
     struct wifi_arp_entry arp_tbl[4];
     uint16_t tx_seq;                       /* 802.11 sequence counter */
     uint8_t protect;                       /* 1: our data frames carry the Protected bit (keys installed: the MAC encrypts) */
-    uint8_t ap;                            /* 1: MODE AP: we are the access point (our data frames are FromDS, mac == bssid) */
+    uint8_t ap;                            /* 1: MODE AP: we are the access point (our data frames are FromDS, mac == bssid);
+                                            * WIFI_IP_IBSS: MODE JAM: no access point, an address of our own, ad-hoc frames */
     void (*send)(uint32_t len);            /* a finished frame (at tx_buf, len bytes) out: the owner's transmit, else the station's */
     uint32_t (*udp_srv)(struct wifi_ip *wip, const uint8_t *src_mac, const uint8_t *msg, uint32_t n, uint8_t *tx_buf);
                                            /* AP: a datagram to UDP port 67 (the DHCP server): the reply frame's length, 0 for none */
@@ -71,6 +74,8 @@ void wifi_ip_init(struct wifi_ip *wip, const uint8_t sta_mac[6], const uint8_t b
 
 /* MODE AP: this is the access point at ip (host order): FromDS frames, the /24 netmask, no DHCP client, no gateway */
 void wifi_ip_ap_init(struct wifi_ip *wip, const uint8_t ap_mac[6], uint32_t ip, void (*rand_fn)(uint8_t *out, uint8_t n));
+/* MODE JAM: an ad-hoc network: our address at ip (host order), a /16; ARP as MODE AP's (nothing sent to an unknown address) */
+void wifi_ip_ibss_init(struct wifi_ip *wip, const uint8_t mac[6], const uint8_t bssid[6], uint32_t ip, void (*rand_fn)(uint8_t *out, uint8_t n));
 /* a station's address, learned (the DHCP server's lease, a packet's source) */
 void wifi_ip_arp_learn(struct wifi_ip *wip, uint32_t ip, const uint8_t mac[6]);
 /* one UDP datagram to a given MAC and IP, from any source port (the DHCP server's reply). Returns the frame length. */

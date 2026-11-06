@@ -351,10 +351,11 @@ int plat_net_task(void (*fn)(void *), void *arg, const char *name);   /* a task 
 #define FM1B_WIFI_OWN 0
 #endif
 #define PLAT_WIFI_STORE_SIZE 336u
-enum { WIFI_MODE_OFF, WIFI_MODE_AUTO, WIFI_MODE_MAN, WIFI_MODE_AP, WIFI_MODE_AP_MAN, WIFI_MODE_JAM, WIFI_MODE_JAM_HOST };   /* JAM_HOST: AP with the automatic name and its default password only, for JAM to join */   /* JAM: AUTO, and an Optimist access point (FM1-xxxx, its password wifi_ap_default_key's) is joined when no saved network is heard */
-/* MODE JAM and JAM HOST only with fm1.toml wifi_jam = true (FM1B_WIFI_JAM; JAM HOST also needs wifi_ap): a JAM HOST's
- * password is a function of its name, which anyone with this source can work out, so its network keeps out no one who
- * looks. Without wifi_jam plat_wifi_mode refuses them, and a record that has one reads as AUTO (JAM) or AP (JAM HOST). */
+enum { WIFI_MODE_OFF, WIFI_MODE_AUTO, WIFI_MODE_MAN, WIFI_MODE_AP, WIFI_MODE_AP_MAN, WIFI_MODE_JAM, WIFI_MODE_JAM_HOST, WIFI_MODE_JAM_AUTO };   /* JAM_AUTO: MODE JAM (wifi/wifi_jam.h: the FM-1s of a GROUP on one channel, no access point), what is stored; WIFI_MODE_JAM asks for it too, and a
+                                         * record's JAM or JAM_HOST (from before 2026-11-04) reads as it */
+/* MODE JAM only with fm1.toml wifi_jam = true (FM1B_WIFI_JAM): its frames are open (no keys), anyone in range on the
+ * group's channel can read them and send into the group. Without wifi_jam plat_wifi_mode refuses it, and a record that
+ * has it reads as AUTO. */
 #ifndef FM1B_WIFI_JAM
 #define FM1B_WIFI_JAM 0
 #endif
@@ -363,6 +364,8 @@ void plat_wifi_mode(int mode);         /* OFF: nothing runs (the radio, once sta
                                         * joined; AP, AP_MAN: the FM-1 is the access point (wifi_ap = true, below).
                                         * Kept */
 int plat_wifi_get_mode(void);
+int plat_wifi_group(void);             /* the JAM group, 1..9: the network fm1-jam (group 1), fm1-jam-N, on channel 1, 6, 11 repeated */
+void plat_wifi_set_group(int g);       /* 1..9, else ignored; kept with the Wi-Fi record */
 /* the manager's step (finer than plat_wifi_state), and why the last join failed */
 enum { WIFI_STEP_OFF, WIFI_STEP_RADIO, WIFI_STEP_IDLE, WIFI_STEP_SCAN, WIFI_STEP_KEY, WIFI_STEP_AUTH, WIFI_STEP_ASSOC,
        WIFI_STEP_HANDSHAKE, WIFI_STEP_UP, WIFI_STEP_FAIL, WIFI_STEP_JOINED, WIFI_STEP_PRE };   /* KEY: the key made from the
@@ -414,7 +417,7 @@ struct plat_wifi_quality {
     uint16_t rx_over;                  /* frames the receiver dropped, its queue full (the main loop did not take them in time) */
     uint8_t secs;                      /* seconds in the window, 0..10 */
 };
-int plat_wifi_quality(struct plat_wifi_quality *q);   /* 1: joined (or MODE AP up) and q filled; 0: q zeroed */
+int plat_wifi_quality(struct plat_wifi_quality *q);   /* 1: joined (or MODE AP up, or MODE JAM) and q filled; 0: q zeroed */
 /* The own stack's tuning (wifi/wifi_tune.h: each switch, its JieLi reference), four switches for an A/B on the FM-1, each
  * acting at once and kept in the Wi-Fi record: PLAT_WIFI_TUNE_CAL (a) the stored calibration (VM 187), _FILT (b) the
  * station's receive filter, _AGC (c) the AGC's highest gain from the AP's signal, _RATE (f) unicast data at 2 Mb/s. The
@@ -464,13 +467,14 @@ int plat_wifi_ap_channel(void);        /* the channel in use (AUTO: the one chos
                                         * plat_wifi_ap_start runs) */
 int plat_wifi_ap_channel_auto(void);   /* 1: CHANNEL is AUTO */
 int plat_wifi_ap_name(char *name);     /* the network's name (33 bytes, may be 0): its length */
-int plat_wifi_jam(void);               /* MODE JAM: 0 not joined that way, 1 joining / joined an Optimist access point (plat_wifi_ssid), 2 the last one tried refused its default password (it has a typed one) */
+int plat_wifi_jam(void);               /* MODE JAM: the FM-1s heard lately (0: none yet), -1 not running (starting, another mode), -2 the radio cannot start */
+int plat_wifi_jam_stat(int i, uint32_t v[4]);   /* MODE JAM running, 1 and v: i 0: the channel, frames sent, failed to send, kept; i 1..: the unit heard (its number, its frames, its signal as -dBm, ms since); 0: no such */
 int plat_wifi_ap_has_key(void);        /* a typed password's key is kept */
 #define PLAT_WIFI_AP_KEY_MAX 13u          /* plat_wifi_ap_default_key's out: the password and its 0 */
 int plat_wifi_ap_default_key(char *out);   /* the password in use when none is typed, for the screen (out: PLAT_WIFI_AP_KEY_MAX
                                         * bytes, may be 0): 12 characters made for this FM-1 from the radio's random
-                                        * source the first time one is needed, and kept; MODE JAM HOST: the name's public
-                                        * one (8). 1 it is the one in use; 0 a typed one is (out ""; a typed one is never shown) */
+                                        * source the first time one is needed, and kept. 1 it is the one in use; 0 a typed
+                                        * one is (out ""; a typed one is never shown) */
 void plat_wifi_ap_forget(void);        /* the typed key, or the password made for this FM-1, goes (the name and channel stay):
                                         * a new one is made, and the access point starts again on it */
 int plat_wifi_ap_run(int on);          /* AP_MAN: start / stop. 0, -1 not AP_MAN */

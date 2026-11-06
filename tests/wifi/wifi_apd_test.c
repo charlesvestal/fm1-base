@@ -25,7 +25,16 @@ static int radio_ok = 1, radio_starts, saves;
 int plat_ble_state(void) { return radio_ok ? BLE_READY : BLE_FAILED; }
 void plat_ble_start(void) { radio_starts++; }
 enum { OBJ_WIFI = 2 };
-int plat_store_load(uint32_t obj, void *dst, uint32_t max) { (void)obj, (void)dst, (void)max; return -1; }
+static uint8_t store_raw[512];                   /* (a record the test puts in the store: store_len octets, 0 none) */
+static uint32_t store_len;
+int plat_store_load(uint32_t obj, void *dst, uint32_t max)
+{
+    (void)obj;
+    if (!store_len || max < store_len)
+        return -1;
+    memcpy(dst, store_raw, store_len);
+    return (int)store_len;
+}
 int plat_store_save(uint32_t obj, const void *src, uint32_t len) { (void)obj, (void)src, (void)len; saves++; return 0; }
 #include "../../device/wifi_own.c"
 
@@ -197,7 +206,7 @@ static uint32_t group_rx;
 static void on_group(void *ctx, uint32_t src_ip, uint16_t src_port, const uint8_t *p, uint32_t n, int64_t at)
 {
     (void)ctx, (void)src_port, (void)at;
-    if (src_ip == 0xC0A80402u && n == 4u && !memcmp(p, "LINK", 4))
+    if ((src_ip == 0xC0A80402u || (src_ip >> 16) == 0xA9FEu) && n == 4u && !memcmp(p, "LINK", 4))
         group_rx++;
 }
 
@@ -292,22 +301,6 @@ int main(void)
     wc_pmk(PW, NAME, sizeof NAME, pmk);
     wc_pmk("not-the-one", NAME, sizeof NAME, pmk_other);
 
-#if FM1B_WIFI_JAM
-    /* 0. MODE JAM's public password: a function of the name (fixed vectors; the same name, the same key; another name, another) */
-    {
-        char k1[16], k2[16], k3[16];
-        wifi_ap_default_key((const uint8_t *)"FM1-0000", 8, k1);
-        wifi_ap_default_key((const uint8_t *)"FM1-A1B2", 8, k2);
-        wifi_ap_default_key((const uint8_t *)"FM1-A1B3", 8, k3);
-        check(!strcmp(k1, "rxrm2jd2") && !strcmp(k2, "9kd4ctcd") && !strcmp(k3, "9fd3wpch"), "default key: the fixed vectors FM1-0000 / A1B2 / A1B3");
-        check(strcmp(k2, k3) != 0 && strlen(k1) == 8u, "two names, two keys; 8 characters");
-        wifi_ap_default_key((const uint8_t *)"FM1-A1B2", 8, k3);
-        check(!strcmp(k2, k3), "the same name, the same key");
-        wifi_ap_default_key((const uint8_t *)"", 0, k1);
-        check(!strcmp(k1, "7jc84apt") && strpbrk(k1, "01oli") == 0, "an empty name has one too; no 0 1 o l i");
-    }
-#endif
-
     /* 1. MODE AP with no typed key: a password made for this FM-1 at random (12 of 31 characters), kept and shown */
     check(wn_st.ap.set == 0u, "nothing kept at first");
     plat_wifi_mode(WIFI_MODE_AP);
@@ -326,13 +319,6 @@ int main(void)
         wc_pmk(k, wa.ssid, wa.ssid_len, p);
         check(wa.st == WA_UP && memcmp(p, wa.pmk, 32) == 0 && wn_st.ap.set == 2u && !memcmp(wn_st.ap.pmk, k, WN_AP_GEN_LEN),
               "... up on the key of that password, the password kept in the record");
-#if FM1B_WIFI_JAM
-        {
-            char d[16];
-            wifi_ap_default_key(wa.ssid, wa.ssid_len, d);
-            check(strcmp(k, d) != 0, "... not the name's public one (MODE JAM's)");
-        }
-#endif
         {
             uint8_t raw[WN_STORE_SIZE];
             struct wn_store r;
@@ -609,37 +595,84 @@ int main(void)
           "the automatic name: FM1- and the last four digits of the address");
 
 #if FM1B_WIFI_JAM
-    /* 13b. MODE JAM's pick: an Optimist name (FM1- and four capital hex digits), WPA2-PSK, not our own, the strongest first, one that
-     * refused the default password left alone for a while */
+    /* 13b. MODE JAM: no access point, no manager: the group's channel, the group's BSSID, open frames at the never-keyed WCID */
     {
-        struct wn_ap a1, a2, a3, a4;
-        memset(&a1, 0, sizeof a1), memset(&a2, 0, sizeof a2), memset(&a3, 0, sizeof a3), memset(&a4, 0, sizeof a4);
-        wc_tab.n = 0;
-        check(wc_is_optimist_name((const uint8_t *)"FM1-A1B2", 8) && !wc_is_optimist_name((const uint8_t *)"FM1-a1b2", 8) &&
-              !wc_is_optimist_name((const uint8_t *)"FM1-A1B", 7) && !wc_is_optimist_name((const uint8_t *)"HOMEWIFI", 8) &&
-              !wc_is_optimist_name((const uint8_t *)"Optimist", 8), "JAM: the Optimist name is FM1- and four capital hex digits");
-        check(wc_is_own_name((const uint8_t *)"FM1-4455", 8) && !wc_is_own_name((const uint8_t *)"FM1-4456", 8), "JAM: our own name (FM1-4455 here) is never joined");
-        memcpy(a1.ssid, "FM1-4455", 8), a1.ssid_len = 8, a1.sec = WN_SEC_PSK, a1.rssi = -30, a1.bssid[5] = 1;   /* (ours: strongest) */
-        memcpy(a2.ssid, "FM1-A1B2", 8), a2.ssid_len = 8, a2.sec = WN_SEC_OPEN, a2.rssi = -40, a2.bssid[5] = 2;   /* (open: not ours to join) */
-        memcpy(a3.ssid, "FM1-C3D4", 8), a3.ssid_len = 8, a3.sec = WN_SEC_PSK, a3.rssi = -50, a3.bssid[5] = 3;
-        memcpy(a4.ssid, "FM1-E5F6", 8), a4.ssid_len = 8, a4.sec = WN_SEC_PSK, a4.rssi = -60, a4.bssid[5] = 4;
-        wn_scan_add(&wc_tab, &a4);
-        wn_scan_add(&wc_tab, &a3);
-        wn_scan_add(&wc_tab, &a2);
-        wn_scan_add(&wc_tab, &a1);
-        check(wc_jam_pick() >= 0 && !memcmp(wc_tab.ap[wc_jam_pick()].ssid, "FM1-C3D4", 8), "JAM: the strongest usable one: not ours, not open");
-        wc.jam_bad = 1, memcpy(wc.jam_bssid, a3.bssid, 6), wc.jam_t = ms;
-        check(wc_jam_pick() >= 0 && !memcmp(wc_tab.ap[wc_jam_pick()].ssid, "FM1-E5F6", 8), "JAM: one that refused the default password is skipped: the next one");
-        ms += WC_JAM_BAD_MS + 1u;
-        check(wc_jam_pick() >= 0 && !memcmp(wc_tab.ap[wc_jam_pick()].ssid, "FM1-C3D4", 8), "JAM: ... and tried again after two minutes");
-        wc.jam_bad = 0;
-        wc_tab.n = 0;
+        uint8_t raw[WN_STORE_SIZE], fr[128];
+        uint32_t jv[4];
+        uint32_t n;
+        check(plat_wifi_jam() == -1, "MODE AP: not on the air");
+        plat_wifi_set_group(1);
+        plat_wifi_mode(WIFI_MODE_JAM_AUTO);
+        tick(300);
+        check(ja.up && wa.st == WA_OFF && !wl.ap && wl.ja && wl.on, "JAM: the access point stopped, the air up");
+        check(plat_wifi_step() == WIFI_STEP_OFF, "JAM: the station's manager rests");
+        check(fm1_fake_ch == 1u, "group 1: channel 1");
+        check(!strcmp(plat_wifi_ssid(), "fm1-jam"), "group 1: the name fm1-jam");
+        check(plat_wifi_jam_stat(0, jv) && (wl.ip.ip >> 16) == 0xA9FEu && jv[0] == 1u, "the address: 169.254.x.y at once, no DHCP");
+        check(plat_wifi_jam() == 0 && plat_wifi_state() == WIFI_ON, "nobody heard: 0, on");
+        /* Link's group datagram from another unit: heard, counted, its address learned */
+        plat_net_udp_open(20808, on_group, 0);
+        plat_net_join(0xE04C4E4Bu);
+        {
+            struct wifi_ip o;
+            uint8_t omac[6] = {2, 0x11, 0x22, 0x33, 0x66, 0x77};
+            uint32_t g0 = group_rx, m0;
+            wifi_ip_ibss_init(&o, omac, ja.n.bssid, 0xA9FE0505u, 0);
+            n = wifi_ip_send_udp(&o, 20808, 0xE04C4E4Bu, 20808, (const uint8_t *)"LINK", 4, fr);
+            ja_rx(fr, n, -40, now_us());
+            check(group_rx == g0 + 1u, "a group datagram of another unit reaches the app's port");
+            check(plat_wifi_jam() == 1, "one FM-1 heard");
+            check(plat_wifi_jam_stat(1, jv) && jv[1] == 1u && !plat_wifi_jam_stat(2, jv), "its frames counted, per unit");
+            m0 = ntx;
+            check(plat_net_udp_send(20808, 0xA9FE0505u, 20808, "PING", 4) == 0 && ntx == m0 + 1u, "unicast to it: its address known from the group frame");
+            check(txlog[m0 % TXMAX].ack && txlog[m0 % TXMAX].wcid == JA_WCID && !memcmp(txlog[m0 % TXMAX].f + 4, omac, 6) &&
+                  !(txlog[m0 % TXMAX].f[1] & 0x43u), "... acknowledged by the MAC, the plain WCID, open, ad-hoc");
+            check(plat_net_udp_send(20808, 0xA9FE0606u, 20808, "PING", 4) != 0, "an address never heard: not sent");
+            {
+                struct wifi_ip c2;
+                uint32_t mine = wl.ip.ip, g1 = group_rx;
+                wifi_ip_ibss_init(&c2, omac, ja.n.bssid, mine, 0);
+                n = wifi_ip_send_udp(&c2, 20808, 0xE04C4E4Bu, 20808, (const uint8_t *)"LINK", 4, fr);
+                ja_rx(fr, n, -40, now_us());
+                check(wl.ip.ip != mine && (wl.ip.ip >> 16) == 0xA9FEu && group_rx == g1, "another unit with our address: a new draw");
+            }
+            ms += JA_HEARD_MS + 1u;
+            tick(10);
+            check(plat_wifi_jam() == 0, "not heard for 3 s: gone");
+            plat_net_join(0);
+            plat_net_udp_close(20808);
+        }
+        plat_wifi_leave();
+        check(ja.up && wl.on, "a leave asked in JAM does not stop the air");
+        plat_wifi_set_group(0), plat_wifi_set_group(10);
+        check(plat_wifi_group() == 1, "a group outside 1..9 is ignored");
+        plat_wifi_set_group(3);
+        tick(30);
+        check(ja.up && fm1_fake_ch == 11u && !strcmp(plat_wifi_ssid(), "fm1-jam-3"), "group 3: channel 11, fm1-jam-3");
+        wn_save(&wn_st, raw);
+        check(raw[2] == WN_MODE_JAM_AUTO, "JAM: stored as 7");
+        plat_wifi_set_group(1);
+        plat_wifi_mode(WIFI_MODE_AP);
+        tick(300);
+        run_until_up();
+        check(!ja.up && !wl.ja && wa.st == WA_UP && wa.ssid_len == 8u && memcmp(wa.ssid, "FM1-4455", 8) == 0, "back to AP: the air off, its own name");
     }
 #else
     plat_wifi_mode(WIFI_MODE_JAM);
-    check(plat_wifi_get_mode() != WIFI_MODE_JAM, "without wifi_jam: MODE JAM refused");
-    plat_wifi_mode(WIFI_MODE_JAM_HOST);
-    check(plat_wifi_get_mode() != WIFI_MODE_JAM_HOST, "... and JAM HOST");
+    check(plat_wifi_get_mode() != WIFI_MODE_JAM_AUTO && plat_wifi_get_mode() != WIFI_MODE_JAM, "without wifi_jam: MODE JAM refused");
+    plat_wifi_mode(WIFI_MODE_JAM_AUTO);
+    check(plat_wifi_get_mode() != WIFI_MODE_JAM_AUTO, "... asked by its stored number too");
+    {
+        struct wn_store r = wn_st;
+        uint8_t m0 = wn_st.mode;
+        r.mode = WN_MODE_JAM_AUTO;                  /* (a record written by a build with wifi_jam) */
+        wn_save(&r, store_raw);
+        store_len = WN_STORE_SIZE;
+        own_store_ok = 0;
+        check(plat_wifi_get_mode() == WIFI_MODE_AUTO, "a record with MODE JAM reads as AUTO");
+        store_len = 0;
+        wn_st.mode = m0;
+    }
 #endif
 
     /* 14. the radio does not start */

@@ -108,6 +108,14 @@ void wifi_ip_ap_init(struct wifi_ip *wip, const uint8_t ap_mac[6], uint32_t ip, 
     wip->igmp_t = (int64_t)1 << 62;                 /* (no membership reports: we are the router) */
 }
 
+void wifi_ip_ibss_init(struct wifi_ip *wip, const uint8_t mac[6], const uint8_t bssid[6], uint32_t ip, void (*rand_fn)(uint8_t *out, uint8_t n))
+{
+    wifi_ip_ap_init(wip, mac, ip, rand_fn);
+    memcpy(wip->bssid, bssid, 6);
+    wip->netmask = 0xFFFF0000u;
+    wip->ap = WIFI_IP_IBSS;
+}
+
 void wifi_ip_arp_learn(struct wifi_ip *wip, uint32_t ip, const uint8_t mac[6])
 {
     if (wip)
@@ -240,7 +248,11 @@ static uint32_t build_80211_data_hdr(struct wifi_ip *wip, const uint8_t da[6], u
     memset(tx_buf, 0, 32);
     tx_buf[0] = 0x08;                               /* Type: Data, Subtype: Data */
     tx_buf[2] = 0x00; tx_buf[3] = 0x00;             /* Duration */
-    if (wip->ap) {                                  /* MODE AP: FromDS, RA = DA, TA = BSSID = us, addr3 = SA = us */
+    if (wip->ap == WIFI_IP_IBSS) {                  /* MODE JAM: neither ToDS nor FromDS: RA = DA, TA = us, addr3 = the group's BSSID */
+        memcpy(tx_buf + 4, da, 6);
+        memcpy(tx_buf + 10, wip->mac, 6);
+        memcpy(tx_buf + 16, wip->bssid, 6);
+    } else if (wip->ap) {                           /* MODE AP: FromDS, RA = DA, TA = BSSID = us, addr3 = SA = us */
         tx_buf[1] = (uint8_t)(0x02u | (wip->protect ? 0x40u : 0u));
         memcpy(tx_buf + 4, da, 6);
         memcpy(tx_buf + 10, wip->mac, 6);
