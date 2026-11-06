@@ -72,16 +72,11 @@ static void ba_reset(void)
 
 static void ba_send(const uint8_t *frame, uint32_t len)   /* an L2CAP frame in DM1 fragments: LLID 2, then 1 */
 {
-    uint32_t at = 0, n, k;
+    uint32_t at = 0, n;
     while (at < len) {
         n = len - at > BTL_MAX ? BTL_MAX : len - at;
-        if (bp.txw - bp.txr >= BP_TXQ)
+        if (!blt_put(frame + at, n, at ? 1u : 2u))   /* (bt_ltx.c: handed over by IRQ 40 once published) */
             return;
-        for (k = 0; k < n; k++)
-            bp.txq[bp.txw % BP_TXQ][k] = frame[at + k];
-        bp.txl[bp.txw % BP_TXQ] = (uint8_t)n;
-        bp.txllid[bp.txw % BP_TXQ] = (uint8_t)(at ? 1u : 2u);
-        bp.txw++;
         at += n;
     }
 }

@@ -61,6 +61,8 @@ t bt_crypto bt_crypto_test.c
 t bt_ssp bt_ssp_test.c
 t bt_lmp bt_lmp_test.c
 t bt_afh bt_afh_test.c
+# Bluetooth audio under CPU load (bt_ltx.c): CPU0 at 50/100/130/200 % for 10 simulated minutes, the AFH switches met
+t bt_ltx bt_ltx_test.c
 t bt_l2cap bt_l2cap_test.c
 t bt_sdps bt_sdps_test.c
 t bt_avrcp bt_avrcp_test.c

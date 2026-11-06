@@ -31,7 +31,6 @@
 #define BP_OFF_RX0 1088u                           /* the connection's two RX buffers: the table's link_rx_bulk (BR §3) */
 #define BP_OFF_RX1 (1088u + 680u)
 #define BP_LT_ADDR 1u
-#define BP_TXQ 32u
 #define BP_COD 0x28041Cu                           /* our class of device (the FHS): services Capturing (bit 19, an audio
                                                     * source, as BlueZ sets it) and Audio (21); major Audio/Video, minor
                                                     * Portable Audio. Before: 0x240404, Rendering + a wearable headset:
@@ -44,8 +43,7 @@ static struct {
     int32_t est;                                   /* the device's clock offset estimate, slots */
     uint32_t page_ids, fhs_acked, conn_ms, last_good_ms, good, bad, nobuf, acl, lmp_in, lmp_out;
     uint32_t type_n[16];
-    uint8_t txq[BP_TXQ][BTL_MAX], txl[BP_TXQ], txllid[BP_TXQ];
-    uint32_t txw, txr, stop_ms;
+    uint32_t stop_ms;
     uint8_t slots5;                                /* the multi-slot request: 0 not asked, 1 asked for 5, 2 granted 5, 3
                                                     * asked for 3 (5 refused), 4 granted 3, 5 refused both */
     uint32_t mq_drop, mq_sent;                     /* audio packets dropped (the queue full), sent */
@@ -69,18 +67,16 @@ static struct {
                                                     * console's channel line */
     uint8_t feat[8];                               /* the device's features (its LMP_features_res, page 0; byte 4 bit 0:
                                                     * AFH capable slave) */
-    uint8_t afh_map[10], afh_on, afh_pending;      /* the hop set (79 bits, all at a new link), AFH wanted, a switch
-                                                    * announced (LMP_set_AFH) and due at afh_at (CLKN slots, bp_alarm) */
-    uint32_t afh_at, afh_switches;
+    uint8_t afh_map[10], afh_on;                   /* the hop set (79 bits, all at a new link), AFH wanted (a switch
+                                                    * under way: bt_ltx.c blt.afh_state) */
 } bp;
 #define BP_CH_SEC 30u                              /* the channel assessment's window, s (~2 answers a channel a second) */
-#define BP_AFH_AHEAD 320u                          /* the switch this many slots (200 ms) after its announcement */
 /* the audio packets (bt_acl.c ba_media_send, from the audio interrupt): whole L2CAP frames, each one DH5 (or DH3 / DH1
- * when shorter), never cut; the main loop's bp_tx_service sends them after the LMP and L2CAP signalling */
+ * when shorter), never cut; IRQ 40 sends them after the LMP and L2CAP signalling (bt_ltx.c blt_fill) */
 #if FM1B_BTA_MEM
 /* the packets in the app's block (plat_bta_mem), lent with bt_inq.c's ring while an AUDIO mode is on; the indexes stay
  * here (an empty queue reads them alone). bp_mem lends and takes back: the interrupts off, so neither the audio's
- * (ba_media_send) nor the radio's (bp_tx_media, bti_push) sees a block half lent or half gone */
+ * (ba_media_send) nor the radio's (bt_ltx.c blt_fill, bti_push) sees a block half lent or half gone */
 struct bp_mq_mem {
     uint8_t d[BP_MQ][BP_MQB];
     uint16_t n[BP_MQ];
@@ -125,6 +121,32 @@ static int bp_media_queue(const uint8_t *frame, uint32_t len)   /* 1 queued; 0 d
         bp.mq_hi = bp_mq.w - bp_mq.r;
     return 1;
 }
+/* the next audio packet into TX buffer i (BR §5.5), DH5 / DH3 / DH1 by its length: IRQ 40 itself (each reception and
+ * each alarm: the stream needs 172 DH5 a second and the main loop runs ~65 times, measured 2026-10-20 on the
+ * WH-1000XM4: audio_sent 2,008, dropped 3,527 in 30 s), or the main loop with IRQ 40 held (bt_ltx.c blt_fill) */
+static void bp_media_load(struct fm1_br_frame *f, uint8_t *tab, uint32_t i)
+{
+    uint32_t q = bp_mq.r % BP_MQ, n = BP_MQ_N(q), k, t;
+    for (k = 0; k < n; k++)
+        tab[(i ? BP_OFF_TXB1 : BP_OFF_TXB0) + k] = BP_MQ_D(q)[k];
+    t = n > 183u ? 15u : n > 27u ? 11u : 4u;       /* DH5, DH3, DH1 (BR §5.2) */
+    f->txptr[i] = (uint16_t)(i ? BP_OFF_TXB1 : BP_OFF_TXB0);
+    f->txphdr[i] = (uint16_t)(n << 3 | 1u << 2 | 2u);   /* LLID 2: an L2CAP start, whole; FLOW 1 */
+    f->linkcntl[i] = (uint16_t)((f->linkcntl[i] & 0x80B0u) | t | 0x4000u);
+    f->txbufcntl[i] &= (uint8_t)~1u;
+    bp_mq.r++;
+    bp.mq_sent++;
+}
+/* the TX side: the signalling queue, the hand-over from IRQ 40, the AFH switch at its instant (bt_ltx.c) */
+#define BLT_CLKN() bti_clkn()
+#define BLT_AFH_MAP(w) fm1_br_afh_map(0, (w))       /* (map 0 goes with hop table 1: btctrler.a bdhw_set_afh) */
+#define BLT_OFF_TX0 BP_OFF_TX0
+#define BLT_OFF_TX1 BP_OFF_TX1
+#define BLT_MEDIA_READY() (BTI_MEM_HAVE && bp_mq.r != bp_mq.w)
+#define BLT_MEDIA_LOAD(f, tab, i) bp_media_load((f), (tab), (i))
+#define BLT_NOTE_SIG(llid) (bp.lmp_out += (llid) == 3u)
+#define BLT_NOTE_BUSY() (bp.mq_busy++)
+#include "bt_ltx.c"
 #if FELUCCA_BT_AUDIO
 /* pairing and encryption on the link (bt_ssp.c, SSP Just Works, the device starts it): a fresh state each connection, its
  * PDUs through bp_queue; the randomness for the key and the nonces from the link's own noise (bp_noise: each reception's
@@ -296,7 +318,6 @@ static void bp_page_rx(void)                       /* BR §8.3 "On IRQ 40 RX" (t
         bp_conn_enter();
 }
 
-static void bp_tx_media(struct fm1_br_frame *f);
 static void bp_stat_note(uint32_t stat)            /* IRQ 40: one rxstat into this second's table (bp_status) */
 {
     uint32_t v = stat & 0xFFF0u, k;
@@ -402,7 +423,8 @@ static void bp_conn_rx(void)                       /* a packet in the connection
         if (bp.agc_follow)
             bti_agc_follow(f);
     }
-    bp_tx_media(f);                                /* (the stream's next packets at once, not at the main loop's pace) */
+    blt_fill(f, bti_tab);                          /* (the signalling and the stream's next packets at once, not at the
+                                                    * main loop's pace: bt_ltx.c) */
 }
 
 static void bp_rx(void)                            /* IRQ 40 RX in the page or connection modes */
@@ -427,37 +449,26 @@ static int bp_alarm(uint32_t now)                  /* the alarm in the page / co
         bti_run_stop();
         return 1;
     }
+    if (bti.mode == BTI_M_CONN) {
+        struct fm1_br_frame *f = fm1_br_frame(bti_tab, 0);
 #if FELUCCA_BT_AFH
-    if (bp.afh_pending) {                          /* the hop set announced (LMP_set_AFH) switches at its instant: the
-                                                    * alarm lands on it (Part C 4.1.4: the slave switches there too) */
-        uint32_t left = (bp.afh_at - now) & BTI_CLK;
-        if (left == 0 || left > (BTI_CLK >> 1)) {
-            struct fm1_br_frame *f = fm1_br_frame(bti_tab, 0);
-            f->miscntl = (uint8_t)((f->miscntl & 0x3Fu) | (bp.afh_on ? 1u << 6 : 0u));   /* hop table 1 / basic (BR §4) */
-            f->format = (uint8_t)((f->format & 0xBFu) | (bp.afh_on ? 0x40u : 0u));
-            bp.afh_pending = 0;
-            bp.afh_switches++;
-        } else if (left < 18u) {
-            bti_alarm_arm(left);
-            return 1;
-        }
-    }
+        bti_alarm_arm(blt_afh_alarm(now, f, bti_tab));   /* (the hop set announced switches at its instant: the alarm lands
+                                                    * on it; Part C 4.1.4, the slave switches there too) */
+#else
+        bti_alarm_arm(18u);
 #endif
+        blt_fill(f, bti_tab);                      /* (every 11 ms at worst, whatever the receptions: bt_ltx.c) */
+        return 1;
+    }
     bti_alarm_arm(18u);
     return 1;
 }
 
 static void bp_queue_w(const uint8_t *pdu, uint32_t len, const char *why)
 {
-    uint32_t i;
     uint32_t tid = 0;
-    if (bp.txw - bp.txr >= BP_TXQ || len == 0 || len > BTL_MAX)
+    if (!blt_put(pdu, len, 3u))
         return;
-    for (i = 0; i < len; i++)
-        bp.txq[bp.txw % BP_TXQ][i] = pdu[i];
-    bp.txl[bp.txw % BP_TXQ] = (uint8_t)len;
-    bp.txllid[bp.txw % BP_TXQ] = 3u;
-    bp.txw++;
     con_puts("btpage: LMP out ");
     con_puts(btl_name(btl_opcode(pdu, len, &tid)));
     bti_kv(" tid=", tid);
@@ -469,66 +480,16 @@ static void bp_queue_w(const uint8_t *pdu, uint32_t len, const char *why)
     con_puts("\r\n");
 }
 
-/* an audio packet into every empty TX buffer (BR §5.5), DH5 / DH3 / DH1 by its length: IRQ 40 itself (bp_conn_rx, each
- * reception: the stream needs 172 DH5 a second and the main loop runs ~65 times, measured 2026-10-20 on the WH-1000XM4:
- * audio_sent 2,008, dropped 3,527 in 30 s), or the main loop with IRQ 40 held. Never ahead of the LMP / L2CAP queue */
-static void bp_tx_media(struct fm1_br_frame *f)
+/* the main loop's hand-over (BR §5.5): what its handlers queued may go, then whatever an empty TX buffer takes, IRQ 40
+ * held. IRQ 40 does the same at each reception and each alarm (bt_ltx.c blt_fill: before, the signalling went only
+ * from here, one PDU a pass, so a main loop the app's render starved sent LMP_set_AFH after its instant) */
+static void bp_tx_service(void)
 {
-    uint32_t i, k, n, pass;
-    for (pass = 0; pass < 2u && BTI_MEM_HAVE && bp_mq.r != bp_mq.w && bp.txr == bp.txw; pass++) {
-        i = f->txtog & 1u;
-        if (!(f->txbufcntl[i] & 1u))
-            i ^= 1u;
-        if (!(f->txbufcntl[i] & 1u)) {
-            bp.mq_busy++;
-            return;                                /* (both buffers full: the engine has two to send) */
-        }
-        {
-            uint32_t q = bp_mq.r % BP_MQ, t;
-            n = BP_MQ_N(q);
-            for (k = 0; k < n; k++)
-                bti_tab[(i ? BP_OFF_TXB1 : BP_OFF_TXB0) + k] = BP_MQ_D(q)[k];
-            t = n > 183u ? 15u : n > 27u ? 11u : 4u;   /* DH5, DH3, DH1 (BR §5.2) */
-            f->txptr[i] = (uint16_t)(i ? BP_OFF_TXB1 : BP_OFF_TXB0);
-            f->txphdr[i] = (uint16_t)(n << 3 | 1u << 2 | 2u);   /* LLID 2: an L2CAP start, whole; FLOW 1 */
-            f->linkcntl[i] = (uint16_t)((f->linkcntl[i] & 0x80B0u) | t | 0x4000u);
-            f->txbufcntl[i] &= (uint8_t)~1u;
-            bp_mq.r++;
-            bp.mq_sent++;
-        }
-    }
-}
-static void bp_tx_service(void)                    /* the main loop: a PDU into an empty TX buffer (BR §5.5): the LMP /
-                                                    * L2CAP queue first, else an audio packet */
-{
-    struct fm1_br_frame *f = fm1_br_frame(bti_tab, 0);
-    uint32_t i, k, n;
     if (bti.mode != BTI_M_CONN)
         return;
-    if (bp.txr == bp.txw) {
-        if (bp_mq.r == bp_mq.w)
-            return;
-        fm1_br_irqs_hold(1);
-        bp_tx_media(f);
-        fm1_br_irqs_hold(0);
-        return;
-    }
     fm1_br_irqs_hold(1);
-    i = f->txtog & 1u;
-    if (!(f->txbufcntl[i] & 1u))
-        i ^= 1u;
-    if (f->txbufcntl[i] & 1u) {
-        n = bp.txl[bp.txr % BP_TXQ];
-        for (k = 0; k < n; k++)
-            bti_tab[(i ? BP_OFF_TX1 : BP_OFF_TX0) + k] = bp.txq[bp.txr % BP_TXQ][k];
-        f->txptr[i] = (uint16_t)(i ? BP_OFF_TX1 : BP_OFF_TX0);
-        f->txphdr[i] = (uint16_t)(n << 3 | 1u << 2 | bp.txllid[bp.txr % BP_TXQ]);   /* LLID 3 LMP, 2 / 1 L2CAP; FLOW 1 */
-        f->linkcntl[i] = (uint16_t)((f->linkcntl[i] & 0x80B0u) | 3u | 0x4000u);   /* DM1 */
-        f->txbufcntl[i] &= (uint8_t)~1u;
-        if (bp.txllid[bp.txr % BP_TXQ] == 3u)
-            bp.lmp_out++;
-        bp.txr++;
-    }
+    blt_publish();
+    blt_fill(fm1_br_frame(bti_tab, 0), bti_tab);
     fm1_br_irqs_hold(0);
 }
 
@@ -705,7 +666,7 @@ static void bp_print_sec(void)
         bti_kv(" acl=", bp.acl);
         bti_kv(" lmp in=", bp.lmp_in);
         bti_kv(" out=", bp.lmp_out);
-        bti_kv(" q=", bp.txw - bp.txr);
+        bti_kv(" q=", blt.w - blt.r);
         bti_kv(" ring_drop=", bti_st.dropped);     /* (received, acknowledged, lost before the main loop read them) */
         bti_kv(" last_good_ms=", fm1_ms - bp.last_good_ms);
         if (bp.mq_sent || bp.mq_drop) {
@@ -723,8 +684,8 @@ static void bp_print_sec(void)
             for (i = 0; i < 79u; i++)
                 used += bt_afh_used(bp.afh_map, i);
             bti_kv(" afh=", used);                 /* (the hop set's channels of 79; switches so far; a switch due) */
-            bti_kv("/", bp.afh_switches);
-            con_puts(bp.afh_pending ? "p" : "");
+            bti_kv("/", blt.afh_switches);
+            con_puts(blt.afh_state != BLT_AFH_NONE ? "p" : "");
         }
 #endif
         con_puts(" pll=");
@@ -802,8 +763,8 @@ static void bp_print_sec(void)
 static void bp_afh_send(uint32_t on)               /* the hop set to the engine's AFH table and map, LMP_set_AFH to the
                                                     * device with the switch's instant (bp_alarm switches there) */
 {
-    uint8_t out[BTL_MAX + 8], all[10];
-    uint32_t words[3], i, n, at;
+    uint8_t out[BTL_MAX + 8], all[10], table[80];
+    uint32_t words[3], i;
     const uint8_t *map = bp.afh_map;
     if (!on) {
         for (i = 0; i < 9u; i++)
@@ -811,19 +772,18 @@ static void bp_afh_send(uint32_t on)               /* the hop set to the engine'
         all[9] = 0x7Fu;
         map = all;
     }
-    n = bt_afh_table(map, bti_tab + FM1_BR_OFF_FRQ + 80u, words);   /* frq_table[1] (BR §3) */
-    fm1_br_afh_map(0, words);                      /* (map 0 goes with hop table 1: btctrler.a bdhw_set_afh) */
-    (void)n;
-    at = (bti_clkn() + BP_AFH_AHEAD) & BTI_CLK & ~1u;   /* an even slot: a master-to-slave one (CLK[1] = 0) */
-    bp.afh_at = at;
+    (void)bt_afh_table(map, table, words);         /* frq_table[1]'s content (BR §3), written at the instant */
+    fm1_br_irqs_hold(1);
+    blt_afh_stage(table, words, on);
+    fm1_br_irqs_hold(0);
     bp.afh_on = (uint8_t)on;
-    bp.afh_pending = 1;
-    bp_queue(out, btl_set_afh(out, at, on, map), on ? "the channels it fails on out of the hopping" : "AFH off");
+    bp_queue(out, btl_set_afh(out, 0, on, map), on ? "the channels it fails on out of the hopping" : "AFH off");
+    /* (its instant, 0 here, is set when it goes into a TX buffer: the hand-over's clock + 320 slots, bt_ltx.c) */
 }
 static void bp_afh_assess(const uint16_t ch[80])  /* every BP_CH_SEC s of the link (bp_sec_tick): the channels the device
                                                     * failed on leave the hop set (bt_afh.c), the device told */
 {
-    if (!bp.afh_on || bp.afh_pending || !(bp.feat[4] & 1u) || !bp.setup_in || !bp.setup_out)
+    if (!bp.afh_on || blt.afh_state != BLT_AFH_NONE || !(bp.feat[4] & 1u) || !bp.setup_in || !bp.setup_out)
         return;                                    /* (AFH only once set up, to an AFH capable slave, one switch at a time) */
     if (bt_afh_classify(ch, bp.afh_map))
         bp_afh_send(1);
@@ -954,11 +914,9 @@ static int bp_start(const uint8_t addr[6], uint32_t slots)
         bp.afh_map[i] = 0xFFu;                     /* (a new link hops over all 79: the device's holes measured again) */
     bp.afh_map[9] = 0x7Fu;
     bp.afh_on = FELUCCA_BT_AFH && !FELUCCA_BT_DIAG;   /* (a diagnostics build switches only when told: btpage afh=) */
-    bp.afh_pending = 0;
-    bp.afh_switches = 0;
+    blt_reset();                                   /* (a new link: no signalling queued, no switch due) */
     bp_mq.r = bp_mq.w;                            /* (a new link: no audio queued) */
     ba_reset();
-    bp.txw = bp.txr = 0;
     for (i = 0; i < 16u; i++)
         bp.type_n[i] = 0;
     bp_program();
@@ -1033,7 +991,7 @@ static void con_btpage(const char *p)
                                                     * the switch at once), 3 the map reset to all 79 then on (the
                                                     * mechanics alone: the hopping stays the basic one), 6 hop table 1
                                                     * selected alone with all 79 (no LMP: the same test without the device) */
-        if (bti.mode != BTI_M_CONN || bp.afh_pending) {
+        if (bti.mode != BTI_M_CONN || blt.afh_state != BLT_AFH_NONE) {
             con_puts("btpage: afh: no link, or a switch under way\r\n");
             return;
         }
@@ -1060,7 +1018,7 @@ static void con_btpage(const char *p)
             bp_afh_send(1);
         }
         bti_kv("btpage: afh ", (uint32_t)v);
-        bti_kv(" at slot ", bp.afh_at);
+        bti_kv(" at slot ", blt.afh_at);
         con_puts("\r\n");
         return;
     }
