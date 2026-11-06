@@ -706,6 +706,13 @@ void plat_host_patience(uint32_t try_ms, uint32_t total_ms);   /* each try's wai
 /* USB audio full (FM1B_UAC): 1, the USB audio input at full level (the app's render at gain 4096), MASTER for the
  * speaker and headphones only; 0, both at MASTER (the default) */
 void plat_usb_audio_full(int on);
+int plat_usb_audio_rec(void);
+typedef struct {
+    uint32_t in_packets, in_underruns, in_overruns, in_missed, in_stalls;
+    uint32_t out_packets, out_frames, out_underruns, out_overruns, out_feedback;
+    uint8_t in_alt, out_alt;
+} plat_usb_audio_stats_t;
+void plat_usb_audio_stats(plat_usb_audio_stats_t *s);
 /* the computer's audio (FM1B_UAC_OUT, usb_audio_out: the computer plays through the FM-1): the level it is mixed in
  * at, 0 muted .. 4096 as sent (the default; above is 4096), times MASTER. Muted, the FM-1 still takes the stream, so
  * the computer sees no change and turning it up again starts in step. The USB recording (usb_audio_in) is taken
@@ -718,9 +725,13 @@ void plat_usb_play_gain(uint32_t q12);
  * p[PLAT_USB_CH - 1], the next frame's PLAT_USB_CH_STRIDE on, for *run frames (where the ring wraps: ask again from
  * there). They start at 0 each block; the app adds into them, on either core (one writer a sample at a time), and the
  * platform sends them with the master's frames once app_render returns. NULL (*run 0) when no computer records (the
- * app then skips the work), and always with 2 channels; the host: a block's buffer, always taken */
+ * app then skips the work), always with 2 channels and with usb_audio_in_channels (the app fills every channel:
+ * APP_USB_CAPTURE); the host: a block's buffer, always taken */
 #ifndef FM1B_UAC_CH
 #define FM1B_UAC_CH 2
+#endif
+#ifndef FM1B_UAC_CAPTURE
+#define FM1B_UAC_CAPTURE 0
 #endif
 #define PLAT_USB_CH (FM1B_UAC_CH - 2)
 #define PLAT_USB_CH_STRIDE FM1B_UAC_CH
@@ -1040,6 +1051,11 @@ int app_stats_quiet(void);
  *   APP_CSTART      void app_cstart(void)         first thing at a start, before the RAM is cleared and with nothing
  *                   set up (registers only, no RAM): an app's own second core that a reset left running, held
  *                   (fm1-base's own, cpu2 = true, needs none of these)
+ *   APP_USB_CAPTURE const int32_t *app_usb_capture(const int32_t *lr, uint32_t n)   the USB audio input's frames
+ *                   (FM1B_UAC): n frames of FM1B_UAC_CH samples side by side, 24-bit as the render's, kept by the
+ *                   app until the call returns (lr: the block as the output has it, the master, MASTER not yet
+ *                   applied with plat_usb_audio_full); 0 = silence. Audio interrupt, after each render, only while
+ *                   the computer records (plat_usb_audio_rec). Without it the input is the master (2 channels)
  *   APP_BT_FRAMES   const int32_t *app_bt_frames(const int32_t *lr, uint32_t n)   the frames Bluetooth audio takes from
  *                   the render just made (lr, n frames, 24-bit; 0 = silence): for an app whose own output differs from
  *                   what Bluetooth should get. Audio interrupt, after each render (Bluetooth audio built). Without it

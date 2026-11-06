@@ -44,9 +44,7 @@ static int bta_frame(const uint8_t *p, uint32_t n);
 #if FM1B_BLE_OWN && FM1B_BLE_CENTRAL
 static int dev_frame(const uint8_t *p, uint32_t n);   /* bt_own_central.c */
 #endif
-#include "uac_mix.h"                                /* the USB recording, the computer's audio, in that order */
 #include "update_begin.h"                          /* the app's stop before an update, PLAT_UPDATE_BEGIN_MS at most */
-#include "fm1_flash_ok.h"                          /* the flash parts the storage may use (FM1B_FLASH_JEDEC_OK) */
 #if FM1B_BT_AUDIO
 static volatile uint8_t bta_streamed;               /* the last render went to Bluetooth (plat_bta_streams) */
 int plat_bta_streams(void) { return bta_streamed; }
@@ -57,6 +55,8 @@ void plat_bta_job(void) {}
 void plat_bta_job_keep(int on) { (void)on; }
 uint32_t plat_bta_job_inline(void) { return 0; }
 #endif
+#include "uac_mix.h"                                /* the USB recording, the computer's audio, in that order */
+#include "fm1_flash_ok.h"                          /* the flash parts the storage may use (FM1B_FLASH_JEDEC_OK) */
 static void render_block(int32_t *o)                /* ALNK0: one half, measured */
 {
     uint32_t t0 = fm1_ticks(), us, budget = HALF_FRAMES * 1000000u / FS;
