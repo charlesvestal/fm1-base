@@ -70,6 +70,10 @@ run trs-stamp sh -c "$CC -O2 -w -DFELUCCA_MIDI_STAMP=1 -Ibsp/chip -Ibsp/boards/f
 # each stamp against its message's landing (within +-0.05 ms; the poll's and the read's stamps beside it)
 run midi-stamp sh -c "$CC -std=c11 -O2 -Wall -Wextra -Werror -Wno-unused-function -Ibsp/chip -Ibsp/boards/fm1 -Idevice -o $OUT/midi_stamp_test tests/midi_stamp_test.c && $OUT/midi_stamp_test"
 run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/storage_test"
+# the same with app.h APP_STORE_BOUNCE (one page of RAM for the store): the same results, the same flash byte for byte
+run storage-bounce sh -c "$CC -O2 -w -DAPP_STORE_BOUNCE=1 -o $OUT/storage_bounce_test tests/storage_test.c && \
+    $OUT/storage_bounce_test > $OUT/storage_bounce.txt && $OUT/storage_test > $OUT/storage_plain.txt && \
+    cmp $OUT/storage_plain.txt $OUT/storage_bounce.txt"
 # the SD card (device/sd.c) against a modelled card in SPI mode (tests/sd_card_model.h), FatFs on top (lib/sd_fs.c):
 # card kinds, sectors, a file system made and read back, the clock's steps, DMA refused, damaged blocks, no card; its
 # FAT32 image read back with mtools when they're here. Then the SD example in the simulator on that image
