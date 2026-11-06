@@ -73,6 +73,57 @@ static int round_trip(uint8_t bitpool, uint8_t js, uint8_t bp2, uint8_t hdr[4], 
     return got == NFR && !*bad;
 }
 
+/* silence (bt_sbc.c sbc_sil): a stream of noise bursts and silences of 0..23 frames (the shift counter's every phase),
+ * the bitpool switched inside a silence, through bt_sbc_encode (the zero frames on zero history copied) and through
+ * the encoder alone (SBC_Encode, every frame encoded) from the same start: the same bytes, frame by frame */
+#define SIL_NFR 900u
+static int16_t sil_pcm[SIL_NFR * 256u];
+static uint8_t sil_a[SIL_NFR * 128u], sil_b[SIL_NFR * 128u];
+static uint32_t sil_stream(uint8_t js, int direct, uint8_t *o, uint32_t *copied)
+{
+    static struct bt_sbc_ctx c;
+    uint32_t fr, at = 0, n0 = 0;
+    SbcAnalysisInit();
+    bt_sbc_init(&c, 44100, 53, js);
+    for (fr = 0; fr < SIL_NFR; fr++) {
+        uint32_t len;
+        if (fr == 600u)
+            c.p.s16BitPool = 35;                    /* (inside a silence: the FEC fallback) */
+        if (direct) {
+            len = SBC_Encode(&c.p, sil_pcm + fr * 256u, o + at);
+        } else {
+            uint8_t pz = sbc_sil.prev_zero, kl = sbc_sil.len;
+            len = bt_sbc_encode(&c, sil_pcm + fr * 256u, o + at);
+            n0 += pz && kl && sbc_pcm_zero(sil_pcm + fr * 256u) && sbc_sil.bitpool == c.p.s16BitPool;
+        }
+        at += len;
+    }
+    if (copied)
+        *copied = n0;
+    return at;
+}
+static void sil_test(void)
+{
+    uint32_t fr = 0, i, gap = 0, x = 12345u, la, lb, copied, k;
+    char what[160];
+    while (fr < SIL_NFR) {                          /* a burst of 1..3 frames of noise, then a silence of gap frames */
+        uint32_t burst = 1u + gap % 3u;
+        for (k = 0; k < burst && fr < SIL_NFR; k++, fr++)
+            for (i = 0; i < 256u; i++)
+                x ^= x << 13, x ^= x >> 17, x ^= x << 5, sil_pcm[fr * 256u + i] = (int16_t)((int32_t)(x & 0xFFFFu) - 32768) / 4;
+        for (k = 0; k < gap && fr < SIL_NFR; k++, fr++)
+            memset(sil_pcm + fr * 256u, 0, 512u);
+        gap = (gap + 1u) % 24u;
+    }
+    for (i = 0; i < 2u; i++) {
+        la = sil_stream((uint8_t)(1u - i), 0, sil_a, &copied);
+        lb = sil_stream((uint8_t)(1u - i), 1, sil_b, 0);
+        snprintf(what, sizeof what, "%s: silences of 0..23 frames, the bitpool switched in one: %u B, the encoder alone's %u B, "
+                 "%s, %u frames copied", i ? "stereo" : "joint stereo", la, lb, la == lb && !memcmp(sil_a, sil_b, la) ? "the same bytes" : "OTHER BYTES", copied);
+        check(what, la == lb && !memcmp(sil_a, sil_b, la) && copied > 100u);
+    }
+}
+
 int main(void)
 {
     uint8_t hdr[4];
@@ -104,6 +155,7 @@ int main(void)
         snprintf(what, sizeof what, "... AOSP's decoder takes all %u frames across the change (%u refused)", NFR, bad);
         check(what, ok);
     }
+    sil_test();
     printf("bt_sbc: %d failed\n", fails);
     return fails != 0;
 }
