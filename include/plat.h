@@ -445,6 +445,19 @@ void plat_usb_audio_full(int on);
  * before the computer's audio is mixed in, whatever this is: recording the FM-1 never records the computer's own
  * playback (device/uac_mix.h). Without usb_audio_out, nothing */
 void plat_usb_play_gain(uint32_t q12);
+/* the app's own channels of the USB audio input (fm1.toml usb_audio_channels = N, 4..10, even: FM1B_UAC_CH): channels 3..N,
+ * PLAT_USB_CH of them, beside the master on 1 and 2, as 16-bit samples (32767: the master's full scale, the render's
+ * 1 << 22 at 4096). In app_render, the frame off frames into the block being rendered: its channels at p[0] ..
+ * p[PLAT_USB_CH - 1], the next frame's PLAT_USB_CH_STRIDE on, for *run frames (where the ring wraps: ask again from
+ * there). They start at 0 each block; the app adds into them, on either core (one writer a sample at a time), and the
+ * platform sends them with the master's frames once app_render returns. NULL (*run 0) when no computer records (the
+ * app then skips the work), and always with 2 channels; the host: a block's buffer, always taken */
+#ifndef FM1B_UAC_CH
+#define FM1B_UAC_CH 2
+#endif
+#define PLAT_USB_CH (FM1B_UAC_CH - 2)
+#define PLAT_USB_CH_STRIDE FM1B_UAC_CH
+int16_t *plat_usb_ch(uint32_t off, uint32_t *run);
 
 /* the keys' velocity and pressure (an app with APP_KEY_SENSE): on, the scan reads the keys on the analog rows and
  * hands each reading to the app (app_key_sample, app_key_probe); off by default */
