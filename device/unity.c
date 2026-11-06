@@ -120,6 +120,9 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define FM1B_UAC_CH 2             /* the USB audio input's channels: the master, and the app's on 3..N (plat_usb_ch) */
 #endif
 #define FELUCCA_UAC_CH FM1B_UAC_CH
+#if FM1B_UAC_CH > 2
+#define FELUCCA_UAC_STALL_POLLS 200u     /* the stream serviced every 10 kHz tick (main_fm1.c): 20 ms of polls */
+#endif
 #ifndef FM1B_UAC_DEEP
 #define FM1B_UAC_DEEP 0           /* 1: the USB audio input holds a half more (renders past ~40 % of their time
                                    * otherwise run its ring dry: holds in the recording); its 4 KB ring in the pool */
