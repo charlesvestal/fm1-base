@@ -69,6 +69,10 @@ run announce sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $
 # the half rendered aside (device/audio_commit.c) over a simulated audio DMA: copied only while its half is free
 run audio-commit sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/audio_commit_test \
     tests/audio_commit_test.c && $OUT/audio_commit_test"
+# panel messages (panel_messages = true: device/panelmsg_base.c, panelmsg.h, panelmsg.c) on felucca-bsp's usb.c and
+# ota.c, beside the screen reader: silent until a HELLO, the panel in order with the protocol's ids (a taught panel
+# too), only into an empty SysEx ring, every SAY and the updater's answers whole, quiet on an update
+run panelmsg sh tests/panelmsg_test.sh
 run installer "$PY" tests/install_test.py
 # the installer page's script as make_site inlines it (fm1ports.js, fm1pkg.js, fm1ota.js in one module) parses: no name twice
 run site-script "$PY" tests/site_script_test.py
