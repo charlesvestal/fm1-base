@@ -42,8 +42,7 @@
  *   out                          print the MIDI sent since the last "out" (and forget it; clocks not shown)
  *   expect_out PORT B0 B1 B2     check that this message went out to PORT since the last "out" (USB, BLE, BLE-DEV, USBH)
  *   expect_no_out PORT B0 B1 B2  check that it did not
- *   expect WHAT VALUE            check state: exit 1 on mismatch; VALUE "<N" / ">N" is a bound (WHAT: store_writes,
- *                                store_tries, clocks_out, midi_out, usb_play_gain, usb_audio_full, ... below; data.ADDR: the
+ *   expect WHAT VALUE            check state: exit 1 on mismatch; VALUE "<N" / ">N" is a bound (WHAT data.ADDR: the
  *                                flash's byte at ADDR, as plat_data reads it; -1 outside its windows)
  *   reboot                       re-run boot from the simulated flash (persistence test)
  *                                (the app's plat_restart does the same, at the end of its millisecond; expect restarts)

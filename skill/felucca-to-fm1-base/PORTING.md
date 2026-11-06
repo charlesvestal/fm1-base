@@ -143,6 +143,7 @@ Before writing a feature into the app, look for it in fm1-base (`include/plat.h`
 | dim keys, PLAY's green LED | `plat_lights` |
 | USB audio at full level, MASTER for the speaker only | `plat_usb_audio_full` |
 | USB audio input of the firmware's own channels (stems), 24-bit | `usb_audio_in_channels`, `usb_audio_in_24bit`; `APP_USB_CAPTURE`, `plat_usb_audio_rec` |
+| USB audio from the computer as the firmware's own mixer track | `APP_USB_PLAY`, `plat_usb_audio_play` |
 | USB audio input on the computer's clock (resampled, a synchronous endpoint) | `usb_audio_in_host_clock` |
 | the computer's USB audio muted or turned down (usb_audio_out) | `plat_usb_play_gain` |
 | lower case in the big fonts | `font_full = ["L"]` |
