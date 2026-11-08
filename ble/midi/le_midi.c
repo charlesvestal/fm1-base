@@ -345,10 +345,10 @@ static u8 search_ram_buffer[512] __attribute__((aligned(4)));
 static struct create_conn_param_t mc_conn;
 static u8 mc_tries;                              /* connection attempts left (0x3E: the device never answered) */
 static u32 mc_t0;                                /* when the connection was asked for (it has no timeout of its own) */
-static u8 mc_pair;                               /* the device refused its notes: 1 pairing asked, 2 encrypted, asked again */
+static u8 mc_pair;                               /* the device refused its notes: 1 pairing asked, 2 encrypted, asked again,
+                                                  * 3 done (its notes on, or the link let go) */
 static u8 mc_retry;                              /* asks since the link was encrypted */
 static volatile u32 mc_due;                      /* when to ask for the notes again (0: not waiting) */
-static u32 mc_notes;                             /* notifications from the device on this link (the log's) */
 static void bt_ble_adv_enable(u8 enable);
 static void mc_create(void)                      /* advertising paused meanwhile: its slots can crowd out the link's first */
 {
@@ -483,8 +483,9 @@ void ble_midi_poll(void)
     } else if (mc_state == BLE_MC_READY && mc_due && (int32_t)(shim_ms() - mc_due) >= 0) {
         mc_due = 0;
         mc_notes_on();
-    } else if (mc_state == BLE_MC_READY && mc_pair == 1 && shim_ms() - mc_t0 > 10000u) {
-        printf("paired: no answer\n");          /* a link without its notes is let go, so the screen says so */
+    } else if (mc_state == BLE_MC_READY && (mc_pair == 1 || mc_pair == 2) && shim_ms() - mc_t0 > 10000u) {
+        printf("paired: no answer\n");          /* not encrypted, or its notes never turned on, 10 s after pairing was
+                                                  * asked: a link without its notes is let go, so the screen says so */
         mc_pair = 3;
         ble_op_disconnect(mc_handle);
     }
@@ -499,7 +500,6 @@ void user_client_report_search_result(search_result_t *r)
             mc_pair = 0;
             mc_retry = 0;
             mc_due = 0;
-            mc_notes = 0;
             mc_notes_on();
             mc_state = BLE_MC_READY;
             printf("central: MIDI ready %x\n", mc_value);
@@ -534,16 +534,14 @@ void user_client_report_data_callback(att_data_report_t *d)
                 mc_due = 1;
         } else if (st) {
             printf("ccc refused, let go\n");
+            mc_pair = 3;
             ble_op_disconnect(mc_handle);
-        }
+        } else if (mc_pair)
+            mc_pair = 3;                         /* on: the 10 s give-up stands down */
         return;
     }
-    if (d->packet_type == GATT_EVENT_NOTIFICATION && d->value_handle == mc_value && d->blob_length >= 2) {
-        if (++mc_notes <= 2 || !(mc_notes % 200))
-            printf("notes %u: %x %x %x\n", (unsigned)mc_notes, d->blob[0], d->blob[1],
-                   d->blob_length > 2 ? d->blob[2] : 0);
+    if (d->packet_type == GATT_EVENT_NOTIFICATION && d->value_handle == mc_value && d->blob_length >= 2)
         midi_parse(d->blob, d->blob_length, 0x10u);
-    }
 }
 int l2cap_connection_update_request_just(u8 *packet, hci_con_handle_t handle) { (void)packet; (void)handle; return 0; }
 
@@ -559,7 +557,8 @@ static void client_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t
         if (!packet[2]) {                        /* asked again a moment later, as an iPad does: the device's own
                                                   * side may not count the link as encrypted yet (an FP-30X refused
                                                   * a write sent at once); a failure waits for the stack's second
-                                                  * try (pair_redo), and ble_midi_poll lets the link go after 10 s */
+                                                  * try (pair_redo); ble_midi_poll lets the link go 10 s after
+                                                  * pairing was asked if its notes are still off */
             mc_pair = 2;
             mc_retry = 0;
             mc_due = shim_ms() + 600u;
