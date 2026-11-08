@@ -121,6 +121,9 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
 #ifndef FM1B_AUDIO_ASIDE
 #define FM1B_AUDIO_ASIDE 0                          /* fm1.toml audio_aside = true: 1 */
 #endif
+#ifndef FM1B_AUDIO_AHEAD
+#define FM1B_AUDIO_AHEAD 0                          /* fm1.toml audio_ahead = true: 1 (with FM1B_AUDIO_ASIDE) */
+#endif
 #if FM1B_AUDIO_ASIDE
 #include "audio_commit.c"                           /* the half rendered aside, copied in while its half is free;
                                                      * FM1B_AUDIO_ASIDE 0 (the default): straight into the DMA's half */
@@ -132,7 +135,26 @@ void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_is
     fm1_audio_ack_aux(p);
     if (p & FM1_AUDIO_HALF) {
         uint32_t half = fm1_audio_free_half();
-#if FM1B_AUDIO_ASIDE
+#if FM1B_AUDIO_ASIDE && FM1B_AUDIO_AHEAD
+        uint32_t ok;
+        static uint8_t behind;                      /* (renders in a row that ran past their half) */
+        fm1_audio_ack_half();
+        ok = audio_commit(half);                    /* the block rendered last time */
+        render_block(aside);                        /* the next: one running past its half leaves the next half
+                                                     * pending, served as soon as this returns (a block's worth of
+                                                     * latency for a render up to two halves long) */
+        if (fm1_audio_pending() & FM1_AUDIO_HALF) {
+            if (++behind >= 2u) {                   /* (two in a row: that half dropped, as without the lookahead,
+                                                     * so the main loop gets its time; without this it starved) */
+                fm1_audio_ack_half();
+                behind = 0;
+                fm1b_dbg.late++;
+                audio_xruns++;
+            }
+        } else
+            behind = 0;
+        if (!ok) {
+#elif FM1B_AUDIO_ASIDE
         uint32_t ok;
         fm1_audio_ack_half();                       /* (now: a new pending after the render = the DMA moved on) */
         render_block(aside);
