@@ -345,6 +345,10 @@ static u8 search_ram_buffer[512] __attribute__((aligned(4)));
 static struct create_conn_param_t mc_conn;
 static u8 mc_tries;                              /* connection attempts left (0x3E: the device never answered) */
 static u32 mc_t0;                                /* when the connection was asked for (it has no timeout of its own) */
+static u8 mc_pair;                               /* the device refused its notes: 1 pairing asked, 2 encrypted, asked again */
+static u8 mc_retry;                              /* asks since the link was encrypted */
+static volatile u32 mc_due;                      /* when to ask for the notes again (0: not waiting) */
+static u32 mc_notes;                             /* notifications from the device on this link (the log's) */
 static void bt_ble_adv_enable(u8 enable);
 static void mc_create(void)                      /* advertising paused meanwhile: its slots can crowd out the link's first */
 {
@@ -354,6 +358,13 @@ static void mc_create(void)                      /* advertising paused meanwhile
     ble_op_create_connection(&mc_conn);
 }
 static const u8 midi_svc_le[16] = {MIDI_SVC_UUID}, midi_chr_le[16] = {MIDI_CHR_UUID};
+static void mc_notes_on(void)                    /* the device's notes on: its CCC, the descriptor after the value */
+{
+    static u16 on = 1;
+    int r = SEND(mc_handle, mc_value + 1, (u8 *)&on, 2, ATT_OP_WRITE);
+    if (r)
+        printf("ccc not sent %d\n", r);
+}
 
 static int uuid_is(const u8 *u, const u8 *le)    /* a 128-bit uuid as the stack reports it, either order */
 {
@@ -469,6 +480,13 @@ void ble_midi_poll(void)
         printf("central: search timed out\n");
         mc_t0 = shim_ms();                       /* (once: the disconnection then turns the state off) */
         ble_op_disconnect(mc_handle);
+    } else if (mc_state == BLE_MC_READY && mc_due && (int32_t)(shim_ms() - mc_due) >= 0) {
+        mc_due = 0;
+        mc_notes_on();
+    } else if (mc_state == BLE_MC_READY && mc_pair == 1 && shim_ms() - mc_t0 > 10000u) {
+        printf("paired: no answer\n");          /* a link without its notes is let go, so the screen says so */
+        mc_pair = 3;
+        ble_op_disconnect(mc_handle);
     }
 }
 int ble_midi_central_state(void) { return mc_state; }
@@ -477,11 +495,14 @@ int ble_midi_central_state(void) { return mc_state; }
 void user_client_report_search_result(search_result_t *r)
 {
     if (r == (void *)-1) {
-        if (mc_value) {                          /* notifications on: its CCC is the descriptor after the value */
-            static u16 on = 1;
-            SEND(mc_handle, mc_value + 1, (u8 *)&on, 2, ATT_OP_WRITE);
+        if (mc_value) {
+            mc_pair = 0;
+            mc_retry = 0;
+            mc_due = 0;
+            mc_notes = 0;
+            mc_notes_on();
             mc_state = BLE_MC_READY;
-            printf("central: MIDI ready\n");
+            printf("central: MIDI ready %x\n", mc_value);
             bt_ble_adv_enable(1);                /* set up: the computer may find us again */
         } else {
             printf("central: no MIDI characteristic\n");
@@ -493,11 +514,36 @@ void user_client_report_search_result(search_result_t *r)
         mc_value = r->characteristic.value_handle;
 }
 void user_client_report_descriptor_result(charact_descriptor_t *d) { (void)d; }
-void user_client_report_data_callback(att_data_report_t *d)   /* notifications from the device */
+/* the device's answers: the write that turns its notes on (an error a device that wants a paired link gives:
+ * the FM-1 pairs, Just Works, and asks again), and the notes */
+void user_client_report_data_callback(att_data_report_t *d)
 {
-    if (d->conn_handle == mc_handle && d->value_handle == mc_value && d->packet_type == GATT_EVENT_NOTIFICATION &&
-        d->blob_length >= 2)
+    if (d->conn_handle != mc_handle)
+        return;
+    if (d->packet_type == GATT_EVENT_QUERY_COMPLETE && d->value_handle == mc_value + 1) {
+        u8 st = d->blob_length ? d->blob[0] : 0;
+        printf("ccc %x pair %d\n", st, mc_pair);
+        if ((st == 0x05 || st == 0x08 || st == 0x0F) && !mc_pair) {   /* insufficient authentication, authorization,
+                                                                        * encryption */
+            mc_pair = 1;
+            mc_t0 = shim_ms();
+            sm_api_request_pairing(mc_handle);
+        } else if ((st == 0x05 || st == 0x08 || st == 0x0F) && mc_pair == 2 && ++mc_retry < 6) {
+            mc_due = shim_ms() + 700u;           /* an FP-30X still says so just after the encryption: asked again */
+            if (!mc_due)
+                mc_due = 1;
+        } else if (st) {
+            printf("ccc refused, let go\n");
+            ble_op_disconnect(mc_handle);
+        }
+        return;
+    }
+    if (d->packet_type == GATT_EVENT_NOTIFICATION && d->value_handle == mc_value && d->blob_length >= 2) {
+        if (++mc_notes <= 2 || !(mc_notes % 200))
+            printf("notes %u: %x %x %x\n", (unsigned)mc_notes, d->blob[0], d->blob[1],
+                   d->blob_length > 2 ? d->blob[2] : 0);
         midi_parse(d->blob, d->blob_length, 0x10u);
+    }
 }
 int l2cap_connection_update_request_just(u8 *packet, hci_con_handle_t handle) { (void)packet; (void)handle; return 0; }
 
@@ -506,6 +552,21 @@ static void client_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t
     if (packet_type != HCI_EVENT_PACKET)
         return;
     switch (hci_event_packet_get_type(packet)) {
+    case HCI_EVENT_ENCRYPTION_CHANGE:            /* paired as the device wanted: its notes asked for again */
+        if (little_endian_read_16(packet, 3) != mc_handle || mc_pair != 1)
+            break;
+        printf("paired: %x\n", packet[2]);
+        if (!packet[2]) {                        /* asked again a moment later, as an iPad does: the device's own
+                                                  * side may not count the link as encrypted yet (an FP-30X refused
+                                                  * a write sent at once); a failure waits for the stack's second
+                                                  * try (pair_redo), and ble_midi_poll lets the link go after 10 s */
+            mc_pair = 2;
+            mc_retry = 0;
+            mc_due = shim_ms() + 600u;
+            if (!mc_due)
+                mc_due = 1;
+        }
+        break;
     case GAP_EVENT_ADVERTISING_REPORT:
         if (mc_state == BLE_MC_SCANNING)
             mc_adv((const adv_report_t *)&packet[2]);
@@ -542,6 +603,7 @@ static void client_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t
         ble_op_multi_att_send_conn_handle(0, 0, ROLE_CLIENT);
         mc_handle = 0;
         mc_value = 0;
+        mc_due = 0;
         if (packet[5] == 0x3E && mc_state != BLE_MC_READY && mc_tries && --mc_tries) {
             printf("central: again (%d left)\n", mc_tries);
             mc_create();                         /* never established: try again */
