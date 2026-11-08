@@ -55,6 +55,7 @@ struct lk_peer {
     struct lk_ss ss;
     uint32_t mip;                          /* its measurement endpoint (mep4) */
     uint16_t mport;
+    uint8_t noping;                        /* a measurement with it failed: the session's other members first */
     int64_t dead;                          /* host us it is forgotten at (its ttl) */
 };
 

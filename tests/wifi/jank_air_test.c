@@ -68,6 +68,7 @@ static struct unit u[UNITS];
 static int64_t t_now;                    /* true us */
 static int64_t air_free[14];             /* a channel is busy until this */
 static uint32_t loss_pct;
+static uint8_t reach_loss[UNITS][UNITS];   /* [sender][receiver] % lost on top of loss_pct: a pair apart, or at the edge of range */
 static uint64_t air_us[14];
 
 static int64_t local_us(const struct unit *p) { return (int64_t)((double)t_now * (1.0 + p->ppm * 1e-6)) + p->offs; }
@@ -85,7 +86,7 @@ static void air_send(struct unit *s, const uint8_t *f, uint32_t n)
             struct unit *r = &u[i];
             if (r == s || !r->on || r->n.ch != s->n.ch || (!(f[4] & 1u) && memcmp(f + 4, r->mac, 6)))
                 continue;
-            if (rnd() % 100u < loss_pct)
+            if (rnd() % 100u < loss_pct || rnd() % 100u < reach_loss[s - u][i])
                 continue;
             heard = 1;
             if (r->qw - r->qr >= QMAX) {
@@ -208,6 +209,7 @@ static void reset(void)
     memset(u, 0, sizeof u);
     memset(air_free, 0, sizeof air_free);
     memset(air_us, 0, sizeof air_us);
+    memset(reach_loss, 0, sizeof reach_loss);
     loss_pct = 0;
     conflicts = 0;
     t_now = 1000000;
@@ -400,6 +402,42 @@ int main(void)
         snprintf(s, sizeof s, "%u %% lost", n);
         phase(s, 3, 240, 4000);
     }
+
+    /* out of reach: 0 and 2 never hear each other, 1 hears both (the founder 0 first, then 1, then 2) */
+    reset();
+    reach_loss[0][2] = reach_loss[2][0] = 100u;
+    unit_on(0, 1, -10, 1000, 9000);
+    run_ms(3000);
+    unit_on(1, 1, 0, 1000, 9000);
+    run_ms(3000);
+    unit_on(2, 1, 10, 1000, 9000);
+    for (t = 0; t < 30000u && !(same_session(0, 1) && same_session(1, 2)); t += 100u)
+        run_ms(100);
+    {
+        char s[96];
+        snprintf(s, sizeof s, "a chain, the ends out of each other's reach: one session after %u ms", t);
+        check(t < 8000u, s);
+    }
+    check(lk_peers(&u[1].k) == 2u && lk_peers(&u[0].k) == 1u && lk_peers(&u[2].k) == 1u, "the ends see the middle only");
+    phase("a chain", 3, 240, 4000);
+
+    /* the founder at the edge of range: 2 hears the founder 0 now and then (an ALIVE lands), but a measurement with it
+     * cannot complete (both ways needed, 7 retries each); 1 is near both. 2 must measure with 1, join, and keep its clock */
+    reset();
+    reach_loss[0][2] = reach_loss[2][0] = 70u;
+    unit_on(0, 1, -15, 1000, 9000);
+    run_ms(3000);
+    unit_on(1, 1, 0, 1000, 9000);
+    run_ms(3000);
+    unit_on(2, 1, 15, 1000, 9000);
+    for (t = 0; t < 60000u && !(same_session(0, 1) && same_session(1, 2)); t += 100u)
+        run_ms(100);
+    {
+        char s[96];
+        snprintf(s, sizeof s, "the founder at the edge of range: one session after %u ms", t);
+        check(t < 10000u, s);
+    }
+    phase("the founder at the edge, 30 ppm apart", 3, 240, 4000);
 
     /* two groups on one channel (1 and 4) */
     reset();
