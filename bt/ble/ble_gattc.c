@@ -12,7 +12,9 @@
  *      decoder), MIDI out goes as Write Without Response (ble_att.c att_midi_out).
  * One request outstanding, the 30 s transaction timeout. An Error Response asking for security (Insufficient
  * Authentication 0x05, Insufficient Encryption 0x0F, Insufficient Encryption Key Size 0x0C) hands over to the host
- * (ble_central.c: encrypt with the bond, else pair) and the same request is sent again once the link is encrypted. */
+ * (ble_central.c: encrypt with the bond, else pair) and the same request is sent again once the link is encrypted.
+ * Insufficient Encryption on a link already encrypted: the peer's side may not count it as encrypted yet (a Roland
+ * FP-30X, fm1-base#44): the request again BLE_GATTC_LATE_US later, BLE_GATTC_LATE_TRIES times, then the link left. */
 #include "ble.h"
 #include "ble_host.h"
 #include "ble_ll.h"
@@ -33,6 +35,8 @@ static int ble_central_gattc_auth(uint8_t code);
 
 static struct {
     uint8_t st, wait_sec, due;                 /* G_*; a request waits for the link's security; one waits for room */
+    uint8_t late_n;                            /* asked again after Insufficient Encryption on the encrypted link */
+    uint32_t late_at;                          /* when to ask again (0: not waiting) */
     uint8_t req[23], req_n;                    /* the request outstanding (sent again after security) */
     uint32_t t_req;                            /* when it went (the 30 s timeout) */
     uint16_t svc_s, svc_e, val, end, cccd, next;   /* the service, the value, the characteristic's end, its CCCD, the
@@ -200,6 +204,14 @@ static void gc_error(const uint8_t *p)
         BLE_DG(ble_dgc.gc_auth_errs++);
         if (ble_central_gattc_auth(code))
             bgc.wait_sec = 1;                  /* sent again once encrypted (ble_gattc_retry) */
+#if BLE_CEN_PAIR
+        else if (code == GE_ENC && ble_ll_encrypted() && bgc.late_n < BLE_GATTC_LATE_TRIES) {
+            bgc.late_n++;                      /* encrypted already: its side not yet, asked again a moment later */
+            bgc.late_at = ble_hw_time_us() + BLE_GATTC_LATE_US;
+            if (!bgc.late_at)
+                bgc.late_at = 1;
+        }
+#endif
         else
             gc_fail(BLE_CF_AUTH, code);
         return;
@@ -278,7 +290,7 @@ BLE_API int ble_gattc_rx(const uint8_t *p, uint16_t n)
     }
     if (op != 0x01u && (!(op & 1u) || op > 0x19u))
         return 0;                              /* requests and commands: the server's */
-    if (bgc.st == G_IDLE || bgc.st == G_READY || bgc.st == G_FAIL || bgc.wait_sec)
+    if (bgc.st == G_IDLE || bgc.st == G_READY || bgc.st == G_FAIL || bgc.wait_sec || bgc.late_at)
         return 1;                              /* (nothing of ours outstanding) */
     bgc.t_req = 0;
     if (op == 0x01u) {
@@ -325,11 +337,19 @@ BLE_API int ble_gattc_rx(const uint8_t *p, uint16_t n)
     }
 }
 
-/* each connection event: a request waiting for room; the 30 s timeout */
+/* each connection event: a request waiting for room, or to be asked again; the 30 s timeout */
 BLE_API void ble_gattc_event(uint32_t now)
 {
     if (bgc.st == G_IDLE || bgc.st == G_READY || bgc.st == G_FAIL || bgc.wait_sec)
         return;
+    if (bgc.late_at) {
+        if ((int32_t)(now - bgc.late_at) >= 0) {
+            bgc.late_at = 0;
+            BLE_DG(ble_dgc.gc_retries++);
+            gc_send();
+        }
+        return;
+    }
     if (bgc.due) {
         gc_send();
         return;
