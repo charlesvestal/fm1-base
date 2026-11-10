@@ -528,6 +528,7 @@ static void ble_say(const char *s) { snprintf(ble_log[ble_log_n++ % 8], 40, "%s"
 int plat_ble_state(void) { return ble_state; }
 static int ble_link;                            /* "ble link": a computer linked, not listening yet */
 int plat_ble_connected(void) { return ble_conn; }
+static int ble_rssi_set[2];                     /* "ble rssi DBM [LINK]": each link's signal, while it's connected */
 int plat_ble_linked(void) { return ble_conn || ble_link; }
 int plat_ble_stream(const struct plat_ble_stream *s) { (void)s; return 0; }   /* (send by plat_midi_send) */
 void plat_ble_link_info(uint32_t v[7])
@@ -597,6 +598,10 @@ void plat_ble_disconnect(void)
     bdev_state = BLE_DEV_OFF;
 }
 int plat_ble_device(void) { return bdev_state; }
+int plat_ble_rssi(int link)
+{
+    return link == 0 ? (ble_conn || ble_link ? ble_rssi_set[0] : 0) : link == 1 && bdev_state == BLE_DEV_READY ? ble_rssi_set[1] : 0;
+}
 int plat_ble_passkey(void) { return -1; }
 /* the devices one by one (plat.h plat_ble_connect_peer): the stand-in's advertising report (ADV_IND, a random static
  * address, the BLE-MIDI service, its name) to the app every 100 ms of a scan once it is found; connecting to its
@@ -2648,6 +2653,8 @@ int main(int argc, char **argv)
             } else if (!strcmp(a, "link") && ble_state == BLE_READY) {   /* linked, its MIDI not subscribed */
                 ble_link = 1;
                 ble_say("connected");
+            } else if (!strcmp(a, "rssi")) {           /* "ble rssi -45 [1]": a link's signal (plat_ble_rssi) */
+                ble_rssi_set[*c ? atoi(c) != 0 : 0] = atoi(b);
             } else if (!strcmp(a, "disconnect")) {
                 ble_conn = ble_link = 0;
                 ble_say("disconnected: reason 13");

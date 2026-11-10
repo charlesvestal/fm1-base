@@ -218,6 +218,15 @@ static int mc_ready(void) { return 0; }
 static int periph_ready(void) { return con_handle && CCC_GET(con_handle, H_CCC); }
 int ble_midi_connected(int link) { return link ? mc_ready() : periph_ready(); }
 int ble_midi_peripheral_connected(void) { return periph_ready(); }
+extern s8 ble_vendor_get_peer_rssi(u16 conn_handle);   /* (btctrler.a: the controller's reading of the link) */
+int ble_midi_rssi(int link)                  /* plat_ble_rssi's: link 0 the central's, 1 the device's; dBm, 0 none */
+{
+#if BLE_MIDI_CENTRAL
+    if (link)
+        return mc_handle ? ble_vendor_get_peer_rssi(mc_handle) : 0;
+#endif
+    return !link && con_handle ? ble_vendor_get_peer_rssi(con_handle) : 0;
+}
 int ble_midi_peripheral_linked(void) { return con_handle != 0; }   /* listening or not yet */
 static u16 send_mtu = 20;                        /* ATT payload: 23 - 3 until the exchange says more */
 int ble_midi_send_many(int link, const uint32_t *pkts, const uint16_t *ms, int n)

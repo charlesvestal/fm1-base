@@ -420,6 +420,7 @@ static void ble_poll(void)
 static uint8_t ble_off;                           /* switched off by the player (plat_ble_enable) */
 int plat_ble_state(void) { return ble_off ? BLE_OFF : ble_state; }
 int plat_ble_connected(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_connected(); }
+int plat_ble_rssi(int link) { (void)link; return 0; }   /* (not yet: the own controller keeps no link's reading) */
 int plat_ble_linked(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_linked(); }
 void plat_ble_link_info(uint32_t v[7])            /* the computer's link as agreed (0 each: none) */
 {

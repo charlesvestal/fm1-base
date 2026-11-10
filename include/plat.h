@@ -153,6 +153,12 @@ int plat_ble_state(void);
 int plat_ble_connected(void);          /* a central is connected and listening */
 int plat_ble_linked(void);             /* a central is connected, listening or not yet (a Mac whose MIDI driver
                                         * never subscribed holds the link, and the FM-1 stops advertising) */
+int plat_ble_rssi(int link);           /* a connected link's signal strength, dBm (about -20 with the other end
+                                        * touching the FM-1, -90 far off); 0: no link, or not known. link 0: the
+                                        * central's (a computer, a phone: plat_ble_linked), 1: the device's
+                                        * (plat_ble_device). The controller's reading of the link's latest packets, new
+                                        * every 30-40 ms: noisy (a few dB), an app smooths it. Main loop.
+                                        * ble_stack = "own": 0 (not yet) */
 void plat_ble_start(void);
 /* A stream of SysEx frames to the computer's link (ble_stack = "own"; a screen mirrored): the radio reads it in its own
  * interrupts, a connection event at a time, as much as the link takes (full notifications, as many as the stack puts
