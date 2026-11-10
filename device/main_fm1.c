@@ -252,13 +252,13 @@ void fm1_timer5_irq(void)
 #endif
     }
 #ifdef APP_TICK
-    if (sub == 0u) {                                /* 1 kHz: the app's tick (a clock, a sequencer) */
+    if (sub % FM1B_T5_APP_DIV == 0u) {              /* 1 kHz: the app's tick (a clock, a sequencer) */
         in_tick = 1;
         app_tick();
         in_tick = 0;
     }
 #endif
-    if (++sub == 10u)
+    if (++sub == FM1B_T5_WRAP)
         sub = 0;
     {
         uint32_t run = (fm1_ticks() - t5_prev) / FM1_TICKS_PER_US;
@@ -1118,6 +1118,7 @@ static void fm1_fault(const fm1_crash_t *c)
     t0 = fm1_ticks();
     while ((uint32_t)(fm1_ticks() - t0) < 4000u * 1000u * FM1_TICKS_PER_US)
         ;
+    fm1_clock_restore();                            /* (a soft reset keeps the PLL: stock for what starts next) */
     fm1_reboot();
 }
 
@@ -1130,12 +1131,14 @@ void plat_restart(void)
     fm1_delay_ms(30);
     bootguard.pending = 0;                          /* intentional reset: not a failed boot */
     radio_clean_exit();
+    fm1_clock_restore();                            /* (a soft reset keeps the PLL: stock for what starts next) */
     fm1_reboot();
 }
 #endif
 
 static void enter_uboot(const char *why)
 {
+    fm1_clock_restore();                            /* (the chip's update mode at the stock clock) */
     fm1_audio_stop();
     lcd_fill(0, 0, 240, 240, C_BLACK);
     sys_box(0, 110, 240, SYS_S, why, C_WHITE, 1);
@@ -1191,7 +1194,8 @@ static void safe_main(void)
             sys_box(0, 172, 240, SYS_S, "STARTING " APP_NAME "...", C_HI, 1);
             usb_detach();
             fm1_delay_ms(30);
-            fm1_reboot();
+            fm1_clock_restore();                            /* (a soft reset keeps the PLL: stock for what starts next) */
+    fm1_reboot();
         }
         {   /* the log readout works here too: what crashed is the question safe mode raises */
             const uint8_t *p;
@@ -1302,6 +1306,16 @@ static void fm1_main(void)
 #endif
     if (safe_mode)
         safe_main();                                /* never returns */
+#if FM1B_CPU_396
+    {                                               /* fm1.toml cpu_clock = 396: PLL1 24 / 12 * 297 = 594 MHz, the
+                                                     * system clock 2/3 of it (JieLi's top, not for mass production);
+                                                     * after safe mode's choice, so two hung starts start at 360. The
+                                                     * resets put the stock clock back first (felucca-bsp fm1_sys.h) */
+        uint32_t f = irq_save();
+        fm1_clock_pll1(297u);
+        irq_restore(f);
+    }
+#endif
     if (fm1_crash.magic == FM1_CRASH_MAGIC && fm1_crash.count != fm1b_dbg.crash_seen) {
         char b[16];                                 /* a crash since the last boot: say so, a moment */
         fm1b_dbg.crash_seen = fm1_crash.count;
@@ -1444,8 +1458,16 @@ static void fm1_main(void)
         if (usb.ota_req) {
             usb.ota_req = 0;
             app_panic();                            /* silence: the update rewrites the flash */
+            fm1_clock_restore();                    /* (the update loader at the stock clock) */
             if (flash_ok)
                 ota_session();                      /* returns only if nothing was committed */
+#if FM1B_CPU_396
+            {                                       /* (nothing installed: back to cpu_clock's) */
+                uint32_t f = irq_save();
+                fm1_clock_pll1(297u);
+                irq_restore(f);
+            }
+#endif
             app_ui_init();
         }
         if (usb.uboot_req)

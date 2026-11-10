@@ -164,6 +164,10 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   audio_aside = true         each audio half rendered into a buffer of its own and copied into the DMA's half only
                              while that half is still free (FM1B_AUDIO_ASIDE, device/audio_commit.c, Henri David's): a
                              late render leaves the half playing whole instead of tearing it. 2 KiB of RAM; off by default
+  cpu_clock = 396            the CPU at 396 MHz instead of the stock 360 (FM1B_CPU_396: PLL1's multiplier 297, felucca-bsp
+                             fm1_clock_pll1; set after safe mode's choice, so two hung starts fall back to 360; fm1-base
+                             puts the stock clock back before its resets and updates). JieLi's top, not for mass
+                             production: try it on several FM-1s before a release. Off by default (360)
   audio_ahead = true         audio_aside a block ahead (FM1B_AUDIO_AHEAD): the block rendered last time copied in first,
                              then the next rendered, so a render may run up to two halves long without a dropout (a
                              spike at a chord's start); two late in a row drop a half as before. One block (5.8 ms) more
@@ -836,6 +840,11 @@ def build_app():
         flags.append("-DFM1B_AUDIO_ASIDE=1")
     if CONF.get("audio_ahead"):                  # and a block ahead
         flags.append("-DFM1B_AUDIO_AHEAD=1")
+    clk = CONF.get("cpu_clock", 360)
+    if clk not in (360, 396):
+        raise SystemExit(f"fm1.toml: cpu_clock is 360 or 396, not {clk!r}")
+    if clk == 396:
+        flags.append("-DFM1B_CPU_396=1")
     if CPU2:
         flags += ["-DFM1_CPU1=1", f"-DFM1_CPU1_FALLBACK={int(bool(CONF.get('cpu2_fallback')))}"]
         flags += cpu2_stack_flags()
