@@ -19,6 +19,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   id_prefix = "FM-1_0"       package identity: dev builds are the prefix + "00", releases the prefix + XXYYZZ
   usb_manufacturer = "..."   the USB names (felucca-bsp FELUCCA_USB_MANUFACTURER / FELUCCA_USB_PRODUCT)
   usb_product = "..."
+  usb_serial = true          a USB serial number from the FM-1's chip ID (felucca-bsp FELUCCA_USB_SERIAL_FN): a computer then tells
+                             FM-1s apart whichever port they are in (without one, macOS's MIDI setup names a device by its port)
   o2 = ["dsp/engine.c"]      separate units compiled at -O2 (the app's DSP), relative to APP_DIR (globs too); each with
                              its own directory on the include path
   unity_opt = "z"            the unity build (the platform, the app but its o2 units) at -Oz instead of -Os: smaller,
@@ -825,6 +827,8 @@ def build_app():
     for key, macro in (("usb_manufacturer", "FELUCCA_USB_MANUFACTURER"), ("usb_product", "FELUCCA_USB_PRODUCT")):
         if CONF.get(key):
             flags.append(f'-D{macro}="{CONF[key]}"')
+    if CONF.get("usb_serial"):                    # a serial number from the chip's ID (device/plat_fm1.c)
+        flags.append("-DFELUCCA_USB_SERIAL_FN=fm1_usb_serial")
     if VERSION:
         flags.append(f'-DAPP_VERSION="{VERSION}"')
     flags.append(f"-DFM1B_BUILD={build_id():#010x}u")   # (the crash history's records carry it: device/crashlog.c)
