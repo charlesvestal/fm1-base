@@ -1828,7 +1828,7 @@ def main():
     touch = touch_app()
     input_hz()                                     # (refuses another rate early, on every build)
     words = firmware_json.words_published(APP / CONF.get("words", "words.tsv"))
-    have = firmware_json.parts(CONF, BLE, OWN, WIFI, CPU2, touch, words)
+    have = firmware_json.parts(CONF, BLE, OWN, WIFI or WIFI_OWN, CPU2, touch, words)   # WiFi: either stack
     fw_json = firmware_json.dumps(firmware_json.make(CONF, NAME, firmware_json.display_name(CONF, APP), have,
                                                      app_dir=APP))
     for f in firmware_json.targets(APP, no_ble=bool(CONF.get("ble")) and not BLE):
