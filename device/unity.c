@@ -51,6 +51,37 @@
 #include "fm1_sys.h"
 #include "fm1_irq.h"
 #include "fm1_guard.h"
+/* The input scan's rate (fm1.toml input_hz: FM1B_INPUT_HZ, felucca-bsp's FM1_INPUT_HZ: keys, knobs and LEDs, one column
+ * a tick) and TIMER5's (FM1B_T5_HZ), which also polls USB and runs the app's tick. TIMER5 never runs slower than
+ * 2 kHz, so USB is polled at 2 kHz or more at every input rate (MIDI as before, USB audio's one packet per 1 ms frame
+ * with a poll to spare); with usb_audio_channels it stays at 10 kHz (the stream serviced every 0.1 ms). The scan then
+ * runs on 1 tick in FM1B_T5_SCAN_DIV (input_hz 1000: every other 2 kHz tick).
+ *   input_hz  TIMER5  scan       USB poll        app tick
+ *   10000     10 kHz  each tick  each 5th: 2 kHz each 10th
+ *    5000      5 kHz  each tick  each 2nd: 2.5   each 5th
+ *    2000      2 kHz  each tick  each: 2 kHz     each 2nd
+ *    1000      2 kHz  each 2nd   each: 2 kHz     each 2nd
+ *   (usb_audio_channels: 10 kHz, the scan each 2nd / 5th / 10th, the rest as at 10000) */
+#ifndef FM1B_INPUT_HZ
+#define FM1B_INPUT_HZ 10000
+#endif
+#if FM1B_INPUT_HZ != 10000 && FM1B_INPUT_HZ != 5000 && FM1B_INPUT_HZ != 2000 && FM1B_INPUT_HZ != 1000
+#error "FM1B_INPUT_HZ (fm1.toml input_hz): 10000, 5000, 2000 or 1000"
+#endif
+#if defined(FM1B_UAC_CH) && FM1B_UAC_CH > 2
+#define FM1B_T5_HZ 10000          /* (usb_audio_channels: see main_fm1.c) */
+#elif FM1B_INPUT_HZ < 2000
+#define FM1B_T5_HZ 2000
+#else
+#define FM1B_T5_HZ FM1B_INPUT_HZ
+#endif
+#define FM1_INPUT_HZ FM1B_INPUT_HZ
+#define FM1_T5_PERIOD (6000000u / FM1B_T5_HZ)   /* (felucca-bsp's fm1_timer.h: 600 at 10 kHz) */
+#define FM1B_T5_SCAN_DIV (FM1B_T5_HZ / FM1B_INPUT_HZ)
+#define FM1B_T5_USB_DIV (FM1B_T5_HZ / 2000)    /* (5000: 2, 2.5 kHz: never slower than 2 kHz) */
+#define FM1B_T5_APP_DIV (FM1B_T5_HZ / 1000)
+#define FM1B_T5_WRAP (FM1B_T5_HZ == 2000 ? 2 : 10)   /* a multiple of the three */
+#define FM1B_T5_LATE_US (3000000u / FM1B_T5_HZ)       /* a gap of over 3 ticks: the tick held up (300 us at 10 kHz) */
 #include "fm1_input.h"
 #include "fm1_timer.h"
 #include "fm1_audio.h"

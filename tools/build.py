@@ -89,8 +89,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              environment over it
   midi_stamp = true          MIDI in from USB and the TRS jack stamped where it lands (FM1B_MIDI_STAMP: felucca-bsp's
                              FELUCCA_MIDI_STAMP, usb_midi_peek and midi_uart.c's uart_midi_peek from TIMER5's 10 kHz
-                             tick, the render's ticks too): plat_midi_in_t24 within 0.05 ms of the arrival instead of
-                             when the app read it; off by default; FM1B_MIDI_STAMP=0 / 1 in the environment over it
+                             tick, the render's ticks too): plat_midi_in_t24 within 0.05 ms of the arrival (half a
+                             TIMER5 tick: input_hz) instead of when the app read it; off by default; FM1B_MIDI_STAMP=0 /
+                             1 in the environment over it
   crash_history = true       the crash records kept in flash across power-offs (FM1B_CRASHLOG: device/crashlog.c, the
                              update's staging area's 0xE2000..0xE3FFF, which an install erases; read with F0 7D 4C 48 F7,
                              tools/fm1_remote.py crashes), and each stack's room at a crash (stacks.c: plat_stack_left;
@@ -172,6 +173,31 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              then the next rendered, so a render may run up to two halves long without a dropout (a
                              spike at a chord's start); two late in a row drop a half as before. One block (5.8 ms) more
                              latency; implies audio_aside. Off by default
+  input_hz = 5000            the input scan's rate: keys, buttons, knobs and LEDs, one of the 11 columns a tick
+                             (FM1B_INPUT_HZ: device/unity.c, felucca-bsp's boards/fm1/fm1_input.h FM1_INPUT_HZ, which
+                             derives every count of ticks or frames from it: times stay times). 10000 (the default, as
+                             before), 5000, 2000 or 1000. The scan's GPIO work is ~7.5 % of core 0 at 10000, and goes
+                             with the rate; what it costs (a frame = 11 ticks; core 0 freed estimated, not measured:
+                             the scan's share, and ~1 us for each timer interrupt no longer taken):
+                               rate   frame   key press      release  knob: every step  LEDs (refresh; flicker)    freed
+                               10000  1.1 ms  1.1-2.2 ms     8.8 ms   to ~225 clicks/s  909 Hz                     -
+                                5000  2.2 ms  2.2-4.4 ms     8.8 ms   to ~110 clicks/s  455 Hz; none               ~4 %
+                                2000  5.5 ms  0-5.5 ms (1)   11 ms    to ~45 clicks/s   182 Hz; breath, sweep's    ~6.5 %
+                                                                                        tail, mid level (DIM LO)
+                                1000  11 ms   0-11 ms (1)    22 ms    to ~23 clicks/s   91 Hz; breath, sweep's     ~7 %
+                                                                                        tail, mid level, trails
+                             (1): one closed sample presses (two at 10000 and 5000: a stray one plays nothing). A
+                             knob turned faster than that loses steps (a flick, once moving: about twice it); faster
+                             still, from 3/4 of a click a frame, they can count backwards (felucca-bsp
+                             tests/input_rate_test.c measures each rate). The glow is dimmer below
+                             10000 (~1/50 of lit at 5000, ~1/250 at 1000: its pulse stops where the tick would wait);
+                             the mid level brighter (fm1_input.h). USB is never polled slower: TIMER5 stays at 2 kHz
+                             or more (1000: the scan on every other tick of 2 kHz), so USB MIDI and USB audio work as
+                             at 10000; with usb_audio_channels TIMER5 stays at 10 kHz (the stream serviced every
+                             0.1 ms) and only the scan's work is freed. midi_stamp's stamps are within half a TIMER5
+                             tick (0.1 ms at 5000, 0.25 at 2000 and 1000). Velocity and pressure (lib/touch) read each
+                             key every two frames (4.4 ms at 5000 instead of 2.2): a note's velocity comes that much
+                             later, and the readings were measured at 10000 only. Below 5000 the build warns
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
 app.h); the build prints what it has.
   boot_pack = true           .ram_text and .data stored LZMA-packed (tools/boot_pack.py, Melodee's; device/boot_lzma.h): the
@@ -850,6 +876,10 @@ def build_app():
               "         Try it on several FM-1s before a release, and say so in the release notes.", file=sys.stderr)
         if RELEASE:
             print(f"WARNING: release {RELEASE} is built with cpu_clock = 396.", file=sys.stderr)
+    hz = input_hz()
+    if hz != 10000:
+        flags.append(f"-DFM1B_INPUT_HZ={hz}")    # the input scan's rate (device/unity.c, fm1_input.h FM1_INPUT_HZ)
+        input_hz_warn(hz)
     if CPU2:
         flags += ["-DFM1_CPU1=1", f"-DFM1_CPU1_FALLBACK={int(bool(CONF.get('cpu2_fallback')))}"]
         flags += cpu2_stack_flags()
@@ -1313,6 +1343,40 @@ def opt_flags():
     return flags
 
 
+INPUT_HZ = (10000, 5000, 2000, 1000)
+
+
+def input_hz():
+    """fm1.toml input_hz: the input scan's rate, 10000 (the default), 5000, 2000 or 1000 (see the top)"""
+    hz = CONF.get("input_hz", 10000)
+    if isinstance(hz, bool) or not isinstance(hz, int) or hz not in INPUT_HZ:
+        raise SystemExit(f"fm1.toml input_hz {hz!r}: 10000, 5000, 2000 or 1000 (a whole number of the input's ticks "
+                         "in the app's 1 ms tick)")
+    return hz
+
+
+def input_hz_warn(hz):
+    """what a slower input scan costs, said by every build below 5000 (and a build with velocity below 10000)"""
+    frame = 11 * 1000 / hz                        # ms
+    if hz < 5000:
+        print(f"WARNING: input_hz = {hz}: the keys, knobs and LEDs scanned every {frame:g} ms (1.1 at 10000).\n"
+              f"         A key press takes up to {frame:g} ms to count, a release {max(round(8.8 / frame), 2) * frame:g} ms.\n"
+              f"         A knob turned faster than ~{hz / 44:.0f} clicks a second loses steps (~225 at 10000).\n"
+              f"         The LEDs refresh at {1000 / frame:.0f} Hz: the breath flickers, its low end and the power-on "
+              "sweep's tail blink,\n         " + ("the mid level flickers, and lit LEDs leave a trail when the eye moves."
+                                               if hz < 2000 else "the mid level flickers a little with DIM LO (61 Hz).")
+              + " The glow is dimmer.", file=sys.stderr)
+    if touch_app() and hz < 10000:
+        print(f"WARNING: input_hz = {hz} with velocity and pressure (APP_TOUCH): each key read every {2 * frame:g} ms "
+              "(2.2 at 10000),\n         so a note's velocity comes later, and lib/touch's readings were measured "
+              "at 10000 only.", file=sys.stderr)
+
+
+def touch_app():
+    """the app has velocity and pressure from the keys (APP_TOUCH in its app.h)"""
+    return any(re.search(r"^#define APP_TOUCH\b", f.read_text(errors="ignore"), re.M) for f in APP.glob("*.h"))
+
+
 def usb_audio_channels():
     """fm1.toml usb_audio_channels: the USB audio input's channels, 2 (the default: the master) or 4, 6, 8, 10 (the app's own
     on 3..N: plat_usb_ch; felucca-bsp FELUCCA_UAC_CH, 44.1 kHz only)"""
@@ -1648,7 +1712,8 @@ def main():
         name = f"{STEM}-{a.release}.fwsc"
     # a release package needs firmware.json's keys; the simulator, the emulator, the .rfm1 and dev builds only warn
     firmware_json.require(CONF, bool(a.release) and not (a.host or a.web or a.rfm1), APP / "fm1.toml", APP)
-    touch = any(re.search(r"^#define APP_TOUCH\b", f.read_text(errors="ignore"), re.M) for f in APP.glob("*.h"))
+    touch = touch_app()
+    input_hz()                                     # (refuses another rate early, on every build)
     words = firmware_json.words_published(APP / CONF.get("words", "words.tsv"))
     have = firmware_json.parts(CONF, BLE, OWN, WIFI, CPU2, touch, words)
     fw_json = firmware_json.dumps(firmware_json.make(CONF, NAME, firmware_json.display_name(CONF, APP), have,

@@ -191,8 +191,8 @@ static void audio_silence(void)                     /* IRQs off (flash erase): t
 
 /* ------------------------------------------------------------ timer --- */
 static uint8_t usb_due;
-static uint32_t t5_gap_max, t5_late, t5_run_max;                /* the longest gap between ticks (us), and gaps over 300 us:
-                                                     * the key and light scan held up (the log reads and clears) */
+static uint32_t t5_gap_max, t5_late, t5_run_max;                /* the longest gap between ticks (us), and gaps over 3 ticks
+                                                     * (300 us at 10 kHz): the key and light scan held up (the log reads and clears) */
 void fm1_timer5_irq(void)
 {
     static uint32_t sub, t5_prev;
@@ -202,11 +202,12 @@ void fm1_timer5_irq(void)
         if (t5_prev) {
             if (gap > t5_gap_max)
                 t5_gap_max = gap;
-            if (gap > 300u)
+            if (gap > FM1B_T5_LATE_US)
                 t5_late++;
         }
 #if FM1B_MIDI_STAMP
-        /* what came in since the last tick came in, on the average, half way since: within 0.05 ms at 10 kHz (a tick
+        /* what came in since the last tick came in, on the average, half way since: within 0.05 ms at 10 kHz (half a
+         * tick: 0.1 ms at 5 kHz, 0.25 at 2; a tick
          * held up by a lock: half the gap). Every tick, the render's too: the poll below waits for the render, the
          * stamps do not. One SIE read and a look at the jack's ring */
         {
@@ -222,11 +223,14 @@ void fm1_timer5_irq(void)
     fm1b_dbg.timer_irqs++;
     if (fm1b_dbg.in_audio)
         fm1b_dbg.nested++;
-    fm1_input_tick();
-    /* 2 kHz: all USB SIE traffic lives here. This ISR now nests into the audio render (so the key
+#if FM1B_T5_SCAN_DIV > 1
+    if (sub % FM1B_T5_SCAN_DIV == FM1B_T5_SCAN_DIV - 1u)   /* (a slower input_hz: not on the app's tick) */
+#endif
+        fm1_input_tick();
+    /* 2 kHz (2.5 at input_hz 5000): all USB SIE traffic lives here. This ISR now nests into the audio render (so the key
      * matrix keeps its rhythm, below); USB shares the MIDI queues with the audio ISR, so a poll that
      * falls inside the render waits for the first tick outside it, as it did before the nesting. */
-    if (sub % 5u == 0u) {
+    if (sub % FM1B_T5_USB_DIV == 0u) {
         usb_due = 1;
 #if FELUCCA_UAC && FELUCCA_UAC_CH == 2
         /* the USB audio stream cannot wait for the render (one packet per 1 ms frame, a render takes
@@ -237,8 +241,8 @@ void fm1_timer5_irq(void)
 #endif
     }
 #if FELUCCA_UAC && FELUCCA_UAC_CH > 2
-    /* usb_audio_channels: every tick (0.1 ms), nested in the render or not (outside it, but for the ticks usb_poll
-     * runs: it services the stream itself). A packet of 10 channels takes ~0.6 ms on the bus: polled at 2 kHz, the next
+    /* usb_audio_channels: every tick (0.1 ms: TIMER5 stays at 10 kHz whatever input_hz), nested in the render or not
+     * (outside it, but for the ticks usb_poll runs: it services the stream itself). A packet of 10 channels takes ~0.6 ms on the bus: polled at 2 kHz, the next
      * was often queued after the next frame's IN, which then found none (on an FM-1: 38,400 frames/s instead of
      * 44,100, the ring overflowing, halves dropped: crackles and a lower pitch). The stall count: FELUCCA_UAC_STALL_POLLS */
     if (fm1b_dbg.in_audio || !usb_due)
@@ -252,13 +256,17 @@ void fm1_timer5_irq(void)
 #endif
     }
 #ifdef APP_TICK
-    if (sub % 10u == 0u) {                /* 1 kHz: the app's tick (a clock, a sequencer) */
+#if FM1B_T5_APP_DIV == FM1B_T5_WRAP
+    if (sub == 0u) {                                /* 1 kHz: the app's tick (a clock, a sequencer) */
+#else
+    if (sub % FM1B_T5_APP_DIV == 0u) {
+#endif
         in_tick = 1;
         app_tick();
         in_tick = 0;
     }
 #endif
-    if (++sub == 10u)
+    if (++sub == FM1B_T5_WRAP)
         sub = 0;
     {
         uint32_t run = (fm1_ticks() - t5_prev) / FM1_TICKS_PER_US;

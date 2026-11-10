@@ -25,6 +25,14 @@ run() {
     fi
 }
 run encoder sh -c "$CC -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -o $OUT/encoder_test tests/encoder_test.c && $OUT/encoder_test"
+# the input scan at each fm1.toml input_hz (felucca-bsp's fm1_input.h FM1_INPUT_HZ: tests/input_rate_test.c): presses,
+# releases and bounces, a stray sample, repeats, the encoders slow and fast, the LEDs' timing; 10000 as before
+for hz in 10000 5000 2000 1000; do
+    [ -f bsp/tests/input_rate_test.c ] && run input-$hz sh -c "$CC -std=c11 -O1 -Wall -Wextra -Werror -Wno-unused-function \
+        -Ibsp/chip -Ibsp/boards/fm1 -DFM1_INPUT_HZ=$hz -o $OUT/input_rate_test_$hz bsp/tests/input_rate_test.c && \
+        $OUT/input_rate_test_$hz && $CC -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -DFM1_INPUT_HZ=$hz \
+        -o $OUT/encoder_test_$hz tests/encoder_test.c && $OUT/encoder_test_$hz"
+done
 run trs sh -c "$CC -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -Idevice -o $OUT/trs_test tests/trs_test.c && $OUT/trs_test"
 # USB audio around a render block (device/uac_mix.h) on felucca-bsp's usb.c: the recording without the computer's audio,
 # the computer's at plat_usb_play_gain and MASTER, muted still read; and without usb_audio_out
