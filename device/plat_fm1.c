@@ -450,10 +450,30 @@ uint32_t plat_analog_mask(void)
     return m;
 }
 
-#if FM1B_WIFI || FM1B_BLE
+#if FM1B_WIFI || FM1B_BLE || defined(FELUCCA_USB_SERIAL_FN)
 const uint8_t *plat_chip_uid(void) { return flash_ok ? flash_uid : 0; }
 #else
 const uint8_t *plat_chip_uid(void) { return 0; }
+#endif
+#ifdef FELUCCA_USB_SERIAL_FN
+/* the USB serial number (fm1.toml usb_serial, felucca-bsp FELUCCA_USB_SERIAL_FN): plat_chip_uid's 16 bytes folded into 12
+ * (the last 4 over the first 4), 24 hex digits; "" with no ID (the bsp then says "0"). The same on every firmware with it,
+ * so a computer tells FM-1s apart whichever port they are in (macOS's MIDI setup goes by the port without one) */
+const char *FELUCCA_USB_SERIAL_FN(void)
+{
+    static char sn[25];
+    const uint8_t *u = plat_chip_uid();
+    uint32_t i;
+    if (!u)
+        return "";
+    for (i = 0; i < 12u; i++) {
+        uint8_t b = (uint8_t)(u[i] ^ (i < 4u ? u[12u + i] : 0u));
+        sn[2u * i] = "0123456789ABCDEF"[b >> 4];
+        sn[2u * i + 1u] = "0123456789ABCDEF"[b & 15u];
+    }
+    sn[24] = 0;
+    return sn;
+}
 #endif
 int plat_store_load(uint32_t obj, void *dst, uint32_t max) { return flash_ok ? st_load(obj, dst, max) : -1; }
 int plat_store_head(uint32_t obj, void *dst, uint32_t n) { return flash_ok ? st_load_head(obj, dst, n) : -1; }
