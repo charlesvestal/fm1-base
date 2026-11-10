@@ -361,6 +361,15 @@ int main(void)
             check(jn_count(&u[i].n, (uint32_t)(t_now / 1000)) == n - 1u, "  the unit counts the others");
     }
 
+    /* two units 40 ppm apart (the crystals' spread), nothing lost: the session clock follows the drift between
+     * measurements; Link's own method (the median, every 30 s) ramps 1.2 ms over 30 s and steps back */
+    reset();
+    unit_on(0, 1, -20, 1000, 9000);
+    unit_on(1, 1, 20, 1000, 9000);
+    t = ms_until_one(2, 30000);
+    run_ms(90000);                                /* (the drift learned: 8 measurements over 20 s or more) */
+    phase("2 units 40 ppm apart, settled", 2, 240, 500);
+
     /* a third unit comes late, one leaves, it plays on */
     reset();
     unit_on(0, 1, 5, 1000, 9000);

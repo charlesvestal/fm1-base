@@ -20,7 +20,22 @@
 #define LK_PING_US 50000                   /* Measurement.hpp resetTimer */
 #define LK_PING_TRIES 5u                   /* kNumberMeasurements */
 #define LK_PTS_DONE 100u                   /* kNumberDataPoints: done above it */
-#define LK_REMEASURE_US 30000000           /* Sessions.hpp scheduleRemeasurement */
+#define LK_REMEASURE_US 10000000           /* Sessions.hpp scheduleRemeasurement is 30 s: oftener, with the drift learned */
+#define LK_FAST_DIV 2u                     /* the median of the fastest half of the points (round trip) .. */
+#define LK_FAST_MIN 8u                     /* .. and at least these */
+#define LK_DRIFT_MAX_Q30 214748            /* 200 ppm: any more is a measurement gone wrong */
+#define LK_HIST 8u                         /* the drift: the slope through the last 8 measurements (~80 s) .. */
+#define LK_HIST_SPAN_US 20000000           /* .. once they span 20 s. (A filter on single steps learned -20 ppm from
+                                            * a restart's first noisy measurements and took minutes to unlearn it) */
+#define LK_PHASE_SHIFT 3u                  /* settled, a measurement moves the clock 1/8 of the way (a filter, as NTP's):
+                                            * measurements scatter by +-250 us over Wi-Fi and +-300 us over the stick's
+                                            * USB (bench 2026-11-10); taken whole, each was a step. The first ones move
+                                            * it further (whole, 1/2, 1/4); the drift is the slope, so this can be small */
+#define LK_SNAP_US 2000                    /* two measurements in a row this far off: taken whole, the drift forgotten
+                                            * (one alone is set aside: a fresh start's first was 2.4 ms off, bench) */
+#define LK_RECHECK_N 6u                    /* every 6th measurement (a minute) re-checks the member measured longest ago */
+#define LK_FAR_RETRY_US 2000000            /* after a measurement set aside, the next comes in 2 s (not 10). (Measuring a
+                                            * new clock every 2 s was tried: drift from 2 s spans is noise, worse) */
 #define LK_SESSION_EPS 500000              /* Sessions.hpp SESSION_EPS */
 
 enum { D_ALIVE = 1, D_RESPONSE = 2, D_BYEBYE = 3 };
@@ -132,10 +147,109 @@ static uint32_t r32(const uint8_t *p) { return (uint32_t)p[0] << 24 | (uint32_t)
 static int64_t r64(const uint8_t *p) { return (int64_t)((uint64_t)r32(p) << 32 | r32(p + 4)); }
 
 /* ---- ghost time */
-static int64_t ghost(const struct lk_node *k, int64_t host) { return host + k->icpt; }
+static int64_t rdiv(int64_t a, uint32_t s);
+static int64_t sdiv64(int64_t a, int64_t b);
+
+/* Ghost time with the drift between the session's clock and ours (crystals differ by tens of ppm): measured
+ * intercepts alone ramp away between measurements and step back at each (40 ppm: 1.2 ms over Link's 30 s) */
+static int64_t drift_us(const struct lk_node *k, int64_t host) { return rdiv((host - k->icpt_t) * k->drift_q30, 30u); }
+static int64_t ghost(const struct lk_node *k, int64_t host) { return host + k->icpt + drift_us(k, host); }
+static int64_t eff_icpt(const struct lk_node *k, int64_t host) { return k->icpt + drift_us(k, host); }
 
 int64_t lk_beat_at(const struct lk_node *k, int64_t t) { return tl_beats(&k->tl, ghost(k, t)); }
-int64_t lk_time_at(const struct lk_node *k, int64_t ub) { return tl_time(&k->tl, ub) - k->icpt; }
+int32_t lk_drift_ppb(const struct lk_node *k) { return (int32_t)rdiv(k->drift_q30 * 1000000000, 30u); }
+int64_t lk_time_at(const struct lk_node *k, int64_t ub)
+{
+    int64_t h = tl_time(&k->tl, ub) - k->icpt;    /* the inverse to first order: the drift is a few ppm */
+    return h - drift_us(k, h);
+}
+
+/* the session's clock is new to us (a join, a new session): forget the drift */
+static void clock_reset(struct lk_node *k, int64_t icpt, int64_t now)
+{
+    k->icpt = icpt;
+    k->icpt_t = now;
+    k->drift_q30 = 0;
+    k->prev_t = 0;
+    k->settled = 0;
+    k->far = 0;
+    k->hist_n = 0;
+    k->hist_at = 0;
+}
+
+/* the least-squares slope through the history, Q30 (ghost - host us a host us); 0 until it spans LK_HIST_SPAN_US */
+static int64_t hist_slope(const struct lk_node *k)
+{
+    int64_t t0 = k->hist_t[0], tmin = INT64_MAX, tmax = INT64_MIN, st = 0, si = 0, stt = 0, sti = 0, n = k->hist_n, den;
+    uint32_t i;
+    for (i = 0; i < k->hist_n; i++) {
+        int64_t t = (k->hist_t[i] - t0) >> 10, v = k->hist_icpt[i] - k->hist_icpt[0];   /* (t in ~ms: no overflow) */
+        tmin = k->hist_t[i] < tmin ? k->hist_t[i] : tmin;
+        tmax = k->hist_t[i] > tmax ? k->hist_t[i] : tmax;
+        st += t;
+        si += v;
+        stt += t * t;
+        sti += t * v;
+    }
+    if (n < 3 || tmax - tmin < LK_HIST_SPAN_US)
+        return 0;
+    den = n * stt - st * st;
+    if (den <= 0)
+        return 0;
+    return sdiv64((n * sti - st * si) * ((int64_t)1 << 20), den);  /* us per 1024 us, Q30: (x 2^30 / 2^10) */
+}
+
+/* a / b, b > 0, by shift and subtract (the FM-1's toolchain has no 64-bit division) */
+static int64_t sdiv64(int64_t a, int64_t b)
+{
+    uint64_t n = (uint64_t)(a < 0 ? -a : a), d = (uint64_t)b, q = 0, r = 0;
+    int i;
+    for (i = 63; i >= 0; i--) {
+        r = r << 1 | (n >> i & 1u);
+        if (r >= d) {
+            r -= d;
+            q |= (uint64_t)1 << i;
+        }
+    }
+    return a < 0 ? -(int64_t)q : (int64_t)q;
+}
+
+/* our own session measured: its intercept is icpt at host t_mid. A filter: the clock goes part of the way to it; the
+ * drift is the slope through the last measurements. The first measurement, or two far off in a row, are taken whole */
+static void clock_measured(struct lk_node *k, int64_t icpt, int64_t t_mid)
+{
+    int64_t predicted = eff_icpt(k, t_mid), err = icpt - predicted;
+    uint32_t ps = k->settled < LK_PHASE_SHIFT ? k->settled : LK_PHASE_SHIFT;
+    k->last_err = err;
+    if (k->prev_t && (err > LK_SNAP_US || err < -LK_SNAP_US) && !k->far) {
+        k->far = 1;                                /* set aside: noise, unless the next one agrees */
+        return;
+    }
+    k->far = 0;
+    if (!k->prev_t || err > LK_SNAP_US || err < -LK_SNAP_US) {
+        k->drift_q30 = 0;
+        k->settled = 0;
+        k->icpt = icpt;
+    } else {
+        if (k->settled < 255u)
+            k->settled++;
+        k->icpt = ps ? predicted + rdiv(err, ps) : icpt;
+    }
+    k->prev_icpt = icpt;
+    k->prev_t = t_mid;
+    k->icpt_t = t_mid;
+    k->hist_icpt[k->hist_at] = icpt;               /* the raw measurement: the slope of what was measured */
+    k->hist_t[k->hist_at] = t_mid;
+    k->hist_at = (uint8_t)((k->hist_at + 1u) % LK_HIST);
+    if (k->hist_n < LK_HIST)
+        k->hist_n++;
+    {
+        int64_t d = hist_slope(k);
+        if (d > LK_DRIFT_MAX_Q30 || d < -LK_DRIFT_MAX_Q30)
+            d = 0;
+        k->drift_q30 = d;
+    }
+}
 int32_t lk_mpb(const struct lk_node *k) { return (int32_t)k->tl.mpb; }
 int lk_playing(const struct lk_node *k) { return k->ss.play; }
 int64_t lk_play_beat(const struct lk_node *k) { return k->ss.ub; }
@@ -214,18 +328,57 @@ static void send_ping(struct lk_node *k, uint32_t ip, uint16_t port, int64_t ht,
  * the session's first peer, which on a LAN is as good as any; on the air (MODE JANK) a unit at the edge of range is
  * heard now and then (one ALIVE in several lands) while its pings and pongs do not, so the one heard last is the one
  * most likely to answer. Any member answers for the session's ghost time, so the choice changes nothing on the wire. */
+/* The member to measure a session with. Link (and fm1-base until 2026-11) took the one heard last; here the one with
+ * the fastest round trip, whose measurement is the cleanest: a computer on the stick's USB (~0.3 ms) rather than an FM-1
+ * over the air (ms). A member never measured is measured once first, and every LK_RECHECK_N-th measurement re-checks the
+ * one measured longest ago (round trips change) */
 static struct lk_peer *session_peer(struct lk_node *k, const uint8_t *sess)
 {
-    struct lk_peer *f = 0;
+    struct lk_peer *fast = 0, *fresh = 0, *stale = 0;
     uint32_t i;
     for (i = 0; i < LK_PEERS; i++) {
         struct lk_peer *p = &k->peer[i];
         if (!p->used || !id_eq(p->sess, sess) || !p->mip || p->noping)
             continue;
-        if (!f || p->dead > f->dead)
-            f = p;
+        if (!p->rtt) {
+            if (!fresh || p->dead > fresh->dead)
+                fresh = p;
+            continue;
+        }
+        if (!fast || p->rtt < fast->rtt)
+            fast = p;
+        if (!stale || p->measured_at < stale->measured_at)
+            stale = p;
     }
-    return f;
+    if (fresh)
+        return fresh;
+    if (stale && k->measures % LK_RECHECK_N == LK_RECHECK_N - 1u)
+        return stale;
+    return fast;
+}
+
+/* the member just measured: its fastest round trip, for the next choice of partner */
+static void meas_note_rtt(struct lk_node *k, uint16_t rtt, int64_t now)
+{
+    uint32_t i;
+    for (i = 0; i < LK_PEERS; i++)
+        if (k->peer[i].used && k->peer[i].mip == k->meas.ip && k->peer[i].mport == k->meas.port) {
+            k->peer[i].rtt = rtt ? rtt : 1u;
+            k->peer[i].measured_at = now;
+        }
+    k->last_rtt = rtt;
+}
+
+/* a member of our session answers more than twice as fast as rtt: that measurement is a re-check, not the clock's */
+static int slower_than_best(const struct lk_node *k, uint16_t rtt)
+{
+    uint32_t i;
+    for (i = 0; i < LK_PEERS; i++) {
+        const struct lk_peer *p = &k->peer[i];
+        if (p->used && id_eq(p->sess, k->sess) && p->rtt && !p->noping && (uint32_t)p->rtt * 2u < rtt)
+            return 1;
+    }
+    return 0;
 }
 
 static void meas_failed_with(struct lk_node *k)   /* the member just measured with answers no more: the others first */
@@ -258,6 +411,7 @@ static int meas_start(struct lk_node *k, const uint8_t *sess, int64_t now)
     k->meas.port = p->mport;
     k->meas.retries = 0;
     k->meas.n = 0;
+    k->meas.t0 = now;
     k->meas.due = now + LK_PING_US;
     send_ping(k, p->mip, p->mport, now, 0, 0);
     return 1;
@@ -287,10 +441,10 @@ static void join(struct lk_node *k, struct lk_other *o, int64_t now)   /* Contro
     cur.measured = 1;
     id_cp(cur.id, k->sess);
     cur.tl = k->tl;
-    cur.icpt = k->icpt;
+    cur.icpt = eff_icpt(k, now);
     id_cp(k->sess, o->id);
     k->tl = o->tl;
-    k->icpt = o->icpt;
+    clock_reset(k, o->icpt, now);
     k->ss.play = 0;                                /* resetSessionStartStopState */
     k->ss.ub = 0;
     k->ss.ts = 0;
@@ -307,9 +461,13 @@ static void meas_done(struct lk_node *k, int ok, int64_t icpt, int64_t now)
     if (!ok)
         meas_failed_with(k);
     if (id_eq(k->meas.sess, k->sess)) {
-        if (ok && icpt != k->icpt) {
-            k->icpt = icpt;
-            changed(k, now);
+        if (ok) {
+            int64_t before = ghost(k, now);
+            k->measures++;
+            if (!slower_than_best(k, k->last_rtt))     /* a re-check of a slower member updates its round trip only */
+                clock_measured(k, icpt, k->meas.t0 + rdiv(now - k->meas.t0, 1u));
+            if (ghost(k, now) != before)
+                changed(k, now);
         }
         if (!ok && session_peer(k, k->sess)) {
             k->remeasure = now;                    /* another member of our session, right away */
@@ -317,7 +475,7 @@ static void meas_done(struct lk_node *k, int ok, int64_t icpt, int64_t now)
         }
         if (!ok)
             session_retry_all(k, k->sess);
-        k->remeasure = now + LK_REMEASURE_US;
+        k->remeasure = now + (k->far ? LK_FAR_RETRY_US : LK_REMEASURE_US);
         return;
     }
     o = other_find(k, k->meas.sess);
@@ -335,7 +493,7 @@ static void meas_done(struct lk_node *k, int ok, int64_t icpt, int64_t now)
     o->icpt = icpt;
     o->measured = 1;
     {
-        int64_t diff = icpt - k->icpt;             /* new ghost - current ghost, now */
+        int64_t diff = icpt - eff_icpt(k, now);    /* new ghost - current ghost, now */
         int64_t ad = diff < 0 ? -diff : diff;
         if (diff > LK_SESSION_EPS || (ad < LK_SESSION_EPS && id_lt(o->id, k->sess)))
             join(k, o, now);
@@ -346,6 +504,27 @@ static int64_t rdiv(int64_t a, uint32_t s)         /* round(a / 2^s) half away f
 {
     int64_t h = (int64_t)1 << (s - 1u);
     return a < 0 ? -((-a + h) >> s) : (a + h) >> s;
+}
+
+/* Link takes the median of all its points (Median.hpp). Over Wi-Fi a point whose ping or pong waited in a queue is off by
+ * half that wait, and queues are rarely the same both ways: the points with the fastest round trips are the clean ones.
+ * The fastest quarter (at least LK_FAST_MIN) keeps their d2 at the front of v, then their median */
+static uint32_t fastest(int64_t *v, int16_t *rtt, uint32_t n)
+{
+    uint32_t i, j, keep = n / LK_FAST_DIV;
+    if (keep < LK_FAST_MIN)
+        keep = n < LK_FAST_MIN ? n : LK_FAST_MIN;
+    for (i = 1; i < n; i++) {                      /* insertion sort by round trip, n <= LK_PTS, once a measurement */
+        int64_t x = v[i];
+        int16_t r = rtt[i];
+        for (j = i; j && rtt[j - 1] > r; j--) {
+            v[j] = v[j - 1];
+            rtt[j] = rtt[j - 1];
+        }
+        v[j] = x;
+        rtt[j] = r;
+    }
+    return keep;
 }
 
 static int64_t median2(int64_t *v, uint32_t n)     /* the median of twice-values, halved (Median.hpp) */
@@ -361,6 +540,8 @@ static int64_t median2(int64_t *v, uint32_t n)     /* the median of twice-values
         return rdiv(v[n / 2u], 1u);
     return rdiv(v[n / 2u] + v[n / 2u - 1u], 2u);
 }
+
+static int16_t rtt16(int64_t us) { return (int16_t)(us < 0 ? 0 : us > 32767 ? 32767 : us); }
 
 static void meas_pong(struct lk_node *k, uint32_t ip, uint16_t port, const uint8_t *p, const uint8_t *e, int64_t now)
 {
@@ -389,12 +570,17 @@ static void meas_pong(struct lk_node *k, uint32_t ip, uint16_t port, const uint8
     }
     send_ping(k, ip, port, now, gt, 1);
     if (gt && pht && k->meas.n < LK_PTS) {
+        k->meas.rtt[k->meas.n] = rtt16(now - pht);                 /* our ping and its pong */
         k->meas.d2[k->meas.n++] = 2 * gt - (now + pht);
-        if (pgt && k->meas.n < LK_PTS)
+        if (pgt && k->meas.n < LK_PTS) {
+            k->meas.rtt[k->meas.n] = rtt16(gt - pgt);              /* its two pings around our pong */
             k->meas.d2[k->meas.n++] = gt + pgt - 2 * pht;
+        }
     }
     if (k->meas.n > LK_PTS_DONE) {
-        meas_done(k, 1, median2(k->meas.d2, k->meas.n), now);
+        uint32_t keep = fastest(k->meas.d2, k->meas.rtt, k->meas.n);
+        meas_note_rtt(k, (uint16_t)k->meas.rtt[0], now);           /* (sorted: the fastest first) */
+        meas_done(k, 1, median2(k->meas.d2, keep), now);
         return;
     }
     k->meas.due = now + LK_PING_US;
@@ -523,7 +709,13 @@ static void peer_state(struct lk_node *k, const uint8_t *id, uint32_t ttl, const
     s = peer_slot(k, id);
     if (!s)
         return;
-    np.noping = s->used && id_eq(s->id, id) && id_eq(s->sess, np.sess) ? s->noping : 0;   /* (kept while it is heard: a new session of its own starts afresh) */
+    {
+        int same = s->used && id_eq(s->id, id) && id_eq(s->sess, np.sess);   /* (kept while it is heard: a new session of its own starts afresh) */
+        int same_ep = same && s->mip == np.mip && s->mport == np.mport;   /* (a round trip belongs to an endpoint) */
+        np.noping = same ? s->noping : 0;
+        np.rtt = same_ep ? s->rtt : 0;
+        np.measured_at = same_ep ? s->measured_at : 0;
+    }
     *s = np;
     saw_session(k, s, now);
 }
@@ -634,7 +826,7 @@ void lk_enable(struct lk_node *k, int on, int64_t now)
         int64_t b = k->tl.mpb ? lk_beat_at(k, now) : 0;
         new_id(k, k->id);
         id_cp(k->sess, k->id);
-        k->icpt = -now;
+        clock_reset(k, -now, now);
         k->tl.ub0 = b;
         k->tl.t0 = 0;
     }
