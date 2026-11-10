@@ -845,6 +845,11 @@ def build_app():
         raise SystemExit(f"fm1.toml: cpu_clock is 360 or 396, not {clk!r}")
     if clk == 396:
         flags.append("-DFM1B_CPU_396=1")
+        print("WARNING: cpu_clock = 396 runs the CPU past the FM-1's stock 360 MHz (JieLi's top, not for mass production).\n"
+              "         Tried on one FM-1 only: a unit that can't take it falls back to 360 after two hung starts.\n"
+              "         Try it on several FM-1s before a release, and say so in the release notes.", file=sys.stderr)
+        if RELEASE:
+            print(f"WARNING: release {RELEASE} is built with cpu_clock = 396.", file=sys.stderr)
     if CPU2:
         flags += ["-DFM1_CPU1=1", f"-DFM1_CPU1_FALLBACK={int(bool(CONF.get('cpu2_fallback')))}"]
         flags += cpu2_stack_flags()
