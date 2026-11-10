@@ -544,7 +544,17 @@ class Updater:
         if not back:
             raise InstallError("noreturn", "the FM-1 did not come back: power-cycle it")
         back.link.close()
-        if back.id.text != product:
+        for _ in range(3):                              # (the short answer, NAME_ddd, while the firmware still starts: it
+            if back.id.text == product or not (re.fullmatch(r"[^_]+_\d{3}", back.id.text) and   # tells its whole one
+                                               product.startswith(back.id.text)):                    # a moment later)
+                break
+            time.sleep(1.0)
+            again = self.wait_for(lambda i: not i.loader, DELAY["wait_reboot"])
+            if not again:
+                break
+            again.link.close()
+            back = again
+        if back.id.text != product and not (re.fullmatch(r"[^_]+_\d{3}", back.id.text) and product.startswith(back.id.text)):
             raise InstallError("mismatch", f"written, but the FM-1 reports {back.id.text} (expected {product})")
         step("done", back.id.text)
         return back.id.text
