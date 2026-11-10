@@ -103,6 +103,8 @@ kbd { font: 600 .85em ui-monospace, Menlo, monospace; background: var(--card); b
   <button id="mute" type="button" aria-pressed="false">Mute</button>
   <label class="keys"><input type="checkbox" id="shortcuts" checked> Keyboard shortcuts</label>
   <span class="cpu" id="cpu"></span>
+  <button id="session" type="button" aria-describedby="session-why">Copy session</button>
+  <span id="session-why" class="sr">Copy what you played as a script for the simulator, to report a problem</span>
   <button id="reset" type="button" aria-describedby="reset-why">Factory reset</button>
   <span id="reset-why" class="sr">Forget what was saved and start again from the factory settings</span>
 </div>
@@ -187,6 +189,34 @@ WHITE_K.forEach((n) => hit(keys[n], gWhite, { role: "button", "aria-label": keys
 let node = null, gain = null, btnMask = 0, keyMask = 0, latched = 0, keyLatched = 0;   // latched: held down until pressed again
 const btnHeldBy = new Map(), keyHeldBy = new Map();      // pointer / key id -> bit
 function send(m) { if (node) node.port.postMessage(m); }
+/* the session as the host simulator's script (base/host/plat_host.c): waits in the device's ms, keys and buttons as
+ * they went down and up, encoders as turned, the share of this computer's time as comments; copied to the clipboard */
+function sessionScript(m) {
+  const BTN = ["FX", "SEL", "ENV", "LFO", "EDIT", "GLO", "HOME", "SAVE", "ARP", "SEQ", "PLAY", "REC", "OCT-", "OCT+"];
+  const ENC = ["SELECT", "ALGO", "PRESET", "K1", "K2", "K3", "K4"];
+  const out = ["# {{NAME}} emulator session, " + new Date().toISOString() + ", " + navigator.userAgent];
+  let t = 0, keys = 0, btn = 0;
+  for (const [at, kind, v] of m.log) {
+    if (at > t) { out.push(`wait ${at - t}`); t = at; }
+    if (kind === "k") {
+      for (let k = 0; k < 32; k++) if (((keys ^ v) >>> k) & 1) out.push(`key ${k} ${(v >>> k) & 1 ? "down" : "up"}`);
+      keys = v;
+    } else if (kind === "b") {
+      for (let b = 0; b < BTN.length; b++) if (((btn ^ v) >>> b) & 1) out.push(`${(v >>> b) & 1 ? "press" : "release"} ${BTN[b]}`);
+      btn = v;
+    } else if (kind === "e") out.push(`spin ${ENC[v[0]] || v[0]} ${v[1]}`);
+    else if (kind === "m") out.push(`master ${v}`);
+    else if (kind === "l") out.push(`# load ${v}%`);
+  }
+  if (m.now > t) out.push(`wait ${m.now - t}`);
+  const text = out.join("\n") + "\n";
+  const done = (how) => { $("session").textContent = how; setTimeout(() => { $("session").textContent = "Copy session"; }, 2500); };
+  navigator.clipboard.writeText(text).then(() => done("Copied"), () => {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.rows = 8; ta.style.width = "100%";
+    $("session").after(ta); ta.select(); done("Select and copy below");
+  });
+}
 function syncButtons() {
   let m = latched;
   for (const b of btnHeldBy.values()) m |= 1 << b;
@@ -580,6 +610,8 @@ async function switchOn() {
           window.emuLast = m;
           if (m.load !== undefined) cpu.textContent = `{{NAME}} uses ${m.load}% of this computer's time`;
           if (m.store) saveStore(m.store);
+        } else if (m.type === "log") {
+          sessionScript(m);
         } else if (m.type === "app" && appPart && appPart.message) appPart.message(m);
       };
     });
@@ -610,6 +642,7 @@ $("mute").addEventListener("click", () => {
   $("mute").setAttribute("aria-pressed", on ? "true" : "false");
   if (gain) gain.gain.value = on ? 0 : 1;
 });
+$("session").addEventListener("click", () => send({ type: "log" }));
 $("reset").addEventListener("click", () => {
   if ($("reset").dataset.armed) {
     try { localStorage.removeItem(STORE_KEY); } catch {}
