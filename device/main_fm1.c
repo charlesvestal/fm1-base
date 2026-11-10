@@ -252,13 +252,13 @@ void fm1_timer5_irq(void)
 #endif
     }
 #ifdef APP_TICK
-    if (sub % FM1B_T5_APP_DIV == 0u) {              /* 1 kHz: the app's tick (a clock, a sequencer) */
+    if (sub % 10u == 0u) {                /* 1 kHz: the app's tick (a clock, a sequencer) */
         in_tick = 1;
         app_tick();
         in_tick = 0;
     }
 #endif
-    if (++sub == FM1B_T5_WRAP)
+    if (++sub == 10u)
         sub = 0;
     {
         uint32_t run = (fm1_ticks() - t5_prev) / FM1_TICKS_PER_US;
