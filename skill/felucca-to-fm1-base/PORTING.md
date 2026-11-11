@@ -145,6 +145,7 @@ Before writing a feature into the app, look for it in fm1-base (`include/plat.h`
 | the computer's USB audio muted or turned down (usb_audio_out) | `plat_usb_play_gain` |
 | lower case in the big fonts | `font_full = ["L"]` |
 | its own exports in the browser build | `APP_WEB` (the app's `web.c`), and its own page in `app/web/emu/` |
+| a second core for part of the render (Melodee's or X0X's `fm1_cpu1`) | `cpu2 = true` and `plat_cpu2_*` (felucca-bsp's `chip/fm1_cpu1.h`, the same core): [docs/SECOND-CORE.md](../../docs/SECOND-CORE.md) |
 | its own second core (hardware code that cannot go into felucca-bsp: another licence, not tried there yet) | `asm = [...]` (its entry assembled), `vendored = [...]` (the register check leaves it), its RAM loop in section `.c1_text` (copied and guarded with `.ram_text`, left out of the RAM-calls check), `APP_CSTART` (held first thing at a start), `APP_FAULT` (a crash on it, or beside it) |
 | functions built for size by an IR pass (Melodee's `minsize`) | `ir_pass = "tools/size_fns.py"`: the build runs it on each unit's LLVM IR |
 | simulator commands with more words than four | `plat_host_line` in `app_host_cmd` |
