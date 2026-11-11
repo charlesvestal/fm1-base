@@ -18,6 +18,7 @@
 #define FELUCCA_UAC_48K 0
 #define HALF_FRAMES 256u
 static void fm1_delay_ms(uint32_t ms) { (void)ms; }
+#define FELUCCA_UAC_CLOCK() 0u                  /* (the packets' clock: no packets here) */
 #include "usb.c"
 #include "../device/uac_mix.h"
 
