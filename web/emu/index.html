@@ -263,10 +263,18 @@ keys.forEach((k, i) => {
     keyHeldBy.set("p" + e.pointerId, i);
     syncKeys();
   });
-  // the strum plate: a finger that went down on a white key moves the held key as it slides
-  if (WHITE_K.includes(i)) k.hit.addEventListener("pointermove", (e) => {
+  // the strum plate: a finger that went down on a key moves the held key as it slides, over the black keys and the
+  // white (a glissando)
+  k.hit.addEventListener("pointermove", (e) => {
     const id = "p" + e.pointerId;
     if (!keyHeldBy.has(id)) return;
+    for (const b of BLACK_K) {                     // the black keys first: the white keys' 40 px reach up among them
+      const r = keys[b].hit.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom) {
+        if (keyHeldBy.get(id) !== b) { keyHeldBy.set(id, b); syncKeys(); }
+        return;
+      }
+    }
     for (const w of WHITE_K) {
       const r = keys[w].hit.getBoundingClientRect();
       if (e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top - 40 && e.clientY < r.bottom + 40) {
