@@ -309,10 +309,10 @@ int main(int argc, char **argv)
                              v == 1u ? "m-bootloader boot area for the SMK-37 -> -5" :
                                        "damaged boot area -> -5", v == 0u ? rc == 0 : rc == -5);
             }
-            memcpy(img, tpl, sizeof img);                   /* ours keeps the SDK's file unciphered: */
-            logical = img;                                  /* never written (Felucca's writer is exempt) */
+            memcpy(img, tpl, sizeof img);                   /* ours, its SPL ciphered as on flash: another */
+            logical = img;                                  /* writer that carries it (SHRUB's) is taken */
             rc = ota_boot_valid(0, sizeof img, b_scratch);
-            bad += check("our packages' head: not one to write -> -5", rc == -5);
+            bad += check("our packages' head: bootable", rc == 0);
             logical = NULL;
         }
 

@@ -109,7 +109,12 @@ def flash_image(app, key):
     spl_off = 0xA0
     isd_off = spl_off + len(spl)
     assert isd_off + len(isd) <= 0x4000
-    f[spl_off:spl_off + len(spl)] = spl
+    # the SPL as an FM-1's flash holds it: its 16-byte container header ENC 0xFFFF, the rest ENC 0xFFFF again (the
+    # entry's CRC stays the plain file's); felucca-bsp chip/ota.c refuses a writer whose boot area is not so
+    spl_enc = bytearray(spl)
+    enc(spl_enc, 0, 16)
+    enc(spl_enc, 16, len(spl) - 16)
+    f[spl_off:spl_off + len(spl)] = spl_enc
     f[isd_off:isd_off + len(isd)] = isd
     top = (entry(crc16(spl), spl_off, len(spl), 0x00, 0x00, 0, "uboot.boot") +
            entry(crc16(isd), isd_off, len(isd), 0x02, 0x80, 0, "isd_config.ini") +
