@@ -124,7 +124,7 @@ Each of these is listed only when the build has it:
 | `screen-reader` | a words file with its `# url:` line (`words`): the screen reader says the screen in words |
 | `screen-mirror` | `mirror = true`: the screen and panel mirrored over USB |
 | `backup` | `backup = true`: the saved work backed up and restored over USB |
-| `resources` | `resources`: a resource region the installer writes after the firmware |
+| `resources` | `resources`: a resource region the package carries, written by the update loader after the firmware |
 
 The vocabularies live in tools/firmware_json.py, and tests/firmware_json_test.py checks that this page and the schema
 list the same ones.

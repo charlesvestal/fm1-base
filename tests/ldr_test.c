@@ -16,7 +16,7 @@
 static uint8_t nor[0x100000], *logical;
 static size_t logical_len;
 static uint8_t rx[1024];
-static uint32_t rx_len, rx_full, now_ms, requests, erases, bad_range, record_cleared, f0_asked;
+static uint32_t rx_len, rx_full, now_ms, requests, erases, bad_range, record_cleared, f0_asked, w_lo, w_hi;
 
 static uint32_t pack7(const uint8_t *in, uint32_t n, uint8_t *out)
 {
@@ -81,7 +81,8 @@ static void ota_commit(const uint8_t *parm) { (void)parm; }
 static int ldr_fread(uint32_t off, void *p, uint32_t n) { memcpy(p, nor + off, n); return 0; }
 static int ldr_erase(uint32_t off)
 {
-    if (off < 0x4000u || off >= 0xFC000u || (off & 0xFFFu)) bad_range++;
+    if (off < 0x4000u || off >= 0xFC000u || (off & 0xFFFu) || (off >= 0x97000u && off < 0xE0000u &&
+                                                               !(w_hi && off >= w_lo && off < w_hi))) bad_range++;
     if (off < 0x4000u) { printf("ERASE IN THE HEAD %#x\n", off); exit(1); }
     erases++;
     memset(nor + off, 0xFF, 0x1000);
@@ -91,12 +92,14 @@ static int ldr_prog(uint32_t off, const void *p, uint32_t n)
 {
     const uint8_t *s = p;
     uint32_t i;
-    if (off < 0x4000u || off + n > 0x93000u || ((off & 0xFFu) + n) > 256u) bad_range++;
+    if (off < 0x4000u || ((off & 0xFFu) + n) > 256u ||
+        (off + n > 0x93000u && !(w_hi && off >= w_lo && off + n <= w_hi))) bad_range++;   /* (the app; the resources) */
     for (i = 0; i < n; i++) nor[off + i] &= s[i];
     return 0;
 }
 static void ldr_record_clear(void) { record_cleared++; }
 static void ldr_progress(uint32_t done, uint32_t total) { (void)done; (void)total; }
+static void ldr_res_window(uint32_t lo, uint32_t hi) { w_lo = lo; w_hi = hi; }
 #include "../bsp/loader/ldr_core.c"
 
 static uint8_t *load_logical(const char *path, size_t *len)
@@ -130,6 +133,19 @@ static uint32_t flash_off(const uint8_t *lg)        /* flash.bin offset in the l
     return 0;
 }
 
+/* the package's res.bin entry (fm1pkg_make.py --res): its offset, length and flash address; 0 when it has none */
+static uint32_t res_entry(const uint8_t *lg, uint32_t *size, uint32_t *base)
+{
+    uint8_t h[0x400];
+    uint32_t off;
+    memcpy(h, lg, sizeof h);
+    ota_jl_enc(h, 0x40);
+    for (off = 0; off < ota_rd16(h + 8); off++)
+        ota_jl_enc(h + 0x40 + off * 0x50u, 0x50);
+    ldr_res_entry(h, &off, size, base);
+    return off;
+}
+
 static int check(const char *what, int ok) { printf("%-56s %s\n", what, ok ? "ok" : "FAIL"); return ok ? 0 : 1; }
 
 int main(int argc, char **argv)
@@ -161,6 +177,11 @@ int main(int argc, char **argv)
     bad += check("finish asked (0xF0000000)", f0_asked >= 1);
     bad += check("update record cleared (RAM + flash)", record_cleared && nor[0xE4F06] == 0xFF);
     bad += check("no write outside the allowed windows", bad_range == 0);
+    {
+        uint32_t rs, rb, ro = res_entry(logical, &rs, &rb);
+        if (ro)
+            bad += check("its resource region written after the app", !memcmp(nor + rb, logical + ro, rs));
+    }
     /* same package again: nothing to erase */
     erases = 0; requests = 0;
     rc = ldr_session();
