@@ -1,0 +1,52 @@
+# The host tests on every push and pull request (tests/run_tests.sh), with everything they run pinned: the JieLi
+# toolchain and the package's SDK files by SHA-256 and commit in tools/toolchain.lock (the template is built without
+# Bluetooth: its radio needs the whole SDK), Python and its packages by hash in uv.lock, and Node (the web tests) by
+# SHA-256. After ESTAMPIE's host-tests.yml (Drew Robinson), offered under MPL-2.0.
+name: host tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch cancels the run still going.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-tests:
+    name: Host tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      # Every action pinned to a commit (a tag can be moved), its version in the comment.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: recursive                 # felucca-bsp
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e   # v10.3.2
+
+      - name: Python packages (uv.lock, hash-checked)
+        run: uv sync --frozen --group extras
+
+      # The downloads, each re-checked against tools/toolchain.lock on every run (so a cache can't slip in another
+      # archive).
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9   # v6.1.0
+        with:
+          path: .toolchain/downloads
+          key: tools-${{ runner.os }}-${{ hashFiles('tools/toolchain.lock') }}
+
+      - name: The pinned toolchain, SDK files, Node
+        run: tools/setup_toolchain.sh --only jieli,ac79-sdk,node
+
+      - name: "The template's package (without the radio: its SDK is not pinned here)"
+        run: .venv/bin/python tools/build.py template --no-ble
+
+      - name: Host tests
+        env:
+          PYTHON: .venv/bin/python
+        run: tests/run_tests.sh
