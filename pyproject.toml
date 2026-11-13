@@ -1,0 +1,35 @@
+# The Python the build, the tools and the tests use, pinned: uv keeps .venv in step with uv.lock (every package by
+# hash), so the fonts rasterise the same on every machine. Not a package. Any python3 with Pillow still runs the
+# scripts; this is the recommended way, not a requirement. After ESTAMPIE's pyproject.toml.
+#   uv sync --frozen                    (tools/setup_toolchain.sh, step python)
+#   uv sync --frozen --group device     (the tools that talk to an FM-1 over MIDI)
+[project]
+name = "fm1-base-tools"
+version = "0.1"
+requires-python = ">=3.11"            # tomllib
+dependencies = [
+    "pillow==13.0.0",                 # tools/gen_font.py (its wheels carry libraqm for the fonts' shaping)
+]
+
+[dependency-groups]
+# tools/fm1_install.py, fm1_remote.py, fm1_debug.py, fm1_backup.py, fm1_mirror.py, fm1ports.py: MIDI to an FM-1
+# (python-rtmidi builds against ALSA's headers on Linux: libasound2-dev).
+device = [
+    "mido==1.3.3",
+    "python-rtmidi==1.5.8",
+]
+# tools/fit_fastmath.py (numpy) and the firmware.json test's schema check (jsonschema).
+extras = [
+    "numpy==2.3.4",
+    "jsonschema==4.25.1",
+]
+# The workflow audit (.github/workflows): uv run --only-group audit zizmor .github/workflows
+audit = [
+    "zizmor==1.31.1",
+]
+
+[tool.uv]
+package = false
+# A cooldown: nothing newer than a week can be locked, so a hijacked release has time to be noticed and pulled before
+# it reaches this lock.
+exclude-newer = "7 days"

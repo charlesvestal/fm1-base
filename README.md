@@ -22,7 +22,10 @@ To build for the FM-1 you need JieLi's Linux toolchain and three files of the AC
 fetches the latest toolchain into `~/.jieli` (the quick way; set `JIELI_TOOLCHAIN` and `AC79_SDK`). Or pin
 everything: `tools/setup_toolchain.sh` fetches the toolchain, the SDK's three files, Node, osv-scanner and
 fm1-reader into `.toolchain/` in the repository, each checked against the SHA-256 or commit in
-`tools/toolchain.lock` before it is unpacked, and `tools/build.py` finds them there when the variables are unset.
+`tools/toolchain.lock` before it is unpacked, and `tools/build.py` finds them there when the variables are unset;
+its `python` step makes `.venv` from `uv.lock` (Pillow pinned, every package by hash: `pyproject.toml`), so
+`.venv/bin/python tools/build.py ...` rasterises the fonts the same on every machine. Any `python3` with Pillow
+still works.
 On macOS the toolchain runs in a container (Docker or podman); on Linux x86-64 natively.
 
 ## Optional parts
