@@ -65,6 +65,32 @@ static void block(uint32_t gain, uint32_t master, int full, uint32_t play, int32
     ua_r = ua_w;                        /* the computer read it */
 }
 
+/* USB AUDIO full, MASTER moved since the last block (its gain g0, 1/4096): the speaker slides frame by frame to the
+ * new gain, the last frame at it, and the recording still takes the render at full level */
+static void slide(uint32_t g0, uint32_t gain, uint32_t master)
+{
+    int32_t o[2u * N];
+    uint32_t i, w = ua_w;
+    const long d = ((long)APP * gain - (long)APP * g0) / 4096 / (long)N;
+    for (i = 0; i < N; i++)
+        o[2u * i] = o[2u * i + 1u] = APP;
+#if FELUCCA_UAC_OUT
+    feed(N);
+#endif
+    uac_mix(o, N, gain, master, 1, 0);
+    check(near(o[0], (long)APP * g0 / 4096 + d), "slide: the first frame a step from the last block's", o[0],
+          (long)APP * g0 / 4096 + d);
+    check(near(o[2u * (N - 1u)], (long)APP * gain / 4096), "slide: the last frame at the new gain", o[2u * (N - 1u)],
+          (long)APP * gain / 4096);
+    for (i = 1; i < N; i++) {
+        check(near(o[2u * i] - o[2u * (i - 1u)], d), "slide: even steps", o[2u * i] - o[2u * (i - 1u)], d);
+        check(o[2u * i + 1u] == o[2u * i], "slide: L and R alike", o[2u * i + 1u], o[2u * i]);
+    }
+    check((int16_t)(ua_ring[w & (UA_N - 1u)] & 0xFFFFu) == (APP + 128) >> 8, "slide: the recording at full level",
+          (int16_t)(ua_ring[w & (UA_N - 1u)] & 0xFFFFu), (APP + 128) >> 8);
+    ua_r = ua_w;
+}
+
 int main(void)
 {
     int32_t l, r, rec;
@@ -101,7 +127,9 @@ int main(void)
         check(uo_w - uo_r < UO_TGT + N, "muted: the ring does not fill", (long)(uo_w - uo_r), UO_TGT);
     }
 
-    /* USB AUDIO full: the render (at 4096) recorded, then the computer's at its level, then MASTER over both */
+    /* USB AUDIO full: the render (at 4096) recorded, then the computer's at its level, then MASTER over both, slid
+     * from where the last block left it (4096) */
+    slide(4096, 1024, 2048);
     block(1024, 2048, 1, 4096, &l, &r, &rec);
     check(rec == rec_app, "full: the recording at full level, the app alone", rec, rec_app);
     check(near(l, (APP + PC * 256) / 4), "full: MASTER over both", l, (APP + PC * 256) / 4);
@@ -115,6 +143,7 @@ int main(void)
 #else
     block(4096, 4096, 0, 4096, &l, &r, &rec);   /* without usb_audio_out: the app, recorded, as ever */
     check(l == APP && r == APP && rec == rec_app, "no output: the app alone", l, APP);
+    slide(4096, 1024, 2048);
     block(1024, 2048, 1, 0, &l, &r, &rec);
     check(rec == rec_app && near(l, APP / 4), "no output, full: recorded at full, MASTER after", l, APP / 4);
 #endif
