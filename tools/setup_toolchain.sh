@@ -11,15 +11,16 @@
 #                          Bluetooth and WiFi builds still need a whole checkout at $AC79_SDK)
 #   .toolchain/node        Node, the binary only (no npm, npx or corepack), for the web tests
 #   .toolchain/bin         osv-scanner (tools/osv_scan.sh)
-#   .toolchain/uv          uv, where none is installed (a fresh CI runner)
+#   .toolchain/uv          uv, where none is installed (a fresh CI runner): it makes .venv
+#   .venv                  Python with the packages in uv.lock (uv sync --frozen; pyproject.toml says why these)
 #   .toolchain/fm1-reader  fm1-reader at its pinned commit, when there is no checkout next to this repository (the
 #                          emulator page's screen reader: tools/build.py --web)
 # A step is skipped when its folder already holds the pinned version; change a pin and run it again to update.
-# --only takes a comma-separated list of steps (jieli, ac79-sdk, node, osv-scanner, fm1-reader, uv): CI fetches
+# --only takes a comma-separated list of steps (jieli, ac79-sdk, node, python, osv-scanner, fm1-reader, uv): CI fetches
 # just what a job needs through the same checks.
 #   tools/setup_toolchain.sh [--only STEP,...]
 set -eu
-STEPS=jieli,ac79-sdk,node,osv-scanner,fm1-reader
+STEPS=jieli,ac79-sdk,node,python,osv-scanner,fm1-reader
 USAGE="usage: tools/setup_toolchain.sh [--only STEP,...]"
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -146,6 +147,13 @@ if want uv; then
         rmdir $TC/uv/uv-*
     fi
     [ "$($TC/uv/uv --version | cut -d' ' -f2)" = "$1" ] || die "$TC/uv: uv doesn't run, or isn't $1"
+fi
+
+# Python and the packages in uv.lock (hash-checked; pyproject.toml says why these versions): .venv.
+if want python; then
+    UV=$TC/uv/uv
+    [ -x $UV ] || UV=$(command -v uv) || die "needs uv (https://docs.astral.sh/uv/, or --only uv)"
+    "$UV" sync --frozen ${UV_SYNC_ARGS:-}              # (UV_SYNC_ARGS: other groups, as CI wants)
 fi
 
 # osv-scanner.
