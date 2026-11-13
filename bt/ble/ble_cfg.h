@@ -208,6 +208,12 @@
 #ifndef BLE_GATTC_TIMEOUT_US
 #define BLE_GATTC_TIMEOUT_US 30000000u   /* ATT (Core Vol 3 Part F 3.3.3) and SMP (Part H 3.4) transaction timeout */
 #endif
+#ifndef BLE_GATTC_LATE_US
+#define BLE_GATTC_LATE_US 700000u        /* refused with Insufficient Encryption on an encrypted link: asked again this much
+                                          * later (a Roland FP-30X's side counts the link as encrypted only a moment
+                                          * after it is: fm1-base#44), */
+#define BLE_GATTC_LATE_TRIES 5u          /* this many times */
+#endif
 
 /* ---- host */
 #ifndef BLE_ATT_MTU_MAX
