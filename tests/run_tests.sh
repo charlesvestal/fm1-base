@@ -10,6 +10,8 @@ set -u
 cd "$(dirname "$0")/.."
 CC="${CC:-cc}"
 PY="${PYTHON:-python3}"
+# the pinned Node (tools/setup_toolchain.sh) for the web tests, where it is
+[ -d .toolchain/node/bin ] && PATH="$PWD/.toolchain/node/bin:$PATH"
 # the package's SDK files (tools/fm1pkg_make.py): AC79_SDK, the home checkout, else the pinned three in .toolchain/ac79-sdk
 [ -n "${AC79_SDK:-}" ] || [ ! -d "$HOME/fw-AC79_AIoT_SDK" ] || export AC79_SDK="$HOME/fw-AC79_AIoT_SDK"
 OUT=template/build/tests
@@ -141,13 +143,14 @@ else
     echo "  skip backup-page (no node)"
 fi
 PKG=template/build/template.fwsc
+[ -f "$PKG" ] || PKG=template/build/template-usb.fwsc      # (a build without the radio, --no-ble: CI's)
 if [ -f "$PKG" ]; then
     run ota-entry sh -c "$CC -w -o $OUT/ota_test tests/ota_test.c && $OUT/ota_test $PKG web/m-bootloader/fm1-uboot-1.2.fwsc"
     run update-loader sh -c "head -c 60000 template/build/template.bin > $OUT/old_app.bin && \
         $PY tools/fm1pkg_make.py $OUT/old_app.bin template/build/loader/ota.bin $OUT/old.fwsc >/dev/null && \
         $CC -w -o $OUT/ldr_test tests/ldr_test.c && $OUT/ldr_test $OUT/old.fwsc $PKG"
 else
-    echo "  skip update path (no $PKG: tools/build.py template)"
+    echo "  skip update path (no template package: tools/build.py template)"
 fi
 run host-build "$PY" tools/build.py template --host
 # the screen mirrored over USB (device/mirror.c; the fonts: the template's build/gen): its pixel code on drawn bands,

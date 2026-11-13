@@ -1,0 +1,28 @@
+# Weekly update pull requests for the pinned GitHub Actions (by commit), uv.lock and the felucca-bsp submodule, each
+# held back a week after release (cooldown), the same as uv's exclude-newer. The pins in tools/toolchain.lock are
+# updated by hand; tools/osv_scan.sh says when one is due. After ESTAMPIE's dependabot.yml.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: gitsubmodule
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
