@@ -268,8 +268,10 @@ Outputs in APP_DIR/build/: NAME.bin (app), loader/ota.bin (update loader), NAME.
 (firmware-usb.json from --no-ble; every build writes it, --host, --web and --rfm1 too). An app in a firmware's
 repository (APP_DIR named app) also has the repository's firmware.json written, when it changes.
 
-The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it; on
-macOS (or with JIELI_DOCKER=1) each tool runs in a linux/amd64 container.
+The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it, or tools/setup_toolchain.sh puts the pinned
+one in .toolchain/ (tools/toolchain.lock), where this looks when JIELI_TOOLCHAIN is unset; on macOS (or with
+JIELI_DOCKER=1) each tool runs in a linux/amd64 container. The package's three SDK files come from $AC79_SDK or
+from .toolchain/ac79-sdk (the same script).
 """
 import argparse
 import functools
@@ -358,11 +360,13 @@ def read_conf(path):
 
 
 def toolchain():
+    """JIELI_TOOLCHAIN, else the pinned one tools/setup_toolchain.sh put in .toolchain/, else tools/get_toolchain.sh's"""
     tc = os.environ.get("JIELI_TOOLCHAIN")
-    if not tc or not (Path(tc) / "pi32v2" / "bin" / "clang").exists():
-        raise SystemExit("JIELI_TOOLCHAIN must point at the JieLi Linux toolchain "
-                         "(the directory with pi32v2/ and common/; see tools/get_toolchain.sh)")
-    return Path(tc).resolve()
+    for d in ([Path(tc)] if tc else [SRC / ".toolchain" / "jieli" / "toolchain", Path.home() / ".jieli" / "toolchain"]):
+        if (d / "pi32v2" / "bin" / "clang").exists():
+            return d.resolve()
+    raise SystemExit("JIELI_TOOLCHAIN must point at the JieLi Linux toolchain (the directory with pi32v2/ and common/; "
+                     "tools/setup_toolchain.sh pins one in .toolchain/, tools/get_toolchain.sh fetches the latest)")
 
 
 def use_docker():
@@ -1563,6 +1567,8 @@ def build_web():
     # next to fm1-base, or next to the app's repository (fm1-base a submodule in it)
     found = [p / "fm1-reader" / "web" for base in (SRC.parent, APP.parent.parent) for p in (base, base / "fm1-parent")
              if (p / "fm1-reader" / "web").is_dir()]
+    found += [p for p in (SRC / ".toolchain" / "fm1-reader" / "web", APP.parent.parent / ".toolchain" / "fm1-reader" / "web")
+              if p.is_dir()]                                   # the pinned one (tools/setup_toolchain.sh)
     reader = Path(os.environ.get("FM1_READER", found[0] if found else SRC.parent / "fm1-reader" / "web"))
     if (reader / "words.js").exists() and (reader / "espeak" / "espeak.wasm").exists():
         (emu / "reader" / "espeak").mkdir(parents=True, exist_ok=True)
