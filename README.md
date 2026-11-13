@@ -26,7 +26,11 @@ fm1-reader into `.toolchain/` in the repository, each checked against the SHA-25
 its `python` step makes `.venv` from `uv.lock` (Pillow pinned, every package by hash: `pyproject.toml`), so
 `.venv/bin/python tools/build.py ...` rasterises the fonts the same on every machine. Any `python3` with Pillow
 still works.
-On macOS the toolchain runs in a container (Docker or podman); on Linux x86-64 natively.
+On macOS the toolchain runs in a container (Docker or podman): the image pinned in the lock (distroless's `cc`,
+glibc and libstdc++, and busybox for its keep-alive), one long-lived container a tree, as you, with no network and
+no capabilities. `FM1B_ISOLATE=1` gives each tool a container of its own instead, with the tree read-only and only
+the build directory writable, for about twice the build time. `tools/osv_scan.sh build-image` scans the image. On
+Linux x86-64 the toolchain runs natively.
 
 ## Optional parts
 
