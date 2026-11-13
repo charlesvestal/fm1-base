@@ -270,8 +270,9 @@ repository (APP_DIR named app) also has the repository's firmware.json written, 
 
 The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it, or tools/setup_toolchain.sh puts the pinned
 one in .toolchain/ (tools/toolchain.lock), where this looks when JIELI_TOOLCHAIN is unset; on macOS (or with
-JIELI_DOCKER=1) each tool runs in a linux/amd64 container. The package's three SDK files come from $AC79_SDK or
-from .toolchain/ac79-sdk (the same script).
+JIELI_DOCKER=1) each tool runs in a linux/amd64 container: the image pinned by digest in the lock (distroless's cc,
+JIELI_DOCKER_IMAGE overrides it), one run a tool, as the user, with no network, no capabilities and the tree
+read-only (tc). The package's three SDK files come from $AC79_SDK or from .toolchain/ac79-sdk (the same script).
 """
 import argparse
 import functools
@@ -300,7 +301,21 @@ APP_XIP = 0x02000120                # app.bin offset 0 in the XIP map; the SPL j
 APP_SLOT = fm1pkg_make.APP_SLOT
 LOADER_LOAD = 0x01C0A800
 LOADER_NAME = b"usb_hid_ota.bin"    # the file name the SPL looks for
-DOCKER_IMAGE = os.environ.get("JIELI_DOCKER_IMAGE", "debian:bookworm-slim")
+def locked_image():
+    """the container the JieLi tools run in, pinned by digest in tools/toolchain.lock beside every other pin: distroless's
+    cc image, which has what the tools need (glibc, libstdc++, libgcc) and nothing else, no shell, no package manager.
+    JIELI_DOCKER_IMAGE overrides it; a checkout without the lock line falls back to Debian's tag, as before"""
+    try:
+        for line in (SRC / "tools" / "toolchain.lock").read_text().splitlines():
+            f = line.split()
+            if f and f[0] == "build-image":
+                return f"{f[4]}@sha256:{f[3]}"
+    except OSError:
+        pass
+    return "debian:bookworm-slim"
+
+
+DOCKER_IMAGE = os.environ.get("JIELI_DOCKER_IMAGE") or locked_image()
 CFLAGS = ["-Os", "-ffunction-sections", "-fno-builtin", "-Wall", "-Wno-unused-function"]
 # the AC79's single-precision FPU (the SDK's own flags); no fused multiply-add, so the host
 # build (-ffp-contract=off) computes the same samples
@@ -374,48 +389,26 @@ def use_docker():
     return os.environ.get("JIELI_DOCKER", "0" if native else "1") == "1"
 
 
-_BUILDER = None
-_BUILDER_LOCK = __import__("threading").Lock()
-
-
-def builder():
-    """one long-lived toolchain container per source tree (starting a container per tool call cost
-    most of the build); it stops by itself after an hour without a build"""
-    global _BUILDER
-    with _BUILDER_LOCK:            # the loader and the app build in parallel: start it once
-        return _builder_start()
-
-
-def _builder_start():
-    global _BUILDER
-    if _BUILDER:
-        return _BUILDER
-    name = "jieli-" + hashlib.sha1(str(ROOT).encode()).hexdigest()[:10]
-    st = subprocess.run(["docker", "inspect", "-f", "{{.State.Running}}", name], capture_output=True, text=True)
-    if st.stdout.strip() != "true":
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-        r = subprocess.run(["docker", "run", "-d", "--rm", "--name", name, "--platform", "linux/amd64",
-                            "-v", f"{ROOT}:/work", "-v", f"{toolchain()}:/opt/jieli:ro", "-w", "/work",
-                            DOCKER_IMAGE, "sh", "-c", "sleep 3600"], capture_output=True, text=True)
-        if r.returncode:
-            sys.stderr.write(r.stderr)
-            raise SystemExit("build: cannot start the toolchain container")
-    else:                           # an hour from now again
-        subprocess.run(["docker", "exec", "-d", name, "sh", "-c", "sleep 3600 && kill 1"], capture_output=True)
-    _BUILDER = name
-    return name
-
-
-def tc(tool, *args):
-    """run a toolchain binary (pi32v2/bin/..., common/bin/...) with cwd ROOT; paths relative to ROOT"""
-    rel = [str(Path(a).resolve().relative_to(ROOT)) if isinstance(a, Path) else a for a in args]
+def tc(tool, *args, cwd=None):
+    """run a toolchain binary (pi32v2/bin/..., common/bin/...) with cwd ROOT (or cwd, under ROOT); paths relative to it.
+    In a container: one run a tool, as the user and not root, with no network, no capabilities, no privilege gain, a
+    process limit, a read-only root and a scratch /tmp; the tree and the toolchain read-only, only the build
+    directory writable. (One container a call costs a start each; a long-lived container would need a keep-alive
+    that is not a shell, since the image has none.)"""
+    cwd = (cwd or ROOT).resolve()
+    rel = [os.path.relpath(Path(a).resolve(), cwd) if isinstance(a, Path) else a for a in args]   # (may go up: the trim's archive)
     if tool == "cc":                # the toolchain's cc wrapper needs python3; call clang directly
         tool, rel = "pi32v2/bin/clang", ["-target", "pi32v2", *rel]
     if use_docker():
-        cmd = ["docker", "exec", "-w", "/work", builder(), f"/opt/jieli/{tool}", *rel]
+        work = Path("/work") / cwd.relative_to(ROOT)
+        cmd = ["docker", "run", "--rm", "--platform", "linux/amd64", "--network", "none", "--cap-drop", "ALL",
+               "--security-opt", "no-new-privileges", "--pids-limit", "64", "--read-only", "--tmpfs", "/tmp",
+               "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{ROOT}:/work:ro",
+               "-v", f"{OUT}:/work/{OUT.relative_to(ROOT)}", "-v", f"{toolchain()}:/opt/jieli:ro",
+               "-w", str(work), DOCKER_IMAGE, f"/opt/jieli/{tool}", *rel]
     else:
         cmd = [str(toolchain() / tool), *rel]
-    r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if r.returncode:
         sys.stderr.write(r.stdout + r.stderr)
         raise SystemExit(f"build: {tool} failed")
@@ -439,6 +432,9 @@ def generate():
         env = {**os.environ, "FM1_FONT_FULL": " ".join(CONF.get("font_full", [])),
                "FM1_FONT_TRIM": "1" if CONF.get("font_trim") else "",
                "FM1_FONT_PACK": "1" if CONF.get("font_pack") else ""}
+        if platform.system() == "Darwin":         # Pillow's raqm loads FriBiDi at run time, and uv's own Pythons
+            env["DYLD_FALLBACK_LIBRARY_PATH"] = ":".join(   # don't look in Homebrew's lib (Homebrew's Python does)
+                filter(None, [env.get("DYLD_FALLBACK_LIBRARY_PATH"), "/opt/homebrew/lib", "/usr/local/lib", "/usr/lib"]))
         r = subprocess.run([sys.executable, *map(str, c)], capture_output=True, text=True, env=env)
         sys.stdout.write(r.stdout)
         if r.returncode:
@@ -659,8 +655,7 @@ def ble_trim(dst):
         w = trim / member.replace(".c.o", "")
         w.mkdir()
         (w / "stub.c").write_text(src + "\n")
-        tc("common/bin/llvm-ar", "x", trim / lib, member)         # (into ROOT, the tools' cwd: moved below)
-        shutil.move(ROOT / member, w / member)
+        tc("common/bin/llvm-ar", "x", trim / lib, member, cwd=w)   # (into w: the tree is read-only in the container)
         tc("cc", "-mcpu=r3", "-mfprev1", "-Oz", "-flto", "-c", w / "stub.c", "-o", w / "stub.bc")
         tc("common/bin/llvm-link", w / member, f"-override={(w / 'stub.bc').resolve().relative_to(ROOT)}",
            "-o", w / "out.bc")
