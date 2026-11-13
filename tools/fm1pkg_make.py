@@ -16,7 +16,7 @@
              update loader writes it after the app (felucca-bsp loader/ldr_core.c ldr_res), so an install by any
              host that serves the package brings it
 
-The SDK files come from the JieLi AC79 SDK (AC79_SDK, or --sdk).
+The SDK files come from the JieLi AC79 SDK (AC79_SDK, or --sdk; else .toolchain/ac79-sdk, tools/setup_toolchain.sh's).
 All integrity checks in the format are CRC16 (poly 0x1021, init 0).
 
   fm1pkg_make.py APP.bin OTA.bin OUT.fwsc [--product FM-1_9XY] [--sdk DIR] [--res RES.bin --res-base ADDR]
@@ -97,12 +97,16 @@ def key_blob(key):
 
 
 def sdk_file(rel):
-    root = Path(SDK or os.environ.get("AC79_SDK", ""))
-    path = root / "cpu" / "wl82" / "tools" / rel
-    try:
-        return path.read_bytes()
-    except OSError as e:
-        raise SystemExit(f"fm1pkg_make: {path}: {e.strerror}. Set AC79_SDK to a JieLi AC79 SDK checkout.")
+    """--sdk or AC79_SDK, else the three files tools/setup_toolchain.sh checked out into .toolchain/ac79-sdk"""
+    given = SDK or os.environ.get("AC79_SDK")
+    roots = [Path(given)] if given else [Path(__file__).resolve().parents[1] / ".toolchain" / "ac79-sdk",
+                                         Path.home() / "fw-AC79_AIoT_SDK"]
+    for root in roots:
+        path = root / "cpu" / "wl82" / "tools" / rel
+        if path.exists():
+            return path.read_bytes()
+    raise SystemExit(f"fm1pkg_make: no {rel} in {', '.join(str(r) for r in roots)}: set AC79_SDK to a JieLi AC79 SDK "
+                     "checkout, or run tools/setup_toolchain.sh")
 
 
 def flash_image(app, key):

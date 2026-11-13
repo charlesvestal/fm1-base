@@ -10,7 +10,8 @@ set -u
 cd "$(dirname "$0")/.."
 CC="${CC:-cc}"
 PY="${PYTHON:-python3}"
-export AC79_SDK="${AC79_SDK:-$HOME/fw-AC79_AIoT_SDK}"   # the package's SDK files (tools/fm1pkg_make.py)
+# the package's SDK files (tools/fm1pkg_make.py): AC79_SDK, the home checkout, else the pinned three in .toolchain/ac79-sdk
+[ -n "${AC79_SDK:-}" ] || [ ! -d "$HOME/fw-AC79_AIoT_SDK" ] || export AC79_SDK="$HOME/fw-AC79_AIoT_SDK"
 OUT=template/build/tests
 FAIL=0
 mkdir -p "$OUT"
