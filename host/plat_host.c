@@ -2041,10 +2041,18 @@ static void sim_render(int32_t *blk)            /* one APP_BLOCK-frame block, as
         uwav_frames += APP_BLOCK;
     }
 #endif
-    if (uac_full) {                             /* (the USB audio input took it at full level) the speaker: MASTER */
+    {   /* (the USB audio input took it at full level) the speaker: MASTER, slid from the last block's (uac_mix.h) */
+        static float last = -1.0f;
         const float g = (float)APP_GAIN(master) * (1.0f / 4096.0f);
-        for (k = 0; k < 2u * APP_BLOCK; k++)
-            blk[k] = (int32_t)((float)blk[k] * g);
+        if (uac_full) {
+            const float g0 = last < 0.0f ? g : last, d = (g - g0) / (float)APP_BLOCK;
+            for (k = 0; k < APP_BLOCK; k++) {
+                const float gk = g0 + d * (float)(k + 1u);
+                blk[2u * k] = (int32_t)((float)blk[2u * k] * gk);
+                blk[2u * k + 1u] = (int32_t)((float)blk[2u * k + 1u] * gk);
+            }
+        }
+        last = g;
     }
     dt = now_ns() - t0;
     render_ns_total += dt;
