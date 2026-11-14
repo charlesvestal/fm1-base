@@ -4,7 +4,7 @@
 // WebMIDI: the firmware reads the installer package as felucca-bsp chip/ota.c does (its UFW header, the
 // installer's head and body, then 0xE0000000 "success"), drops off USB while the installer writes the boot area,
 // and comes back as itself. A firmware that refuses the package asks for nothing: no "success", nothing written.
-//   node tests/installer_boot_test.mjs web/m-bootloader/fm1-uboot-1.2.fwsc
+//   node tests/installer_boot_test.mjs web/m-bootloader/fm1-uboot-2.3.fwsc
 import fs from "fs";
 import { Updater, pack7, unpack7 } from "../web/fm1ota.js";
 import { productOf, logicalImage, ufwEntries } from "../web/fm1pkg.js";

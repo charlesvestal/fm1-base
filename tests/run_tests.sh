@@ -103,11 +103,11 @@ run ramcode "$PY" tests/ramcode_test.py
 # its port (unusual names, the loader under a new name, M-VAVE's Open firmware, resume's check, package checksums),
 # and writing the resource region after it
 if command -v node >/dev/null 2>&1; then
-    run installer-boot node tests/installer_boot_test.mjs web/m-bootloader/fm1-uboot-1.2.fwsc
-    run installer-ports node tests/installer_ports_test.mjs web/m-bootloader/fm1-uboot-1.2.fwsc
+    run installer-boot node tests/installer_boot_test.mjs web/m-bootloader/fm1-uboot-2.3.fwsc
+    run installer-ports node tests/installer_ports_test.mjs web/m-bootloader/fm1-uboot-2.3.fwsc
     run installer-res node tests/installer_res_test.mjs   # the resource region after an install (Updater.installRes)
     # FM1_STOCK_FWSC=<path to M-VAVE's FM-1_015.fwsc> adds the stock file's cases (that file is not in this repository)
-    run checkufw node tests/checkufw_test.mjs web/m-bootloader/fm1-uboot-1.2.fwsc ${FM1_STOCK_FWSC:-}
+    run checkufw node tests/checkufw_test.mjs web/m-bootloader/fm1-uboot-2.3.fwsc ${FM1_STOCK_FWSC:-}
     run installer-bluetooth node tests/installer_bluetooth_test.mjs
     # the handshake: a firmware that answers M-UPGRADE 3.11's query short and its whole identity to the one with 01
     run installer-hs node tests/installer_hs_test.mjs
@@ -141,7 +141,7 @@ else
 fi
 PKG=template/build/template.fwsc
 if [ -f "$PKG" ]; then
-    run ota-entry sh -c "$CC -w -o $OUT/ota_test tests/ota_test.c && $OUT/ota_test $PKG web/m-bootloader/fm1-uboot-1.2.fwsc"
+    run ota-entry sh -c "$CC -w -o $OUT/ota_test tests/ota_test.c && $OUT/ota_test $PKG web/m-bootloader/fm1-uboot-2.3.fwsc"
     run update-loader sh -c "head -c 60000 template/build/template.bin > $OUT/old_app.bin && \
         $PY tools/fm1pkg_make.py $OUT/old_app.bin template/build/loader/ota.bin $OUT/old.fwsc >/dev/null && \
         $CC -w -o $OUT/ldr_test tests/ldr_test.c && $OUT/ldr_test $OUT/old.fwsc $PKG"

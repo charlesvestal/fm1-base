@@ -4,7 +4,7 @@
 // WebMIDI: a port with an unusual name is asked only once allowed; an update's loader and the restarted firmware are
 // followed when they come back under other port names (macOS names ports from its cache); M-VAVE's Open firmware's
 // identities; resume checks the FM-1 came back as the product; a damaged package is caught by its checksums.
-//   node tests/installer_ports_test.mjs web/m-bootloader/fm1-uboot-1.2.fwsc
+//   node tests/installer_ports_test.mjs web/m-bootloader/fm1-uboot-2.3.fwsc
 import fs from "fs";
 import { Updater, pack7 } from "../web/fm1ota.js";
 import { logicalImage, checkUfw } from "../web/fm1pkg.js";
