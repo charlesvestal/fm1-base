@@ -249,3 +249,5 @@ into the project):
 
 Claude starts with the inventory and shows it before changing anything. To have the skill in every project instead,
 fetch it to `~/.claude/skills/felucca-to-fm1-base`. It reads as plain instructions too, without Claude.
+
+You can also try FM-1 Base in the browser, no flashing needed, in the free community [FM-1 Emulator](https://fm1-emulator.atst.tools/).
