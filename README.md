@@ -18,6 +18,18 @@ app runs on the computer in the host simulator and in the browser: try the templ
 
     git clone --recursive https://github.com/charlesvestal/fm1-base
 
+To build for the FM-1 you need JieLi's Linux toolchain and three files of the AC79 SDK. `tools/get_toolchain.sh`
+fetches the latest toolchain into `~/.jieli` (the quick way; set `JIELI_TOOLCHAIN` and `AC79_SDK`). Or pin
+everything: `tools/setup_toolchain.sh` fetches the toolchain, the SDK's three files, Node, osv-scanner and
+fm1-reader into `.toolchain/` in the repository, each checked against the SHA-256 or commit in
+`tools/toolchain.lock` before it is unpacked, and `tools/build.py` finds them there when the variables are unset;
+its `python` step makes `.venv` from `uv.lock` (Pillow pinned, every package by hash: `pyproject.toml`), so
+`.venv/bin/python tools/build.py ...` rasterises the fonts the same on every machine. Any `python3` with Pillow
+still works.
+On macOS the toolchain runs in a container (Docker or podman): the image pinned in the lock (distroless's `cc`,
+glibc and libstdc++ and nothing else), each tool a run of its own as you, with no network, no capabilities and the
+tree read-only; `tools/osv_scan.sh build-image` scans the image. On Linux x86-64 it runs natively.
+
 ## Optional parts
 
 A firmware has only what its fm1.toml asks for (and its app.h, for velocity and pressure); every build prints the

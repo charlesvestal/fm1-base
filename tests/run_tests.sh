@@ -10,7 +10,15 @@ set -u
 cd "$(dirname "$0")/.."
 CC="${CC:-cc}"
 PY="${PYTHON:-python3}"
-export AC79_SDK="${AC79_SDK:-$HOME/fw-AC79_AIoT_SDK}"   # the package's SDK files (tools/fm1pkg_make.py)
+# the pinned Node (tools/setup_toolchain.sh) for the web tests, where it is
+[ -d .toolchain/node/bin ] && PATH="$PWD/.toolchain/node/bin:$PATH"
+# the package's SDK files (tools/fm1pkg_make.py): AC79_SDK, the home checkout, else the pinned three in .toolchain/ac79-sdk
+[ -n "${AC79_SDK:-}" ] || [ ! -d "$HOME/fw-AC79_AIoT_SDK" ] || export AC79_SDK="$HOME/fw-AC79_AIoT_SDK"
+# gen_font.py's Pillow loads FriBiDi (raqm) from the system, and on macOS uv's Python doesn't look in Homebrew's lib
+# for it (Homebrew's Python does), so the font tests point it there as tools/build.py does: inside each command,
+# since macOS drops DYLD_* on the way through /bin/sh.
+FONT_PY=$PY
+[ "$(uname -s)" != Darwin ] || FONT_PY="DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib:/usr/local/lib:/usr/lib $PY"
 OUT=template/build/tests
 FAIL=0
 mkdir -p "$OUT"
@@ -140,13 +148,14 @@ else
     echo "  skip backup-page (no node)"
 fi
 PKG=template/build/template.fwsc
+[ -f "$PKG" ] || PKG=template/build/template-usb.fwsc      # (a build without the radio, --no-ble: CI's)
 if [ -f "$PKG" ]; then
     run ota-entry sh -c "$CC -w -o $OUT/ota_test tests/ota_test.c && $OUT/ota_test $PKG web/m-bootloader/fm1-uboot-1.2.fwsc"
     run update-loader sh -c "head -c 60000 template/build/template.bin > $OUT/old_app.bin && \
         $PY tools/fm1pkg_make.py $OUT/old_app.bin template/build/loader/ota.bin $OUT/old.fwsc >/dev/null && \
         $CC -w -o $OUT/ldr_test tests/ldr_test.c && $OUT/ldr_test $OUT/old.fwsc $PKG"
 else
-    echo "  skip update path (no $PKG: tools/build.py template)"
+    echo "  skip update path (no template package: tools/build.py template)"
 fi
 run host-build "$PY" tools/build.py template --host
 # the screen mirrored over USB (device/mirror.c; the fonts: the template's build/gen): its pixel code on drawn bands,
@@ -164,23 +173,23 @@ fi
 run mirror-png "$PY" tools/fm1_mirror.py $OUT/mirror.png --from $OUT/mirror/stream.syx
 # the trimmed fonts (fm1.toml font_trim) draw what the full ones draw, pixel for pixel (every face with lower case)
 run font-trim sh -c "mkdir -p $OUT/font/full $OUT/font/trim && \
-    FM1_FONT_FULL='T XS S B M L' $PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
-    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 $PY tools/gen_font.py $OUT/font/trim/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' $FONT_PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 $FONT_PY tools/gen_font.py $OUT/font/trim/felucca_font.h && \
     $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/full -o $OUT/font/full_test tests/font_trim_test.c && \
     $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/trim -o $OUT/font/trim_test tests/font_trim_test.c && \
     $OUT/font/full_test $OUT/font/full.bin && $OUT/font/trim_test $OUT/font/trim.bin && cmp $OUT/font/full.bin $OUT/font/trim.bin"
 # the packed fonts (fm1.toml font_pack: the trimmed glyphs' alphas Huffman-coded) too, pixel for pixel
 run font-pack sh -c "mkdir -p $OUT/font/full $OUT/font/pack && \
-    FM1_FONT_FULL='T XS S B M L' $PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
-    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 FM1_FONT_PACK=1 $PY tools/gen_font.py $OUT/font/pack/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' $FONT_PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 FM1_FONT_PACK=1 $FONT_PY tools/gen_font.py $OUT/font/pack/felucca_font.h && \
     $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/full -o $OUT/font/full_test tests/font_trim_test.c && \
     $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/pack -o $OUT/font/pack_test tests/font_trim_test.c && \
     $OUT/font/full_test $OUT/font/full.bin && $OUT/font/pack_test $OUT/font/pack.bin && cmp $OUT/font/full.bin $OUT/font/pack.bin"
 # the packed fonts drawn through the decoded-glyph cache (app.h APP_FONT_CACHE, device/gfx.c font_cached) too: a cache
 # that forgets all the time (the largest glyph's bytes, 16 slots) and a roomy one
 run font-cache sh -c "mkdir -p $OUT/font/full $OUT/font/pack && \
-    FM1_FONT_FULL='T XS S B M L' $PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
-    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 FM1_FONT_PACK=1 $PY tools/gen_font.py $OUT/font/pack/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' $FONT_PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 FM1_FONT_PACK=1 $FONT_PY tools/gen_font.py $OUT/font/pack/felucca_font.h && \
     $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/full -o $OUT/font/full_test tests/font_trim_test.c && \
     $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -DAPP_FONT_CACHE=FONT_BOX_MAX -DAPP_FONT_CACHE_BITS=4 \
         -I$OUT/font/pack -o $OUT/font/cache_small_test tests/font_trim_test.c && \

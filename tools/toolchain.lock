@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: MPL-2.0
+# Every external tool the build fetches, pinned. tools/setup_toolchain.sh reads this file and refuses anything whose
+# SHA-256 (archives, binaries) or commit (git) differs. To update a pin: check the release's signature or provenance
+# where the project publishes one (noted below), wait out a cooldown of a week or two unless the release fixes a
+# vulnerability, record the new hash here, then run tools/osv_scan.sh. After ESTAMPIE's tools/toolchain.lock.
+#
+# name         platform      version                        sha256 (file) | commit (git)                                       url
+# JieLi's Linux toolchain (clang 4.0.1 for pi32v2): not signed; the pin records what was fetched on 30 July 2026.
+jieli          any           20260730.1                     a1545cddbc451a06bac43eb5cd96d831470c42a97c5c0b1f98879a20fc7647bd  https://jl-update.oss-cn-shenzhen.aliyuncs.com/jieli-linux-toolchains-20260730.1.tar.xz
+# The AC79 SDK, at the tag the package's three files (uboot.boot, cfg_tool.bin, eq_cfg_hw.bin; tools/build.py
+# SDK_SHA256 checks them) are taken from; setup_toolchain.sh checks out those three files alone.
+ac79-sdk       git           AC79NN_SDK_V1.2.1_2023-12-13   d179b4484759423312073f5fbb232501aa491047                          https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git
+# Node: the web page and browser emulator tests (tests/*.mjs) run on it; only the node binary is kept, npm, npx and
+# corepack are deleted after unpacking. The SHASUMS256.txt.asc of each release is signed by a key in
+# github.com/nodejs/release-keys (24.22.3: a security release of 10 November 2026, taken over the cooldown).
+node           darwin-arm64  24.22.3                        1d64136c8a43d648d1b3bad10797a4c995b1ca032d2bde8799de43b37f058fe5  https://nodejs.org/dist/v24.22.3/node-v24.22.3-darwin-arm64.tar.xz
+node           linux-x64     24.22.3                        4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb  https://nodejs.org/dist/v24.22.3/node-v24.22.3-linux-x64.tar.xz
+# uv: makes .venv from uv.lock (hash-checked), and the Python it runs on. Only where none is installed, e.g. a fresh
+# CI runner; each archive's GitHub build attestation was verified before pinning (gh attestation verify
+# uv-....tar.gz --repo astral-sh/uv: signed by astral-sh/uv's release.yml).
+uv             darwin-arm64  0.13.1                         cfe454573412ff7380d15fc7dae5997ab53ffce72fce0a78e91ddbc84001acd2  https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-apple-darwin.tar.gz
+uv             linux-x64     0.13.1                         eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220  https://github.com/astral-sh/uv/releases/download/0.13.1/uv-x86_64-unknown-linux-gnu.tar.gz
+# osv-scanner: the vulnerability scanner itself (tools/osv_scan.sh); hashes from the release's osv-scanner_SHA256SUMS.
+osv-scanner    darwin-arm64  2.7.0                          d4926ef8da134332543be276dff157e4c170f99ad91fc48e89448a8816bdf70b  https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-scanner_darwin_arm64
+osv-scanner    linux-x64     2.7.0                          160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b  https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-scanner_linux_amd64
+# fm1-reader (Charles Vestal, MIT; its voice, eSpeak NG compiled to WebAssembly, GPL-3.0-or-later): the screen
+# reader's page, words.js, tts.js and espeak/, which tools/build.py --web puts in the emulator page from a checkout
+# beside this repository, or from this pinned one.
+fm1-reader     git           main                           2f49d91c142b1304fc5654496b35d40607d8511e                          https://github.com/charlesvestal/fm1-reader.git
+# The container the JieLi tools run in on macOS / non-x86 hosts (tools/build.py): distroless's cc image, which has what
+# the tools need (glibc, libstdc++, libgcc) and nothing else; sha256 is the image index digest (docker buildx
+# imagetools inspect). tools/osv_scan.sh build-image says when the tag has moved.
+build-image    linux-amd64   cc-debian13:nonroot            cc66d222f0a7ec996b78a99fe76a969bc80b539a5016ad866c14d1949bc6d0ab  gcr.io/distroless/cc-debian13:nonroot

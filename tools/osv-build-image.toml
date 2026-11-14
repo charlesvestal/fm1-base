@@ -1,0 +1,181 @@
+# SPDX-License-Identifier: MPL-2.0
+# Known vulnerabilities accepted in the build image (tools/toolchain.lock build-image), for
+# tools/osv_scan.sh --config. Each is in a distroless base package (glibc, the gcc-14 runtime libraries, zlib, openssl) with no
+# fix in Debian 13 yet (only in unstable); distroless rebuilds when Debian ships one. Exposure: the container has no
+# network, no shell, no capabilities, a read-only root, and runs only JieLi's compiler on this repository's sources.
+# Every entry expires: after ignoreUntil the scan fails again, so each is re-checked (update the digest first).
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2010-4756"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2018-20796"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2019-1010022"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2019-1010023"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2019-1010024"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2019-1010025"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2019-9192"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-102010"
+ignoreUntil = 2027-01-15
+reason = "gcc-14 in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-114690"
+ignoreUntil = 2027-01-15
+reason = "gcc-14 in the distroless build image: no fix in any Debian release yet (published 2026-10-30); offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-114691"
+ignoreUntil = 2027-01-15
+reason = "gcc-14 in the distroless build image: no fix in any Debian release yet (published 2026-10-30); offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-115455"
+ignoreUntil = 2027-01-15
+reason = "gcc-14 in the distroless build image: no fix in any Debian release yet (published 2026-10-30); offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-115456"
+ignoreUntil = 2027-01-15
+reason = "gcc-14 (libstdc++ std::from_chars over-read) in the distroless build image: no fix in any Debian release yet (published 2026-10-30); offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-18374"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-19499"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-19542"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-5435"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-6238"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-6368"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-6791"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-77117"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-80489"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-84243"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in any Debian release yet (published 2026-10-30); offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-8674"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-86805"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-89092"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-95619"
+ignoreUntil = 2027-01-15
+reason = "gcc-14 in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-95818"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-97399"
+ignoreUntil = 2027-01-15
+reason = "glibc in the distroless build image: no fix in Debian 13 yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-107496"
+ignoreUntil = 2027-01-15
+reason = "openssl (CMS to an EC certificate) in the distroless build image: no fix in any Debian release yet (published 2026-11-10); the compiler uses no TLS, QUIC or CMS; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-88822"
+ignoreUntil = 2027-01-15
+reason = "openssl (QUIC peer detection) in the distroless build image: no fix in any Debian release yet (published 2026-11-10); the compiler uses no TLS, QUIC or CMS; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-88823"
+ignoreUntil = 2027-01-15
+reason = "openssl (AES-GCM-SIV with zero-length AAD) in the distroless build image: no fix in any Debian release yet (published 2026-11-10); the compiler uses no TLS, QUIC or CMS; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-95691"
+ignoreUntil = 2027-01-15
+reason = "openssl (a retransmitted QUIC CRYPTO frame) in the distroless build image: no fix in any Debian release yet (published 2026-11-10); the compiler uses no TLS, QUIC or CMS; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-95692"
+ignoreUntil = 2027-01-15
+reason = "openssl (a short AES-GCM-SIV IV) in the distroless build image: no fix in any Debian release yet (published 2026-11-10); the compiler uses no TLS, QUIC or CMS; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-100290"
+ignoreUntil = 2027-01-15
+reason = "glibc (regcomp / regexec after a failed allocation) in the distroless build image: no fix in any Debian release yet; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-115819"
+ignoreUntil = 2027-01-15
+reason = "glibc (wide scanf %s / %[ without l) in the distroless build image: no fix in any Debian release yet; offline, unprivileged compile-only container"
