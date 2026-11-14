@@ -12,6 +12,7 @@ static uint32_t ble_midi_out_room(uint32_t to) { (void)to; return 0; }
 /* ---- plat.h */
 int plat_ble_state(void) { return BLE_OFF; }
 int plat_ble_connected(void) { return 0; }
+int plat_ble_rssi(int link) { (void)link; return 0; }
 int plat_ble_linked(void) { return 0; }
 int plat_ble_stream(const struct plat_ble_stream *s) { (void)s; return 0; }   /* (send by plat_midi_send) */
 void plat_ble_link_info(uint32_t v[7])
