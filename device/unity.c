@@ -27,6 +27,8 @@
  *   FM1B_BLE 0              Bluetooth MIDI (fm1.toml ble = true; tools/build.py --no-ble leaves it out)
  *   FM1B_MIRROR 0           the screen and panel mirrored over USB (fm1.toml mirror = true: mirror.c)
  *   FM1B_MSC 0              disk mode: the FM-1 as a USB drive of the app's blocks (fm1.toml msc = true: msc.c)
+ *   FM1B_SD 0               a microSD card on the LCD's SPI1 and its FAT files (fm1.toml sd = true: sd.c, lib/sd_fs.c,
+ *                           lib/fatfs; felucca-bsp's fm1_sd_hw.h)
  *   FM1B_BACKUP 0           backup and restore of the app's objects over USB (fm1.toml backup = true: backup.c)
  *   FM1B_RES 0              the resource region (fm1.toml resources = FILE: res.c; with backup)
  *   FM1B_CPU2 0             the second core (fm1.toml cpu2 = true: cpu2.c, felucca-bsp's fm1_cpu1.h)
@@ -88,6 +90,9 @@
 #include "fm1_adc.h"
 #include "fm1_jack.h"               /* the headphone jack's switch (PB5): plat_headphones */
 #include "fm1_lcd_hw.h"
+#if FM1B_SD
+#include "fm1_sd_hw.h"            /* the SD card on the LCD's SPI1 (felucca-bsp: the board's pins; sd.c) */
+#endif
 #if FM1B_WIFI || FM1B_BLE
 #define FL_UID 1                          /* the flash's unique ID: the WiFi MAC, the Bluetooth name (plat_chip_uid) */
 #endif
@@ -173,6 +178,9 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define FM1B_MSC 0
 #endif
 #define FELUCCA_MSC FM1B_MSC      /* disk mode: usb.c's mass-storage descriptors and EP3 (msc.c) */
+#ifndef FM1B_SD
+#define FM1B_SD 0
+#endif
 #ifndef FM1B_MIDI_STAMP
 #define FM1B_MIDI_STAMP 0         /* 1: MIDI in stamped where it lands, USB and the jack (fm1.toml midi_stamp = true;
                                    * plat_midi_in_t24); 0: when the app read it */
@@ -365,6 +373,10 @@ static void mirror_mid(uint32_t buttons, uint32_t keys) { (void)buttons, (void)k
 #endif
 #if FM1B_MSC
 #include "msc.c"                  /* disk mode: the FM-1 as a USB drive (plat_disk_*) */
+#endif
+#if FM1B_SD
+#include "sd.c"                   /* the card: plat_sd_read / _write (on SPI1 between the LCD's transfers) */
+#include "sd_fs.c"                /* its files: FatFs, plat_sd_start */
 #endif
 #if FM1B_BACKUP
 #include "backup.c"               /* backup and restore of the app's objects over USB (tools/fm1_backup.py) */
