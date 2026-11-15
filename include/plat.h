@@ -523,9 +523,11 @@ typedef struct {
                                                         * steps */
     uint8_t read_fails;                                /* 1: read's 0 is a failure (the computer hears a medium
                                                         * error), not zeros */
-    int (*present)(void);                              /* optional: 0 while the medium is gone (a card pulled): the
-                                                        * computer hears "no medium" (as from a card reader), then
-                                                        * "medium changed" once when it's back (blocks may differ) */
+    int (*present)(void);                              /* optional: 0 while the medium is gone (a card pulled), else
+                                                        * a number for the medium in, another when another one is put
+                                                        * in: the computer hears "no medium" (as from a card reader),
+                                                        * then "medium changed" when it's back or another; blocks may
+                                                        * differ. A command's blocks never go to another medium */
 } plat_disk_t;
 enum { PLAT_DISK_OFF, PLAT_DISK_WAITING, PLAT_DISK_MOUNTED, PLAT_DISK_EJECTED };
 void plat_disk_mode(const plat_disk_t *d);             /* d: the FM-1 drops off USB and comes back as this disk; 0:
@@ -569,7 +571,7 @@ void plat_sd_info(plat_sd_info_t *i);
  * plat_sd_disk_poll() from the main loop (APP_LOOP) in place of plat_disk_poll, with the same answers. Its files are
  * unmounted meanwhile (the computer owns them): plat_disk_mode(0) and plat_sd_start() to have them back. Reads run
  * ahead while USB sends; a WRITE's blocks are written together, before the computer hears it succeeded. Uses
- * APP_SD_DISK_RA (32) + APP_SD_DISK_WB (64) blocks of the pool: 48 KiB */
+ * APP_SD_DISK_RA (32) + APP_SD_DISK_WB (32) blocks of the pool: 32 KiB */
 const plat_disk_t *plat_sd_disk(void);
 int plat_sd_disk_poll(void);
 

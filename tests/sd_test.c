@@ -36,12 +36,13 @@ uint32_t plat_disk_idle_ms(void) { return 0; }
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); fails++; } } while (0)
 
-static uint32_t crc7_bad, crc16_bad, cmds;   /* over every card */
+static uint32_t crc7_bad, crc16_bad, cmds, wflips;   /* over every card */
 
 static void card(uint32_t sectors, int hc, int v2)
 {
     crc7_bad += sdm.crc7_bad;
     crc16_bad += sdm.crc16_bad;
+    wflips += sdm.wflips;
     cmds += sdm.cmds;
     free(sdm.img);
     memset(&sdm, 0, sizeof sdm);
@@ -400,6 +401,44 @@ int main(int argc, char **argv)
         CHECK(d->read(70000) && !memcmp(d->read(70000), sdm.img + 70000u * 512, 512));
     }
 
+    printf("sd: a written block damaged, a stop refused\n");
+    {
+        static uint8_t w[8 * 512] __attribute__((aligned(4))), rb[8 * 512] __attribute__((aligned(4)));
+        const plat_disk_t *d;
+        uint32_t i, k, c12, bad = 0;
+        card(131072, 1, 1);
+        CHECK(plat_sd_start() == SD_E_NOFS);
+        for (i = 0; i < sizeof w; i++)
+            w[i] = (uint8_t)(i * 11u + 3u);
+        sdm.wflip_next = 1;                          /* a multi-block write: the 1st block refused, CMD12, again */
+        c12 = sdm.count[12];
+        CHECK(plat_sd_write(900, w, 8) == 0 && !memcmp(sdm.img + 900u * 512, w, sizeof w));
+        CHECK(sdm.count[12] > c12 && sdm.phase != SDM_WRITE_ERR);
+        sdm.rej12 = 1;                               /* a multi-block read whose stop is refused: again, right */
+        CHECK(plat_sd_read(900, rb, 8) == 0 && !memcmp(rb, w, sizeof w));
+        CHECK(sdm.phase != SDM_READ);                /* (not left streaming) */
+        CHECK(plat_sd_read(5, rb, 1) == 0 && !memcmp(rb, sdm.img + 5 * 512, 512));   /* (in step after) */
+        d = plat_sd_disk();                          /* the USB drive: a block refused mid-stream */
+        sdm.wflip_next = 1;
+        for (i = 80000; i < 80040; i++) {
+            for (k = 0; k < 512; k++)
+                w[k] = (uint8_t)(i + k);
+            CHECK(d->write(i, w) == 0);
+            d->work();
+        }
+        CHECK(d->sync() == 0);
+        for (i = 80000; i < 80040; i++)
+            for (k = 0; k < 512; k++)
+                bad += sdm.img[(size_t)i * 512 + k] != (uint8_t)(i + k);
+        CHECK(bad == 0 && sdm.phase != SDM_WRITE_ERR);
+        CHECK(d->read(81000) != 0);                  /* a read stream, then its stop refused at the close */
+        d->work();
+        sdm.rej12 = 1;
+        CHECK(plat_sd_read(6, rb, 1) == 0 && !memcmp(rb, sdm.img + 6 * 512, 512));
+        CHECK(sdm.phase != SDM_READ);
+        CHECK(plat_sd_start() == SD_E_NOFS);
+    }
+
     printf("sd: no card\n");
     card(131072, 1, 1);
     sdm.absent = 1;
@@ -409,7 +448,7 @@ int main(int argc, char **argv)
     CHECK(!strcmp(plat_sd_what(plat_sd_state()), "no card"));
 
     card(1024, 1, 1);                                      /* (the last card's counts in) */
-    CHECK(crc7_bad == 0 && crc16_bad == 0);
+    CHECK(crc7_bad == 0 && crc16_bad == wflips);       /* (only the blocks damaged on purpose refused) */
     CHECK(sdm.lcd_overlap == 0 && lcd_syncs > 0);
     printf("sd: %u commands; every command's CRC7 and written block's CRC16 accepted\n", cmds);
     if (fails) {

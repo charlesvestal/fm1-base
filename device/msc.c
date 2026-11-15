@@ -12,6 +12,8 @@ static struct {
     uint8_t state, status, ejected, waiting_csw;
     uint8_t wrote;                               /* a block went to the app's write this command (sync at its end) */
     uint8_t gone;                                /* the medium was gone (present() 0): "changed" to say once back */
+    uint32_t medium, cmd_medium;                 /* present()'s number the computer last heard of; at this command's start */
+    uint32_t padded;                             /* bytes this command moved that were not its data (padding, dropped) */
     uint8_t cbw[31];
     uint32_t cbw_n;                              /* bytes of the command block so far */
     uint32_t tag, dlen, done;                    /* the command's tag, its data length, the bytes moved */
@@ -81,6 +83,19 @@ static void ms_refuse(uint8_t key, uint8_t asc)
     }
 }
 
+/* what the app holds, written: sync (its answer), else flush (none). 0 = written */
+static int ms_sync(void)
+{
+    if (ms.d->sync)
+        return ms.d->sync();
+    if (ms.d->flush)
+        ms.d->flush();
+    return 0;
+}
+
+/* the medium this command started on still in? (a card pulled, or another put in, mid-command: no) */
+static int ms_same_medium(void) { return !ms.d->present || (uint32_t)ms.d->present() == ms.cmd_medium; }
+
 static void ms_command(void)
 {
     const uint8_t *cb = ms.cbw + 15;
@@ -90,18 +105,23 @@ static void ms_command(void)
     ms.done = 0;
     ms.buf_n = 0;
     ms.wrote = 0;
+    ms.padded = 0;
     memset(ms.buf, 0, 36);
     if (cb[0] != 0x12 && cb[0] != 0x03 && ms.d->present) {   /* (INQUIRY and REQUEST SENSE answer anyway) */
-        if (!ms.d->present()) {
+        uint32_t m = (uint32_t)ms.d->present();
+        if (!m) {
             ms.gone = 1;
             ms_refuse(0x02, 0x3A);               /* not ready: no medium (a card reader with its card out) */
             return;
         }
-        if (ms.gone) {
+        if (ms.gone || (ms.medium && m != ms.medium)) {   /* back, or another one in since the last command */
             ms.gone = 0;
+            ms.medium = m;
             ms_refuse(0x06, 0x28);               /* unit attention: the medium may have changed (read it again) */
             return;
         }
+        ms.medium = m;
+        ms.cmd_medium = m;
     }
     switch (cb[0]) {
     case 0x00:                                   /* TEST UNIT READY */
@@ -153,14 +173,19 @@ static void ms_command(void)
         ms_finish(0);
         return;
     case 0x35:                                   /* SYNCHRONIZE CACHE (10) */
-        if (ms.d->flush)
-            ms.d->flush();
-        ms_finish(0);
+        if (ms_sync()) {
+            ms_sense(0x03, 0x0C);                /* medium error: write error */
+            ms_finish(1);
+        } else
+            ms_finish(0);
         return;
     case 0x1B:                                   /* START STOP UNIT: eject (LoEj, not Start) */
         if ((cb[4] & 3u) == 2u) {
-            if (ms.d->flush)
-                ms.d->flush();
+            if (ms_sync()) {                     /* not written: no eject, the computer hears it */
+                ms_sense(0x03, 0x0C);
+                ms_finish(1);
+                return;
+            }
             ms.ejected = 1;
         }
         ms_finish(0);
@@ -219,7 +244,14 @@ static void ms_data_in(void)
     if (usb_msc_busy())
         return;
     if (ms.left) {                               /* READ: the next block (the last one is sent now) */
-        const uint8_t *b = ms.d->read(ms.lba);
+        const uint8_t *b = ms_same_medium() ? ms.d->read(ms.lba) : 0;
+        if (!ms_same_medium()) {                 /* the card changed under the command: the rest padding */
+            ms_sense(0x02, 0x3A);
+            ms.status = 1;
+            ms.left = 0;
+            memset(ms.buf, 0, 64);
+            return;
+        }
         if (!b && ms.d->read_fails) {            /* unreadable: the rest of the transfer padding, a medium error */
             ms_sense(0x03, 0x11);                /* medium error: unrecovered read error */
             ms.status = 1;
@@ -247,6 +279,7 @@ static void ms_data_in(void)
         uint32_t n = ms.dlen - ms.done > 64u ? 64u : ms.dlen - ms.done;
         usb_msc_send(ms.buf, n);
         ms.done += n;
+        ms.padded += n;                          /* (not data: the residue says so) */
         if (ms.done < ms.dlen)
             return;
     }
@@ -266,11 +299,19 @@ static void ms_data_out(void)
         ms.buf_n += n;
         ms.done += n;
         if (ms.buf_n == 512u) {
-            ms.wrote = 1;
-            if (ms.d->write(ms.lba, ms.buf) != 0) {
-                ms_sense(0x03, 0x0C);            /* medium error: write error */
+            if (!ms.status && !ms_same_medium()) {   /* the card pulled or changed mid-command: not written */
+                ms_sense(0x02, 0x3A);
                 ms.status = 1;
             }
+            if (!ms.status) {                    /* (after a failure the rest is dropped, never written) */
+                ms.wrote = 1;
+                if (ms.d->write(ms.lba, ms.buf) != 0) {
+                    ms_sense(0x03, 0x0C);        /* medium error: write error */
+                    ms.status = 1;
+                }
+            }
+            if (ms.status)
+                ms.padded += 512u;               /* (this block not written) */
             ms.lba++;
             ms.left--;
             ms.buf_n = 0;
@@ -279,6 +320,7 @@ static void ms_data_out(void)
         uint8_t junk[64];
         n = usb_msc_read(junk, want > 64u ? 64u : want);
         ms.done += n;
+        ms.padded += n;
     }
     if (ms.done >= ms.dlen) {
         if (!ms.status && ms.wrote && ms.d->sync && ms.d->sync() != 0) {   /* what write held, on the medium first */
@@ -327,8 +369,8 @@ void plat_disk_mode(const plat_disk_t *d)
         ms.resets = usb_msc_resets();
         usb_msc_switch(1);
     } else {
-        if (ms.d && ms.d->flush)
-            ms.d->flush();
+        if (ms.d)
+            ms_sync();
         ms.d = 0;
         usb_msc_switch(0);
     }
@@ -370,7 +412,7 @@ int plat_disk_poll(void)
             if (ms.state == MS_OUT && !usb_msc_avail() && !ms_pump_until(1))
                 break;
         } else {                                 /* MS_CSW */
-            uint32_t residue = ms.dlen > ms.done ? ms.dlen - ms.done : 0;
+            uint32_t moved = ms.done - ms.padded, residue = ms.dlen > moved ? ms.dlen - moved : 0;
             if (usb_msc_busy())
                 break;
             ms.csw[0] = 0x55;

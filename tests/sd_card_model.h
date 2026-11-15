@@ -11,11 +11,15 @@
 #include <string.h>
 
 #define SDM_LSB_KHZ 60000u
-enum { SDM_IDLE, SDM_READ, SDM_WRITE_WAIT, SDM_WRITE_DATA };
+enum { SDM_IDLE, SDM_READ, SDM_WRITE_WAIT, SDM_WRITE_DATA, SDM_WRITE_ERR };   /* WRITE_ERR: a block refused in a
+                                         * multi-block write, the card waits for CMD12 (and nothing else) */
 static struct {
     uint8_t *img;                       /* sectors x 512 */
     uint32_t sectors;
     int hc, v2, absent, dma_bad, flip_next, stuck;   /* stuck: DO held low, nothing heard (a wedged card) */
+    int wflip_next, rej12;              /* the next n written blocks arrive damaged; the next n CMD12s refused (the
+                                         * stream goes on) */
+    uint32_t wflips;                    /* written blocks damaged so far (their CRC16 refused on purpose) */
     uint32_t max_khz;                   /* 0: any clock */
     /* state */
     int idle, crc_on, acmd, init_left, open, sel;
@@ -109,6 +113,19 @@ static void sdm_command(void)
         sdm_r1((uint8_t)(idle | 0x08));
         return;
     }
+    if (c == 12 && sdm.rej12 > 0) {     /* refused: its answer at once, then the read goes on (the next block) */
+        sdm.rej12--;
+        sdm.out_n = 0;
+        sdm_put(0xFF);
+        sdm_put(0x04);
+        return;
+    }
+    if (sdm.phase == SDM_READ && c != 12 && c != 0)
+        return;                         /* (a multi-block read heeds CMD12 only, and a reset) */
+    if (sdm.phase == SDM_WRITE_ERR && c != 12) {   /* (only CMD12 ends a refused multi-block write) */
+        sdm_r1(0x04);
+        return;
+    }
     if (c == 12) {                      /* stop: whatever was going out, dropped */
         sdm.out_n = 0;
         sdm.phase = SDM_IDLE;
@@ -126,6 +143,8 @@ static void sdm_command(void)
         sdm.idle = 1;
         sdm.crc_on = 0;
         sdm.phase = SDM_IDLE;
+        sdm.out_n = 0;
+        sdm.busy = 0;
         sdm_r1(0x01);
         return;
     case 8:
@@ -235,10 +254,15 @@ static void sdm_in(uint8_t b)           /* a byte the host sent */
         sdm.wbuf[sdm.wn++] = b;
         if (sdm.wn < 514)
             return;
+        if (sdm.wflip_next > 0) {       /* damaged on the way */
+            sdm.wflip_next--;
+            sdm.wflips++;
+            sdm.wbuf[100] ^= 0x01;
+        }
         if (sdm.crc_on && (uint16_t)(sdm.wbuf[512] << 8 | sdm.wbuf[513]) != sdm_crc16(sdm.wbuf, 512)) {
             sdm.crc16_bad++;
             sdm_put(0x0B);              /* data response: CRC error */
-            sdm.phase = SDM_IDLE;
+            sdm.phase = sdm.multi ? SDM_WRITE_ERR : SDM_IDLE;
             return;
         }
         memcpy(sdm.img + (size_t)sdm.addr * 512, sdm.wbuf, 512);

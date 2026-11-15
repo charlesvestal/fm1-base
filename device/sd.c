@@ -65,6 +65,7 @@ static uint32_t sd_budget(uint32_t ms)     /* a deadline ms ahead, unless one so
 enum { SDS_NONE, SDS_READ, SDS_WRITE };
 static struct {
     uint8_t mode, dma, busy;               /* busy: a written block being programmed */
+    uint8_t wabort;                        /* a written block refused: the write ends by CMD12, not the stop token */
     int8_t werr;                           /* a write stream closed by someone else, and how it ended */
     uint16_t crc;                          /* the write in flight's */
     uint32_t next, wnext, busy_t;          /* the read's next block; the write's (every block before it written) */
@@ -201,6 +202,9 @@ static int sd_data_in(uint8_t *p, uint32_t n, int dma)
     return 0;
 }
 
+/* CMD12's answer: none, or an error bit, and the card can't be trusted to have stopped (it may stream on) */
+static int sd_stop_bad(uint8_t r) { return r == 0xFFu || (r & 0x7Eu); }
+
 static int sd_read_run(uint32_t lba, uint8_t *p, uint32_t n, int dma)
 {
     int rc = 0;
@@ -211,7 +215,8 @@ static int sd_read_run(uint32_t lba, uint8_t *p, uint32_t n, int dma)
         return SD_E_READ;
     for (; n && !rc; n--, p += 512)
         rc = sd_data_in(p, 512u, dma);
-    sd_cmd(12u, 0);                         /* stop (its R1 may carry the run's last bits: not checked) */
+    if (sd_stop_bad(sd_cmd(12u, 0)) && !rc)
+        rc = SD_E_READ;                    /* (the caller's retry starts the card again) */
     if (!sd_ready(500u) && !rc)
         rc = SD_E_TIMEOUT;
     return rc;
@@ -252,11 +257,17 @@ static int sd_write_run(uint32_t lba, const uint8_t *p, uint32_t n)
             return SD_E_WRITE;
         for (; n && !rc; n--, p += 512)
             rc = sd_data_out(p, 0xFCu);
-        fm1_sd_xfer(0xFFu);
-        fm1_sd_xfer(0xFDu);                /* stop */
-        fm1_sd_xfer(0xFFu);
-        if (!sd_ready(500u) && !rc)
-            rc = SD_E_TIMEOUT;
+        if (rc) {                          /* a block refused: the run ended by CMD12, not the stop token (the SD
+                                            * spec's SPI mode, the data response token) */
+            sd_cmd(12u, 0);
+            sd_ready(500u);
+        } else {
+            fm1_sd_xfer(0xFFu);
+            fm1_sd_xfer(0xFDu);            /* stop */
+            fm1_sd_xfer(0xFFu);
+            if (!sd_ready(500u))
+                rc = SD_E_TIMEOUT;
+        }
     }
     if (rc)
         return rc;
@@ -447,8 +458,10 @@ static int sd_stream_close(void)
             fm1_sd_xfer(0xFFu);
         }
         sds.dma = 0;
-        sd_cmd(12u, 0);
-        if (!sd_ready(500u))
+        if (sd_stop_bad(sd_cmd(12u, 0))) {  /* not stopped for sure: started again before the bus goes back */
+            rc = SD_E_READ;
+            sd_recover();
+        } else if (!sd_ready(500u))
             rc = SD_E_TIMEOUT;
     } else {
         if (sds.dma) {                     /* the block in flight, finished */
@@ -458,21 +471,32 @@ static int sd_stream_close(void)
             fm1_sd_xfer((uint8_t)(sds.crc >> 8));
             fm1_sd_xfer((uint8_t)sds.crc);
             r = fm1_sd_xfer(0xFFu) & 0x1Fu;
-            if (!rc && r != 0x05u)
+            if (!rc && r != 0x05u) {
                 rc = r == 0x0Bu ? SD_E_CRC : SD_E_WRITE;
+                sds.wabort = 1;
+            }
             if (!rc) {
                 sds.wnext++;
                 sds.busy = 1;
             }
         }
-        if (sds.busy && !sd_ready(500u) && !rc)
-            rc = SD_E_TIMEOUT;
-        sds.busy = 0;
-        fm1_sd_xfer(0xFFu);
-        fm1_sd_xfer(0xFDu);                /* stop */
-        fm1_sd_xfer(0xFFu);
-        if (!sd_ready(500u) && !rc)
-            rc = SD_E_TIMEOUT;
+        if (sds.wabort) {                  /* a block refused: CMD12, not the stop token */
+            sds.busy = 0;
+            sd_cmd(12u, 0);
+            sd_ready(500u);
+            if (!rc)
+                rc = SD_E_WRITE;
+        } else {
+            if (sds.busy && !sd_ready(500u) && !rc)
+                rc = SD_E_TIMEOUT;
+            sds.busy = 0;
+            fm1_sd_xfer(0xFFu);
+            fm1_sd_xfer(0xFDu);            /* stop */
+            fm1_sd_xfer(0xFFu);
+            if (!sd_ready(500u) && !rc)
+                rc = SD_E_TIMEOUT;
+        }
+        sds.wabort = 0;
         if (!rc && (sd_cmd(13u, 0) || fm1_sd_xfer(0xFFu)))
             rc = SD_E_WRITE;
     }
@@ -610,8 +634,10 @@ static int sd_ws_finish(void)              /* the block in flight: DMA, CRC, the
     fm1_sd_xfer((uint8_t)(sds.crc >> 8));
     fm1_sd_xfer((uint8_t)sds.crc);
     r = fm1_sd_xfer(0xFFu) & 0x1Fu;
-    if (r != 0x05u)
+    if (r != 0x05u) {
+        sds.wabort = 1;                    /* (the close ends it by CMD12) */
         return sd_stream_fail(r == 0x0Bu ? SD_E_CRC : SD_E_WRITE);
+    }
     sds.wnext++;
     sds.busy = 1;
     sds.busy_t = plat_ms();

@@ -116,7 +116,8 @@ static struct {
     uint8_t r_dma;                         /* block ra_lba + ra_n on its way into its slot (the read stream) */
     uint8_t w_stream;                      /* the write stream (open or closed by the LCD) is the queue's */
     uint32_t wq_lba, wq_n;                 /* the writes not yet on the card: [wq_lba, wq_lba + wq_n) */
-    int w_err;                             /* a write failed since the last sync */
+    int w_err;                             /* a write failed since the last sync (the WRITE fails) */
+    uint8_t w_plain;                       /* a stream's trouble: the rest written plainly (they decide) */
     uint32_t near;                         /* no streams from here on */
     uint32_t r_bad;                        /* plat_ms of a read stream's failure: plain reads (their retries, the
                                             * clock's steps) for a second after */
@@ -128,27 +129,37 @@ static struct {
 
 #ifdef SD_NO_STREAMS
 /* the host: the streams as plain sector calls (host/plat_host.c, an image file) */
-static uint8_t sdh_mode;
+static uint8_t sdh_mode, sdh_wpend;      /* sdh_wpend: a block started, its write at finish */
 static uint32_t sdh_next, sdh_wnext;
 static uint8_t *sdh_p;
 static const uint8_t *sdh_wp;
 static int sd_stream_mode(void) { return sdh_mode; }
 static uint32_t sd_rs_next(void) { return sdh_next; }
 static uint32_t sd_ws_next(void) { return sdh_wnext; }
-static int sd_stream_close(void) { sdh_mode = 0; return 0; }
+static int sd_ws_finish(void);
+static int sd_stream_close(void)
+{
+    int rc = sdh_wpend ? sd_ws_finish() : 0;   /* (a block started, written: as the device's close) */
+    sdh_mode = 0;
+    return rc;
+}
 static int sd_rs_open(uint32_t lba) { sdh_mode = 1; sdh_next = lba; return 0; }
 static int sd_rs_start(uint8_t *p) { sdh_p = p; return 0; }
 static int sd_rs_poll(void) { return 1; }
 static int sd_rs_finish(void) { return plat_sd_read(sdh_next++, sdh_p, 1); }
-static int sd_ws_open(uint32_t lba) { sdh_mode = 2; sdh_wnext = lba; return 0; }
-static int sd_ws_ready(void) { return 1; }
-static void sd_ws_start(const uint8_t *p) { sdh_wp = p; }
+static int sd_ws_open(uint32_t lba) { sdh_mode = 2; sdh_wnext = lba; sdh_wpend = 0; return 0; }
+static int sd_ws_ready(void) { return !sdh_wpend; }
+static void sd_ws_start(const uint8_t *p) { sdh_wp = p; sdh_wpend = 1; }
 static int sd_ws_poll(void) { return 1; }
-static int sd_ws_finish(void) { return plat_sd_write(sdh_wnext++, sdh_wp, 1) ? SD_E_WRITE : 0; }
+static int sd_ws_finish(void)
+{
+    sdh_wpend = 0;
+    return plat_sd_write(sdh_wnext++, sdh_wp, 1) ? SD_E_WRITE : 0;
+}
 static int sd_ws_err(void) { return 0; }
 #define SDS_READ 1
 #define SDS_WRITE 2
-#define SD_W_INFLIGHT() 0
+#define SD_W_INFLIGHT() (sdh_wpend)
 #else
 #define SD_W_INFLIGHT() (sds.mode == SDS_WRITE && sds.dma)
 #endif
@@ -175,6 +186,10 @@ static int sdk_fill(uint32_t want)         /* plain read-ahead: up to want block
 }
 
 /* ---- writes: a queue, out by the write stream ---- */
+/* Errors: a stream's trouble that leaves the blocks not written in the queue (a block refused, the stream not
+ * opened, a stream gone too long) only turns the rest to plain writes (w_plain), which decide: a plain write that
+ * fails every try fails the WRITE (w_err). Trouble after blocks were counted written (the card stuck busy after one,
+ * a clean run's end refused, a stream ended under the LCD with an error) fails it at once: they may not be there */
 static void sdk_w_settle(void)             /* the blocks the stream has written, off the queue */
 {
     uint32_t done;
@@ -193,11 +208,24 @@ static void sdk_w_settle(void)             /* the blocks the stream has written,
         sdk.w_stream = 0;
 }
 
+static void sdk_w_close(void)              /* the write stream ended on purpose: an error then is a real one */
+{
+    int r;
+    if (sd_stream_mode() != SDS_WRITE)
+        return;
+    if ((r = sd_stream_close()) != 0 && !sdk.w_err)
+        sdk.w_err = r;
+    sdk_w_settle();
+}
+
 static int sdk_w_plain(void)               /* the queue written plainly, a block at a time (with retries) */
 {
     while (sdk.wq_n) {
-        if (plat_sd_write(sdk.wq_lba, sdk_wb[sdk.wq_lba % APP_SD_DISK_WB], 1))
+        if (plat_sd_write(sdk.wq_lba, sdk_wb[sdk.wq_lba % APP_SD_DISK_WB], 1)) {
+            if (!sdk.w_err)
+                sdk.w_err = SD_E_WRITE;
             return -1;
+        }
         sdk.wq_lba++;
         sdk.wq_n--;
     }
@@ -208,24 +236,22 @@ static int sdk_w_step(void)                /* one step of the queue's writing: 1
 {
     int r;
     sdk_w_settle();
+    if (sdk.w_err)
+        return -1;
     if (!sdk.wq_n)
         return 0;
-    if (sdk.wq_lba >= sdk.near || sdk.w_err) {   /* the card's end, or after an error: plainly */
-        if (sd_stream_mode() == SDS_WRITE) {
-            if ((r = sd_stream_close()) != 0 && !sdk.w_err)
-                sdk.w_err = r;
-            sdk_w_settle();
-        }
+    if (sdk.wq_lba >= sdk.near || sdk.w_plain) {   /* the card's end, or after a stream's trouble: plainly */
+        sdk_w_close();
+        if (sdk.w_err)
+            return -1;
         return sdk_w_plain() ? -1 : 1;
     }
     if (sd_stream_mode() != SDS_WRITE || sd_ws_next() != sdk.wq_lba) {   /* (a block in flight is still the head) */
-        if (sd_stream_mode() == SDS_WRITE) {
-            if ((r = sd_stream_close()) != 0 && !sdk.w_err)
-                sdk.w_err = r;
-            sdk_w_settle();
-        }
+        sdk_w_close();
+        if (sdk.w_err)
+            return -1;
         if (sd_ws_open(sdk.wq_lba)) {
-            sdk.w_err = SD_E_WRITE;
+            sdk.w_plain = 1;
             return 1;
         }
         sdk.w_stream = 1;
@@ -234,17 +260,18 @@ static int sdk_w_step(void)                /* one step of the queue's writing: 1
     if (SD_W_INFLIGHT()) {
         if (!sd_ws_poll())
             return 0;
-        r = sd_ws_finish();
-        if (r && !sdk.w_err)
-            sdk.w_err = r;
+        if (sd_ws_finish()) {              /* refused: the stream ended by CMD12, the block still queued */
+            sd_ws_err();                   /* (that close's error is this refusal's) */
+            sdk.w_plain = 1;
+        }
         sdk_w_settle();
         return 1;
     }
     r = sd_ws_ready();
-    if (r < 0) {
+    if (r < 0) {                           /* stuck busy after a block counted written */
         sdk.w_err = r;
         sdk_w_settle();
-        return 1;
+        return -1;
     }
     if (!r)
         return 0;
@@ -254,21 +281,20 @@ static int sdk_w_step(void)                /* one step of the queue's writing: 1
 
 static int sdk_w_drain(void)               /* every write on the card, the stream ended: 0, or -1 a write failed */
 {
-    int r = 0;
+    int r;
     uint32_t t0 = plat_ms();
     while (sdk.wq_n && sdk_w_step() >= 0)
         if (plat_ms() - t0 > 1500u) {      /* (a DMA that never ends: the stream given up, the rest plainly) */
-            sdk.w_err = SD_E_TIMEOUT;
+            sdk.w_plain = 1;
             break;
         }
-    if (sd_stream_mode() == SDS_WRITE && (r = sd_stream_close()) != 0 && !sdk.w_err)
-        sdk.w_err = r;
-    sdk_w_settle();
+    sdk_w_close();
     sdk.w_stream = 0;
-    if (sdk.wq_n && sdk_w_plain() && !sdk.w_err)   /* (what the stream left: plainly) */
-        sdk.w_err = SD_E_WRITE;
+    if (sdk.wq_n && !sdk.w_err)            /* (what the stream left: plainly) */
+        sdk_w_plain();
     r = sdk.w_err || sdk.wq_n ? -1 : 0;
     sdk.w_err = 0;
+    sdk.w_plain = 0;
     sdk.wq_n = 0;
     return r;
 }
@@ -386,7 +412,8 @@ static void sdk_work(void)                 /* while disk mode waits on USB: a st
 static int sdk_sync(void) { return sdk_w_drain(); }
 static void sdk_flush(void) { sdk_w_drain(); }
 
-static int sdk_present(void) { return plat_sd_state() == 1; }
+static uint32_t sdk_gen;                   /* the card's number as the drive's medium: another each card found */
+static int sdk_present(void) { return plat_sd_state() == 1 ? (int)sdk_gen : 0; }
 
 static plat_disk_t sdk_disk = {0, sdk_read, sdk_write, sdk_flush, "fm1-base", "SD card", sdk_sync, sdk_work, 1,
                                sdk_present};
@@ -395,6 +422,8 @@ static uint32_t sdk_probe_t;               /* plat_ms of the last look for a car
 static void sdk_reset(void)                /* a card (started), as the drive's medium: nothing held, its size */
 {
     uint32_t end = plat_sd_sectors();
+    if (++sdk_gen > 0x7FFFFFFFu)
+        sdk_gen = 1;
     memset(&sdk, 0, sizeof sdk);
     sdk.near = end > SDK_NEAR_END ? end - SDK_NEAR_END : 0;
     sdk_disk.blocks = end;

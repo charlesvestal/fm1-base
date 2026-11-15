@@ -85,12 +85,13 @@ blocks go out in one (CMD25), each block moved by DMA while disk mode waits on U
 once. A WRITE's blocks are on the card before the computer hears it succeeded. A read that fails reaches the computer
 as a medium error, not zeros. The card pulled while it's a drive: the computer hears "no medium" (as from a card
 reader), within a second when it is quiet (the card is asked for its status once a second), at once in the middle of
-a transfer; put back, it's found within 2 s and the computer hears "medium changed" and reads it again. 48 KiB of the
-pool (`APP_SD_DISK_RA`, `APP_SD_DISK_WB`: 32 blocks each).
+a transfer; put back (or another card), it's found within 2 s and the computer hears "medium changed" and reads it
+again; what was left of a command started on the old card never reaches the new one. 32 KiB of the pool
+(`APP_SD_DISK_RA`, `APP_SD_DISK_WB`: 32 blocks each).
 
 For this, `plat_disk_t` has optional fields beyond the app's blocks: `sync` (held writes written before the WRITE is
 answered), `work` (called while disk mode waits on USB), `read_fails` (a read's 0 is an error, not zeros) and
-`present` (the medium there or not). Disk mode also moves its USB packets from the main loop while it waits on them
+`present` (the medium there or not, and which). Disk mode also moves its USB packets from the main loop while it waits on them
 (felucca-bsp `usb_msc_pump`), not only at the 2 kHz poll, which alone allowed ~128 KB/s.
 
 ## How it works
