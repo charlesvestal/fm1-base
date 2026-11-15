@@ -10,6 +10,8 @@ enum { MS_CBW, MS_IN, MS_OUT, MS_CSW };
 static struct {
     const plat_disk_t *d;
     uint8_t state, status, ejected, waiting_csw;
+    uint8_t wrote;                               /* a block went to the app's write this command (sync at its end) */
+    uint8_t gone;                                /* the medium was gone (present() 0): "changed" to say once back */
     uint8_t cbw[31];
     uint32_t cbw_n;                              /* bytes of the command block so far */
     uint32_t tag, dlen, done;                    /* the command's tag, its data length, the bytes moved */
@@ -65,6 +67,20 @@ static void ms_answer(uint32_t n)
         usb_msc_send(ms.buf, n);
 }
 
+/* a command refused with this sense, its data stage (if any) padded through */
+static void ms_refuse(uint8_t key, uint8_t asc)
+{
+    ms_sense(key, asc);
+    ms.left = 0;
+    ms.status = 1;
+    if (!ms.dlen)
+        ms_finish(1);
+    else {
+        ms.state = (ms.cbw[12] & 0x80u) ? MS_IN : MS_OUT;
+        memset(ms.buf, 0, 64);
+    }
+}
+
 static void ms_command(void)
 {
     const uint8_t *cb = ms.cbw + 15;
@@ -73,7 +89,20 @@ static void ms_command(void)
     ms.dlen = (uint32_t)ms.cbw[8] | (uint32_t)ms.cbw[9] << 8 | (uint32_t)ms.cbw[10] << 16 | (uint32_t)ms.cbw[11] << 24;
     ms.done = 0;
     ms.buf_n = 0;
+    ms.wrote = 0;
     memset(ms.buf, 0, 36);
+    if (cb[0] != 0x12 && cb[0] != 0x03 && ms.d->present) {   /* (INQUIRY and REQUEST SENSE answer anyway) */
+        if (!ms.d->present()) {
+            ms.gone = 1;
+            ms_refuse(0x02, 0x3A);               /* not ready: no medium (a card reader with its card out) */
+            return;
+        }
+        if (ms.gone) {
+            ms.gone = 0;
+            ms_refuse(0x06, 0x28);               /* unit attention: the medium may have changed (read it again) */
+            return;
+        }
+    }
     switch (cb[0]) {
     case 0x00:                                   /* TEST UNIT READY */
         if (ms.ejected) {
@@ -191,6 +220,13 @@ static void ms_data_in(void)
         return;
     if (ms.left) {                               /* READ: the next block (the last one is sent now) */
         const uint8_t *b = ms.d->read(ms.lba);
+        if (!b && ms.d->read_fails) {            /* unreadable: the rest of the transfer padding, a medium error */
+            ms_sense(0x03, 0x11);                /* medium error: unrecovered read error */
+            ms.status = 1;
+            ms.left = 0;
+            memset(ms.buf, 0, 64);               /* (the padding) */
+            return;
+        }
         if (!b) {
             memset(ms.buf, 0, 512);
             b = ms.buf;
@@ -230,6 +266,7 @@ static void ms_data_out(void)
         ms.buf_n += n;
         ms.done += n;
         if (ms.buf_n == 512u) {
+            ms.wrote = 1;
             if (ms.d->write(ms.lba, ms.buf) != 0) {
                 ms_sense(0x03, 0x0C);            /* medium error: write error */
                 ms.status = 1;
@@ -243,8 +280,43 @@ static void ms_data_out(void)
         n = usb_msc_read(junk, want > 64u ? 64u : want);
         ms.done += n;
     }
-    if (ms.done >= ms.dlen)
+    if (ms.done >= ms.dlen) {
+        if (!ms.status && ms.wrote && ms.d->sync && ms.d->sync() != 0) {   /* what write held, on the medium first */
+            ms_sense(0x03, 0x0C);                /* medium error: write error */
+            ms.status = 1;
+        }
         ms_finish(ms.status);
+    }
+}
+
+/* the packets moved from here while a transfer waits on them (felucca-bsp usb_msc_pump), up to 2 ms: at the host's pace,
+ * not the 2 kHz poll's (one 64-byte packet a tick). in: until data from the host is there, else until the last
+ * segment is sent. 1: done waiting */
+static int ms_pump_until(int in)
+{
+    uint32_t t0 = plat_ms();
+    do {
+        usb_msc_pump((uint32_t)in);
+        if (in ? usb_msc_avail() != 0 : !usb_msc_busy())
+            return 1;
+        if (ms.d->work)
+            ms.d->work();                        /* the blocks' own work meanwhile (plat_sd_disk: the card's DMA) */
+    } while (plat_ms() - t0 < 2u);
+    return 0;
+}
+
+/* between commands, up to 1 ms: the status still going out sent, the next command block taken as it comes (the
+ * 2 kHz poll alone leaves up to 0.5 ms at each end of every command) */
+static void ms_pump_cbw(void)
+{
+    uint32_t t0 = plat_ms();
+    do {
+        if (usb_msc_busy())
+            usb_msc_pump(0);
+        usb_msc_pump(1);
+        if (ms.cbw_n + usb_msc_avail() >= 31u)
+            return;
+    } while (plat_ms() - t0 < 1u);
 }
 
 void plat_disk_mode(const plat_disk_t *d)
@@ -279,6 +351,8 @@ int plat_disk_poll(void)
     }
     for (k = 0; k < 16; k++) {                   /* a few steps a pass: the main loop goes on */
         if (ms.state == MS_CBW) {
+            if (ms.cbw_n + usb_msc_avail() < 31u && plat_ms() - ms.last_ms < 500u)
+                ms_pump_cbw();                   /* a computer at work: its next command taken at once */
             ms.cbw_n += usb_msc_read(ms.cbw + ms.cbw_n, 31u - ms.cbw_n);
             if (ms.cbw_n < 31u)
                 break;
@@ -289,11 +363,11 @@ int plat_disk_poll(void)
             ms_command();
         } else if (ms.state == MS_IN) {
             ms_data_in();
-            if (ms.state == MS_IN)
-                break;                           /* a packet on its way */
+            if (ms.state == MS_IN && !ms_pump_until(0))
+                break;                           /* a packet still on its way */
         } else if (ms.state == MS_OUT) {
             ms_data_out();
-            if (ms.state == MS_OUT && !usb_msc_avail())
+            if (ms.state == MS_OUT && !usb_msc_avail() && !ms_pump_until(1))
                 break;
         } else {                                 /* MS_CSW */
             uint32_t residue = ms.dlen > ms.done ? ms.dlen - ms.done : 0;
@@ -307,6 +381,7 @@ int plat_disk_poll(void)
             put_le32(ms.csw + 8, residue);
             ms.csw[12] = ms.status;
             usb_msc_send(ms.csw, 13u);
+            usb_msc_pump(0);                     /* the status out now, not at the 2 kHz poll */
             ms.state = MS_CBW;
         }
     }

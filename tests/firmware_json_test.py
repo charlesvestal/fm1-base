@@ -89,6 +89,7 @@ ble_central = true
 bt_audio = true
 usb_host = true
 msc = true
+sd = true
 cpu2 = true
 mirror = true
 backup = true

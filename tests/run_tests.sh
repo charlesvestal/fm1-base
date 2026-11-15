@@ -60,6 +60,14 @@ run smk37-flash sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -
 # the SMK-37's wheels and pedal (device/smk37_analog.h): the rest is the first look after the settling window
 run smk37-analog sh -c "$CC -std=c99 -Wall -Wextra -Werror -o $OUT/smk37_analog_test tests/smk37_analog_test.c && \
     $OUT/smk37_analog_test"
+# the SD card (device/sd.c) against a modelled card in SPI mode (tests/sd_card_model.h), FatFs on top (lib/sd_fs.c):
+# card kinds, sectors, a file system made and read back, the clock's steps, DMA refused, damaged blocks, no card; its
+# FAT32 image read back with mtools when they're here. Then the SD example in the simulator on that image
+run sd sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT_HOST -DFF_USE_MKFS=1 -Iinclude -Ilib \
+    -Itests -o $OUT/sd_test tests/sd_test.c && $OUT/sd_test $OUT/sd_card.img && \
+    if command -v mdir >/dev/null; then MTOOLS_SKIP_CHECK=1 mdir -i $OUT/sd_card.img@@32256 ::/SAMPLES | grep -q 70000; fi"
+run sd-example sh -c "$PY tools/build.py examples/sd --host >/dev/null && \
+    FM1B_SD_IMAGE=$OUT/sd_card.img examples/sd/build/host/sd_host examples/sd/tests/sd.txt $OUT"
 run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts
 # plat_headphones' debounce (device/plat_hp.c) over a simulated jack: a plug's bounce gives one change, 100 ms on

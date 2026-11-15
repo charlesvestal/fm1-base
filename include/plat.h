@@ -559,6 +559,17 @@ typedef struct {
     int (*write)(uint32_t lba, const uint8_t *b);      /* 0 = written (it may hold it until flush) */
     void (*flush)(void);                               /* what is held, written (the computer synced or ejected) */
     const char *vendor, *product;                      /* what the computer calls it: 8 and 16 characters at most */
+    int (*sync)(void);                                 /* optional: what write held, written before the computer is
+                                                        * told a WRITE succeeded (0 = written; else it hears a write
+                                                        * error): a write may hold its blocks to write them together */
+    void (*work)(void);                                /* optional: called again and again while a transfer waits on
+                                                        * USB, for the blocks' own work meanwhile (a card's DMA): short
+                                                        * steps */
+    uint8_t read_fails;                                /* 1: read's 0 is a failure (the computer hears a medium
+                                                        * error), not zeros */
+    int (*present)(void);                              /* optional: 0 while the medium is gone (a card pulled): the
+                                                        * computer hears "no medium" (as from a card reader), then
+                                                        * "medium changed" once when it's back (blocks may differ) */
 } plat_disk_t;
 enum { PLAT_DISK_OFF, PLAT_DISK_WAITING, PLAT_DISK_MOUNTED, PLAT_DISK_EJECTED };
 void plat_disk_mode(const plat_disk_t *d);             /* d: the FM-1 drops off USB and comes back as this disk; 0:
@@ -566,6 +577,45 @@ void plat_disk_mode(const plat_disk_t *d);             /* d: the FM-1 drops off 
 int plat_disk_poll(void);                              /* main loop: serve the computer -> PLAT_DISK_* (EJECTED: the
                                                         * computer let it go) */
 uint32_t plat_disk_idle_ms(void);                      /* since the computer's last command */
+
+/* A microSD card (fm1.toml sd = true: FM1B_SD; device/sd.c on felucca-bsp's fm1_sd_hw.h, the file system lib/sd_fs.c):
+ * the m-card board on the FM-1 (github.com/jvitkauskas/m-card), on the LCD's SPI1. SDSC, SDHC and SDXC cards; FAT12,
+ * FAT16 and FAT32 through FatFs (lib/fatfs, ChaN's: "ff.h", f_open, f_read, ... on the drive ""), mounted by
+ * plat_sd_start. Main loop only (from app_ui_init on: the screen set up), as the screen it shares the bus with: every
+ * call blocks until it's done (a sector at
+ * 20 MHz ~0.3 ms, the start up to ~1 s, a card that's gone up to ~1 s a call). There's no card-detect line: a card is
+ * found by asking it, and a card changed is found by plat_sd_start again. Every block read and written is
+ * CRC-checked: an error, never wrong data. Host: an image file (the script's "sd FILE", "sd out"; or FM1B_SD_IMAGE),
+ * a whole card with its partition table or a bare FAT volume */
+enum { SD_E_NOCARD = -1,                               /* nothing answers */
+       SD_E_INIT = -2,                                 /* a card, but it didn't start */
+       SD_E_CARD = -3,                                 /* a card this doesn't take (an MMC, a voltage) */
+       SD_E_TIMEOUT = -4, SD_E_CRC = -5,               /* the card stopped answering; data kept arriving damaged */
+       SD_E_READ = -6, SD_E_WRITE = -7,                /* the card refused */
+       SD_E_RANGE = -8,                                /* sectors past the card's end */
+       SD_E_STATE = -9,                                /* not started (plat_sd_start) */
+       SD_E_NOFS = -10 };                              /* started, but no FAT file system: sectors only */
+int plat_sd_start(void);           /* find the card, start it, mount its file system: 0, or SD_E_* (SD_E_NOFS: the
+                                    * sectors work, the files don't). Again for a card changed or after an error */
+void plat_sd_stop(void);           /* files closed or not, the card let go (unmounted): plat_sd_start for it again */
+int plat_sd_state(void);           /* 1 started (with or without files), 0 not, < 0 the last start's SD_E_* */
+const char *plat_sd_what(int e);   /* an SD_E_* (or 0, 1) in a few words, for a screen: "no card", "ready", ... */
+uint32_t plat_sd_sectors(void);    /* the card's 512-byte sectors (0: not started) */
+int plat_sd_read(uint32_t sector, void *buf, uint32_t n);         /* n sectors into buf (RAM): 0 or SD_E_* */
+int plat_sd_write(uint32_t sector, const void *buf, uint32_t n);  /* n sectors from buf: 0 or SD_E_* */
+typedef struct {
+    uint32_t sectors, khz;          /* the size; SPI1's clock for the card now (it steps down after errors) */
+    uint32_t crc_errors, retries, timeouts;   /* since power-on: blocks damaged, transfers tried again, waits given up */
+    uint8_t hc, dma, ver;           /* SDHC / SDXC; reads by DMA (else byte by byte); the card's spec, 1 or 2 */
+} plat_sd_info_t;
+void plat_sd_info(plat_sd_info_t *i);
+/* the card as a USB drive (with fm1.toml msc = true: disk mode): plat_disk_mode(plat_sd_disk()) (0: not started), then
+ * plat_sd_disk_poll() from the main loop (APP_LOOP) in place of plat_disk_poll, with the same answers. Its files are
+ * unmounted meanwhile (the computer owns them): plat_disk_mode(0) and plat_sd_start() to have them back. Reads run
+ * ahead while USB sends; a WRITE's blocks are written together, before the computer hears it succeeded. Uses
+ * APP_SD_DISK_RA (32) + APP_SD_DISK_WB (64) blocks of the pool: 48 KiB */
+const plat_disk_t *plat_sd_disk(void);
+int plat_sd_disk_poll(void);
 
 /* code loaded at run time (fm1-ripple's currents: plug-ins copied from its disk into the pool and run there): the
  * guard's RAM code window (felucca-bsp fm1_guard.h, normally .ram_text alone) widened from .ram_text up to end, so
