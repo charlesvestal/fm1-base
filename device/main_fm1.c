@@ -1429,6 +1429,9 @@ static void fm1_main(void)
 #ifdef APP_LOOP
         app_loop();                                 /* the app's background (a radio's tasks) */
 #endif
+#ifdef APP_SYSEX
+        plat_sysex_hold();                          /* (a stream the app left open: let go, so replies go out) */
+#endif
         {   /* a screen reader's SysEx (announce.c), before the updater looks; the updater only at a frame none took
              * (the next one waiting, else, would be its own, dropped if not) */
             const uint8_t *p;
