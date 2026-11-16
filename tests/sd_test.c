@@ -439,6 +439,47 @@ int main(int argc, char **argv)
         CHECK(plat_sd_start() == SD_E_NOFS);
     }
 
+    printf("sd: a restart with the card left streaming (a read, a write between blocks, in a block)\n");
+    {
+        static uint8_t rb[512] __attribute__((aligned(4))), w[512], was[8 * 512];
+        const plat_disk_t *d;
+        int half;
+        card(131072, 1, 1);
+        CHECK(plat_sd_start() == SD_E_NOFS);
+        d = plat_sd_disk();                          /* the USB drive's read stream open (CMD18) ... */
+        CHECK(d->read(5000) != 0);
+        d->work();
+        CHECK(sdm.phase == SDM_READ);
+        memset(&sd, 0, sizeof sd);                   /* ... and the chip restarted (an install, a watchdog): the
+                                                      * card not, still streaming */
+        memset(&sds, 0, sizeof sds);
+        CHECK(plat_sd_start() == SD_E_NOFS && plat_sd_state() == 1);
+        CHECK(plat_sd_read(7, rb, 1) == 0 && !memcmp(rb, sdm.img + 7 * 512, 512));
+        for (half = 0; half < 2; half++) {           /* a write stream open (CMD25): between blocks, in one */
+            uint32_t k;
+            CHECK(plat_sd_start() == SD_E_NOFS);
+            d = plat_sd_disk();
+            memset(w, 0x5A, sizeof w);
+            for (k = 0; k < 4; k++) {
+                d->write(90000 + k, w);
+                d->work();
+            }
+            CHECK(sdm.phase == SDM_WRITE_WAIT);
+            memcpy(was, sdm.img + 90000u * 512, sizeof was);
+            if (half) {                              /* (the chip restarted 200 bytes into a block) */
+                fm1_sd_xfer(0xFCu);
+                for (k = 0; k < 200; k++)
+                    fm1_sd_xfer(0xA5u);
+                sdm.wflips++;                        /* (its CRC16 refused on purpose) */
+            }
+            memset(&sd, 0, sizeof sd);
+            memset(&sds, 0, sizeof sds);
+            CHECK(plat_sd_start() == SD_E_NOFS && plat_sd_state() == 1);
+            CHECK(plat_sd_read(7, rb, 1) == 0 && !memcmp(rb, sdm.img + 7 * 512, 512));
+            CHECK(!memcmp(was, sdm.img + 90000u * 512, sizeof was));   /* the half block never written */
+        }
+    }
+
     printf("sd: no card\n");
     card(131072, 1, 1);
     sdm.absent = 1;
