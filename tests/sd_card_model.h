@@ -20,6 +20,7 @@ static struct {
     int wflip_next, rej12;              /* the next n written blocks arrive damaged; the next n CMD12s refused (the
                                          * stream goes on) */
     uint32_t wflips;                    /* written blocks damaged so far (their CRC16 refused on purpose) */
+    uint32_t busy_talk;                 /* bytes other than 0xFF sent while busy (unheard: a command lost) */
     uint32_t max_khz;                   /* 0: any clock */
     /* state */
     int idle, crc_on, acmd, init_left, open, sel;
@@ -128,11 +129,13 @@ static void sdm_command(void)
         return;
     }
     if (c == 12) {                      /* stop: whatever was going out, dropped */
+        int refused = sdm.phase == SDM_WRITE_ERR;
         sdm.out_n = 0;
         sdm.phase = SDM_IDLE;
         sdm_put(0xFF);                  /* the stuff byte */
         sdm_put(0x00);
-        sdm.busy = 3;
+        sdm.busy = refused ? 400 * 64 : 3;   /* (after a refused write block: busy 400 ms, as an SDXC card may be,
+                                              * up to 500) */
         return;
     }
     if (c != 0 && sdm.idle && !(c == 8 || c == 55 || c == 58 || c == 59 || (acmd && c == 41))) {
@@ -286,6 +289,7 @@ static void sdm_in(uint8_t b)           /* a byte the host sent */
 static uint8_t sdm_xfer(uint8_t b, int dma)
 {
     uint8_t o = 0xFF;
+    int programming = !sdm.out_n && sdm.busy > 0;   /* busy: what comes in meanwhile is not heard */
     sdm.xfers++;
     if (sdm.xfers % 64 == 0)
         sdm_ms++;
@@ -303,7 +307,10 @@ static uint8_t sdm_xfer(uint8_t b, int dma)
     }
     if (sdm.phase == SDM_READ && sdm.out_n < 8)
         sdm_read_next();                /* a multi-block read goes on until CMD12 */
-    sdm_in(b);
+    if (!programming)
+        sdm_in(b);
+    else if (b != 0xFF)
+        sdm.busy_talk++;
     if (dma && sdm.dma_bad)
         o ^= 0x01;
     return o;

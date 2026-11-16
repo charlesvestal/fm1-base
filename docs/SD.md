@@ -105,10 +105,14 @@ answered), `work` (called while disk mode waits on USB), `read_fails` (a read's 
   LCD command D/C is left high (`fm1_sd_park`): the selected card's DO idles high, and the two don't pull against
   each other through the 220 R. A stream left open (the USB drive's) keeps the bus; the LCD's next transfer
   (`lcd_sync`) ends it first.
-- **The start.** A reset restarts the chip, not the card, so a transfer the firmware before left open is ended first:
-  515 clocks finish a half-sent block of a write (its CRC wrong: refused, nothing written), the stop token ends a
-  multi-block write, CMD12 a multi-block read (which heeds nothing else: a CMD0 would get its data). An update and
-  `plat_restart` end the card's transfer before they reset. Then 400 kHz, CMD0, CMD8, ACMD41, CMD58: SDSC v1 and v2, SDHC and SDXC (no MMC). Then CRCs on (CMD59):
+- **The start.** A reset restarts the chip, not the card, so a transfer the firmware before left open (a crash, a
+  watchdog; an update and `plat_restart` end it before they reset) is ended first: 515 clocks finish a half-sent
+  write block, CMD12 ends a multi-block read (which heeds nothing else: a CMD0 would get its data) or a refused write,
+  the stop token a multi-block write, each followed by the card's busy (up to 600 ms). A card still busy gets no CMD0
+  (resetting a card that programs can damage it): the start fails and is tried again. The half block's CRC is then
+  almost always wrong, so it is refused; 1 time in 65536 that sector gets the block's 0xFF tail, as a power loss in
+  the middle of a write would leave it (nothing can cut the card's power to do better).
+  Then 400 kHz, CMD0, CMD8, ACMD41, CMD58: SDSC v1 and v2, SDHC and SDXC (no MMC). Then CRCs on (CMD59):
   the card checks every command and every block written, and every block read is checked here (CRC-16). A clock too
   fast or a poor contact shows as an error, never as wrong data.
 - **The clock.** The fastest of 20, 15, 10 and 5 MHz (LSB / 3, 4, 6, 12; 10 % more at `cpu_clock = 396`), else
@@ -129,7 +133,8 @@ answered), `work` (called while disk mode waits on USB), `read_fails` (a read's 
   new start, long names, fast seek, a contiguous file; the clock stepping down, DMA refused, damaged blocks; the USB
   drive's streams with the LCD drawing in between, its writes, a damaged block in a stream; a card pulled, stuck busy
   and put back (each error within its budget), pulled from a quiet USB drive (noticed within a second), and left in
-  the middle of a read or a write by a restart. Its
+  the middle of a read or a write by a restart (between blocks, inside one, after a refused one: no command to a
+  busy card). Its
   FAT32 image is checked with mtools when they're installed.
 - `examples/sd`: on the device, the test of a mod. It shows the card's size, clock, DMA and error counts, lists the
   top folder, runs a speed test (REC: a 1 MiB contiguous file written, read back, checked) and shows the card to a

@@ -49,6 +49,7 @@ static uint8_t sd_blk[512] __attribute__((aligned(4))) PLAT_POOL;   /* a block w
 #endif
 #define SD_START_MS 4000u                  /* plat_sd_start: every clock tried */
 #define SD_CLOSE_MS 600u                   /* a stream's end */
+#define SD_BUSY_MS 600u                    /* a card busy programming: up to 250 ms (SDHC), 500 (SDXC) */
 static uint32_t sd_due;                    /* plat_ms deadline of the call running (0: none) */
 static int sd_late(void) { return sd_due && (int32_t)(plat_ms() - sd_due) >= 0; }
 static uint32_t sd_budget(uint32_t ms)     /* a deadline ms ahead, unless one sooner is set already: the old one */
@@ -302,18 +303,31 @@ static int sd_init(void)                   /* the card from power-on (or any sta
     for (i = 0; i < 10; i++)
         fm1_sd_xfer(0xFFu);                /* >= 74 clocks, deselected */
     fm1_sd_select(1);                      /* a transfer still open, which a CMD0 doesn't end: the firmware before left
-                                            * it so (a restart resets the chip, not the card) or a stop was refused. A
-                                            * block of a multi-block write half sent: 515 bytes finish it, its CRC
-                                            * wrong (refused, nothing written); between its blocks: the stop token;
-                                            * a multi-block read (heeding CMD12 only, a CMD0 getting its data: 0x00,
-                                            * "did not start") or a write refused: CMD12. An idle card ignores all
-                                            * three (refuses CMD12) */
+                                            * it so (a restart resets the chip, not the card; an update and
+                                            * plat_restart end it first, a crash or a watchdog can't) or a stop was
+                                            * refused. Ended here, each step heard only in its state:
+                                            *  - a block of a multi-block write half sent: finished by 515 bytes (any
+                                            *    bytes sent would be its tail). Its CRC then almost always wrong, so
+                                            *    refused; else (1 in 65536) that one sector gets the 0xFF tail, as a
+                                            *    write cut by a power loss would leave it. No card power switch here
+                                            *    to do better
+                                            *  - a multi-block read (heeding CMD12 only: a CMD0 gets its data, 0x00,
+                                            *    "did not start") or a write block refused: CMD12, then its busy
+                                            *  - between the blocks of a multi-block write: the stop token, then its
+                                            *    busy (sent after CMD12's busy: a card programming hears nothing)
+                                            * An idle card ignores all three (refuses CMD12); one still in SD mode
+                                            * from power-on is ended a frame the 0xFD may start by the 0xFFs after.
+                                            * No CMD0 to a card still busy (resetting a card that programs can
+                                            * damage it): the start fails, to be tried again */
     for (i = 0; i < 515; i++)
         fm1_sd_xfer(0xFFu);
-    fm1_sd_xfer(0xFDu);
-    sd_ready(250u);
     sd_cmd(12u, 0);
-    sd_ready(250u);                        /* (its R1b's busy) */
+    sd_ready(SD_BUSY_MS);
+    fm1_sd_xfer(0xFDu);
+    for (i = 0; i < 8; i++)
+        fm1_sd_xfer(0xFFu);
+    if (!sd_ready(SD_BUSY_MS))
+        return SD_E_TIMEOUT;
     for (i = 0; i < 20 && (r = sd_cmd(0, 0)) != SD_R1_IDLE; i++)
         ;
     if (r != SD_R1_IDLE)

@@ -36,13 +36,14 @@ uint32_t plat_disk_idle_ms(void) { return 0; }
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); fails++; } } while (0)
 
-static uint32_t crc7_bad, crc16_bad, cmds, wflips;   /* over every card */
+static uint32_t crc7_bad, crc16_bad, cmds, wflips, busy_talk;   /* over every card */
 
 static void card(uint32_t sectors, int hc, int v2)
 {
     crc7_bad += sdm.crc7_bad;
     crc16_bad += sdm.crc16_bad;
     wflips += sdm.wflips;
+    busy_talk += sdm.busy_talk;
     cmds += sdm.cmds;
     free(sdm.img);
     memset(&sdm, 0, sizeof sdm);
@@ -439,10 +440,11 @@ int main(int argc, char **argv)
         CHECK(plat_sd_start() == SD_E_NOFS);
     }
 
-    printf("sd: a restart with the card left streaming (a read, a write between blocks, in a block)\n");
+    printf("sd: a restart with the card left streaming (a read, a write between blocks, in a block, refused)\n");
     {
         static uint8_t rb[512] __attribute__((aligned(4))), w[512], was[8 * 512];
         const plat_disk_t *d;
+        uint32_t t0;
         int half;
         card(131072, 1, 1);
         CHECK(plat_sd_start() == SD_E_NOFS);
@@ -478,6 +480,45 @@ int main(int argc, char **argv)
             CHECK(plat_sd_read(7, rb, 1) == 0 && !memcmp(rb, sdm.img + 7 * 512, 512));
             CHECK(!memcmp(was, sdm.img + 90000u * 512, sizeof was));   /* the half block never written */
         }
+        {                                            /* a write block refused, then the restart: CMD12's busy (400 ms
+                                                      * here, 500 allowed) waited for, no CMD0 to a busy card */
+            uint32_t c0, k;
+            CHECK(plat_sd_start() == SD_E_NOFS);
+            sd_begin();
+            CHECK(sd_cmd(25u, 90010u) == 0);
+            fm1_sd_xfer(0xFCu);
+            for (k = 0; k < 514; k++)
+                fm1_sd_xfer(k < 512 ? 0x00u : 0xFFu);   /* (zeros, their CRC16 0000 sent as FFFF: refused) */
+            sdm.wflips++;
+            CHECK(sdm.phase == SDM_WRITE_ERR);
+            memset(&sd, 0, sizeof sd);
+            memset(&sds, 0, sizeof sds);
+            c0 = sdm.count[0];
+            t0 = sdm_ms;
+            CHECK(plat_sd_start() == SD_E_NOFS && plat_sd_state() == 1);
+            CHECK(sdm_ms - t0 >= 400u && sdm.count[0] > c0 && sdm.busy_talk == 0);
+        }
+        {                                            /* the limit: a half block whose 0xFF tail makes its CRC right
+                                                      * (1 in 65536) is written, as a write cut by a power loss; the
+                                                      * card starts all the same */
+            static const uint8_t tail[2] = {0x61u, 0x4Fu};   /* (198 x A5, 61 4F, then 312 x FF: CRC16 FFFF) */
+            uint32_t k, at;
+            CHECK(plat_sd_start() == SD_E_NOFS);
+            d = plat_sd_disk();
+            for (k = 0; k < 4; k++) {
+                d->write(90017 + k, w);
+                d->work();
+            }
+            CHECK(sdm.phase == SDM_WRITE_WAIT);
+            at = sdm.addr;                           /* (the sector the half block goes to) */
+            fm1_sd_xfer(0xFCu);
+            for (k = 0; k < 200; k++)
+                fm1_sd_xfer(k < 198 ? 0xA5u : tail[k - 198]);
+            memset(&sd, 0, sizeof sd);
+            memset(&sds, 0, sizeof sds);
+            CHECK(plat_sd_start() == SD_E_NOFS && plat_sd_state() == 1);
+            CHECK(sdm.img[(size_t)at * 512] == 0xA5u && sdm.img[(size_t)at * 512 + 511] == 0xFFu);
+        }
     }
 
     printf("sd: no card\n");
@@ -491,6 +532,7 @@ int main(int argc, char **argv)
     card(1024, 1, 1);                                      /* (the last card's counts in) */
     CHECK(crc7_bad == 0 && crc16_bad == wflips);       /* (only the blocks damaged on purpose refused) */
     CHECK(sdm.lcd_overlap == 0 && lcd_syncs > 0);
+    CHECK(busy_talk == 0);                                 /* (nothing said to a busy card: it isn't heard) */
     printf("sd: %u commands; every command's CRC7 and written block's CRC16 accepted\n", cmds);
     if (fails) {
         printf("sd: %d FAILED\n", fails);
