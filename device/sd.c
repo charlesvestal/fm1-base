@@ -301,6 +301,19 @@ static int sd_init(void)                   /* the card from power-on (or any sta
     fm1_sd_select(0);
     for (i = 0; i < 10; i++)
         fm1_sd_xfer(0xFFu);                /* >= 74 clocks, deselected */
+    fm1_sd_select(1);                      /* a transfer still open, which a CMD0 doesn't end: the firmware before left
+                                            * it so (a restart resets the chip, not the card) or a stop was refused. A
+                                            * block of a multi-block write half sent: 515 bytes finish it, its CRC
+                                            * wrong (refused, nothing written); between its blocks: the stop token;
+                                            * a multi-block read (heeding CMD12 only, a CMD0 getting its data: 0x00,
+                                            * "did not start") or a write refused: CMD12. An idle card ignores all
+                                            * three (refuses CMD12) */
+    for (i = 0; i < 515; i++)
+        fm1_sd_xfer(0xFFu);
+    fm1_sd_xfer(0xFDu);
+    sd_ready(250u);
+    sd_cmd(12u, 0);
+    sd_ready(250u);                        /* (its R1b's busy) */
     for (i = 0; i < 20 && (r = sd_cmd(0, 0)) != SD_R1_IDLE; i++)
         ;
     if (r != SD_R1_IDLE)

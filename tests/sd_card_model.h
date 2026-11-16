@@ -120,8 +120,9 @@ static void sdm_command(void)
         sdm_put(0x04);
         return;
     }
-    if (sdm.phase == SDM_READ && c != 12 && c != 0)
-        return;                         /* (a multi-block read heeds CMD12 only, and a reset) */
+    if (sdm.phase == SDM_READ && c != 12)
+        return;                         /* (a multi-block read heeds CMD12 only: a CMD0 gets its data, as on an
+                                         * FM-1's card left streaming by the firmware before a restart) */
     if (sdm.phase == SDM_WRITE_ERR && c != 12) {   /* (only CMD12 ends a refused multi-block write) */
         sdm_r1(0x04);
         return;
