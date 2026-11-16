@@ -15,6 +15,7 @@ A firmware on fm1-base's own Bluetooth stack (`ble_stack = "own"`) links none of
 | Chris Farrell's code in `web/fm1ota.js` and `web/fm1pkg.js` (each file's header says which) | [fm-static](https://github.com/seajaysec/fm-static), GPL-3.0-only there | his permission to use it under MPL-2.0: [seajaysec/fm-static#1](https://github.com/seajaysec/fm-static/issues/1#issuecomment-6410795859) |
 | `device/boot_lzma.h`, `tools/boot_pack.py` and `boot_image` in `device/main_fm1.c` (the LZMA-packed load images, `boot_pack = true`). Copyright (C) 2026 Kerem Kilic (Ellic Studio) and Charles Vestal | [Melodee](https://github.com/keremimo/melodee) (`firmware/src/boot_lzma.h`, `tools/boot_audio.py`, `firmware/src/main.c`), GPL-3.0-only there | its author's permission to use Melodee's code in fm1-base under MPL-2.0 (stated by fm1-base's maintainer, 2026-10-31) |
 | `device/res.c`, `tools/fm1_resources.py` and the resource step of `tools/fm1_install.py` and the installer page (the resource region, `resources = FILE`); the pooled store in `device/storage.c` (APP_STORE_POOL). Copyright (C) 2026 Charles Vestal | written for fm1-base after [Melodee](https://github.com/keremimo/melodee)'s resource region (`firmware/src/res.c`, `tools/fm1_resources.py`, `web/fm1res.js`) and shared storage pool, by Kerem Kilic (Ellic Studio), GPL-3.0-only there | MPL-2.0, with its author's permission (as above) |
+| The SD card (`device/sd.c`, `lib/sd_fs.c`, `lib/fatfs/ff_string.h`, `tests/sd_test.c`, `tests/sd_card_model.h`, `examples/sd/`, `docs/SD.md`; felucca-bsp's `fm1_sd_hw.h`), from m-bootloader's SD card stage (MIT there) | Julius Vitkauskas | the author's own |
 | `bsp/` | [felucca-bsp](https://github.com/hugelton/felucca-bsp), a git submodule | MPL-2.0 there |
 | `ble/` (the Bluetooth shim and the MIDI service; `ble/wifi`, the WiFi glue) | Charles Vestal's fm1-ble and fm1-radio, used by fm1-ctl | his own; a few parts repeat the JieLi AC79 SDK (below) |
 | `bt/` (the own Bluetooth stack: `bt/ble` BLE MIDI, link layer, host, SMP, central; `bt/br` BR/EDR and the A2DP source: SSP, L2CAP, AVDTP, AVRCP, SDP, AFH), its docs `docs/bt/`, tools `tools/bt/` and tests `tests/bt/`, but the third-party parts below. Copyright (C) 2026 Henri David (hdavid) | [Optimist](https://github.com/w0ts/optimist) (`3274ce5`), where its files carry `GPL-3.0-only OR MPL-2.0` | offered under either licence ([w0ts/optimist#55](https://github.com/w0ts/optimist/issues/55)), taken here under MPL-2.0. The files keep their dual SPDX header; the MPL's Exhibit B does not apply |
@@ -56,6 +57,13 @@ values in `ble/shim/rf_const.c` (Apache-2.0 only). Each file's header says which
 The GPL copies in Felucca and in those firmwares stay under the GPL; the copies here are MPL-2.0. No code by other
 Felucca contributors is in fm1-base: the history of every file was checked when it was imported (from fm1-fomni
 `7e7547f`).
+
+## The SD card's file system
+
+`lib/fatfs/` is FatFs R0.16 with its patches 1 and 2 (ChaN, <https://elm-chan.org/fsw/ff/>, Copyright (C) 2025),
+under its own BSD-style licence (`lib/fatfs/LICENSE.txt`: the notice kept with the source; nothing asked of a binary).
+Built into a firmware with `sd = true` only. Changed for fm1-base: `ffconf.h`'s settings (its header lists them),
+`ff.c`'s `<string.h>` taken from `ff_string.h` on the device (fm1-base's own file, MPL-2.0), and the line endings (LF).
 
 ## Not part of fm1-base
 

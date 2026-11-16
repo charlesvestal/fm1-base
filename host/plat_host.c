@@ -1592,6 +1592,87 @@ void plat_disk_mode(const plat_disk_t *d)
 }
 int plat_disk_poll(void) { return host_disk ? PLAT_DISK_WAITING : PLAT_DISK_OFF; }
 uint32_t plat_disk_idle_ms(void) { return 0; }
+#if FM1B_SD
+/* the SD card (fm1.toml sd = true; plat.h plat_sd_*): an image file, a whole card (with its partition table) or a bare
+ * FAT volume. The script's "sd FILE" puts it in, "sd out" takes it out (as on the device, the app finds out at its next
+ * plat_sd_start, or when a read fails); FM1B_SD_IMAGE in the environment puts one in from the start. Writes go to the
+ * file. The browser: no card */
+static char host_sd_path[1024];
+static FILE *host_sd;
+static int host_sd_state;
+static uint32_t host_sd_n;
+static uint8_t host_sd_out;                     /* "sd out": taken out while started */
+static int sd_card_start(void)
+{
+    const char *p = host_sd_path[0] ? host_sd_path : getenv("FM1B_SD_IMAGE");
+    if (host_sd)
+        fclose(host_sd);
+    host_sd = 0;
+    host_sd_n = 0;
+    host_sd_out = 0;
+#ifndef PLAT_WEB
+    if (p && *p && !(host_sd_path[0] == '-' && !host_sd_path[1]) && (host_sd = fopen(p, "r+b")) != 0) {
+        fseek(host_sd, 0, SEEK_END);
+        host_sd_n = (uint32_t)(ftell(host_sd) / 512);
+    }
+#else
+    (void)p;
+#endif
+    host_sd_state = host_sd_n ? 1 : SD_E_NOCARD;
+    return host_sd_n ? 0 : SD_E_NOCARD;
+}
+static void sd_card_stop(void)
+{
+    if (host_sd)
+        fclose(host_sd);
+    host_sd = 0;
+    host_sd_n = 0;
+    host_sd_state = 0;
+}
+int plat_sd_state(void) { return host_sd_state; }
+static int sd_card_check(void)                  /* still there? ("sd out": taken for lost, as the device's) */
+{
+    if (host_sd_state != 1)
+        return 0;
+    if (host_sd_out || !host_sd) {
+        host_sd_state = SD_E_NOCARD;
+        return 0;
+    }
+    return 1;
+}
+uint32_t plat_sd_sectors(void) { return host_sd_state == 1 ? host_sd_n : 0; }
+static int host_sd_io(uint32_t lba, void *buf, uint32_t n, int write)
+{
+    if (host_sd_state != 1)
+        return SD_E_STATE;
+    if (lba >= host_sd_n || n > host_sd_n - lba)
+        return SD_E_RANGE;
+    if (host_sd_out || !host_sd)
+        return SD_E_TIMEOUT;
+    if (!n)
+        return 0;
+    fseek(host_sd, (long)lba * 512, SEEK_SET);
+    if (write) {
+        if (fwrite(buf, 512, n, host_sd) != n || fflush(host_sd))
+            return SD_E_WRITE;
+    } else if (fread(buf, 512, n, host_sd) != n)
+        return SD_E_READ;
+    return 0;
+}
+int plat_sd_read(uint32_t lba, void *buf, uint32_t n) { return host_sd_io(lba, buf, n, 0); }
+int plat_sd_write(uint32_t lba, const void *buf, uint32_t n) { return host_sd_io(lba, (void *)buf, n, 1); }
+void plat_sd_info(plat_sd_info_t *i)
+{
+    memset(i, 0, sizeof *i);
+    i->sectors = plat_sd_sectors();
+    i->khz = host_sd_state == 1 ? 20000 : 0;   /* (the device's clock at 360 MHz) */
+    i->hc = host_sd_n > 4194304u;
+    i->dma = host_sd_state == 1;
+    i->ver = 2;
+}
+#define SD_NO_STREAMS                                  /* (disk mode's streams as plain sector calls: lib/sd_fs.c) */
+#include "sd_fs.c"                              /* the files: FatFs on these sectors, plat_sd_start */
+#endif
 uint32_t plat_ticks24(void)                     /* the host's monotonic clock, at the device's rate */
 {
     struct timespec t;
@@ -2767,6 +2848,15 @@ int main(int argc, char **argv)
             plat_host_exact = 1;
             run_ms(1);
             plat_host_exact = 0;
+#if FM1B_SD
+        } else if (!strcmp(cmd, "sd")) {            /* sd FILE | sd out: an SD card image in, or out (plat_sd_*) */
+            if (!strcmp(a, "out")) {
+                host_sd_path[0] = '-';
+                host_sd_path[1] = 0;
+                host_sd_out = 1;
+            } else
+                snprintf(host_sd_path, sizeof host_sd_path, "%s", a);
+#endif
         } else if (!strcmp(cmd, "jack")) {          /* jack in | jack out: the headphone jack (plat_headphones) */
             host_hp = !strcmp(a, "in");
             run_ms(2);
