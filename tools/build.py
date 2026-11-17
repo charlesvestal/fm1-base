@@ -1742,6 +1742,8 @@ def main():
         if hashlib.sha256(fm1pkg_make.sdk_file(rel)).hexdigest() != sha:
             print(f"warning: SDK {rel} differs from AC79NN_SDK_V1.2.1; the package will not match the reference")
     OUT.mkdir(parents=True, exist_ok=True)
+    for f in (name, Path(name).stem + "-res.bin"):   # a failed build leaves no older package to be installed
+        (OUT / f).unlink(missing_ok=True)
     with ThreadPoolExecutor(2) as ex:
         gen, ldr = ex.submit(generate), ex.submit(build_loader)
         gen.result()
