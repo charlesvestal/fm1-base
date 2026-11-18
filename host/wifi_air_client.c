@@ -263,6 +263,19 @@ static int cli_expect(const char *what, int *got)
         for (*got = 0, i = 0; k[i]; i++)
             *got += (unsigned char)k[i];
     }
+    else if (!strcmp(what, "ap_key_len")) {       /* the default password's length (12: made at random) */
+        char k[PLAT_WIFI_AP_KEY_MAX];
+        (void)plat_wifi_ap_default_key(k);
+        *got = (int)strlen(k);
+    }
+    else if (!strcmp(what, "ap_key_same")) {      /* 1: the default password is the one the last ap_key_same saw (the
+                                                   * first: 1); kept across a restart, a new one after a forget */
+        static char last[PLAT_WIFI_AP_KEY_MAX];
+        char k[PLAT_WIFI_AP_KEY_MAX];
+        (void)plat_wifi_ap_default_key(k);
+        *got = !last[0] || !strcmp(k, last);
+        memcpy(last, k, sizeof last);
+    }
     else if (!strcmp(what, "ap_client_ip_last"))  /* the first client's address, as the FM-1 gave it (192.168.4.N) */
         *got = plat_wifi_ap_client(0, mac, &ip) ? (int)(ip & 255u) : 0;
     else if (!strcmp(what, "ap_stray"))
