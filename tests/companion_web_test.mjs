@@ -7,7 +7,7 @@
 // app plays), the parameters (described with their labels and groups, get, set clamped, a watched change told).
 //   node tests/companion_web_test.mjs tests/companion_app/build/emu
 import { readFileSync } from "node:fs";
-import { Companion, findCompanions } from "../web/companion/companion.js";
+import { Companion, findCompanions, crc32 } from "../web/companion/companion.js";
 
 const dir = process.argv[2] || "tests/companion_app/build/emu";
 let fails = 0;
@@ -53,31 +53,39 @@ check(found.length === 1 && found[0].hello.name === "CPTEST", "the port answers 
 const c = new Companion(input, output, { timeout: 200, tries: 1 });
 const h = await c.hello();
 check(h.identity === "FM-1_1400" && h.appVersion === "1.2" && h.extras.editor === "cptest/1", "identity, version, tags", h);
-check(h.version === 2 && h.backup && h.backup.magic === "CPTB" && h.backup.version === 2 && h.backup.ext === "cpb", "the backup's format", h.backup);
+check(h.version === 3 && h.commands[0x61] === 1 && h.commands[0x62] === 1 && h.backup && h.backup.magic === "CPTB" && h.backup.version === 2 && h.backup.ext === "cpb", "the backup's format", h.backup);
 check(["files", "parameters", "the app's own SysEx"].every((s) => h.services.includes(s)), "services", h.services);
 
 const files = await c.files();
-check(files.map((f) => f.name).join() === "notes.txt,sample.raw,info", "the files", files);
-const info = await c.read(2);
+check(files.map((f) => f.name).join() === "data.bin,notes.txt,sample.raw,info", "the files", files);
+const info = await c.read(3);
 check(info.length === 300 && info.every((v, k) => v === ((k * 7 + 3) & 255)), "info read whole, CRC-32 checked");
 const sample = Uint8Array.from({ length: 20000 }, (_, k) => (k * 31 + (k >> 8)) & 255);
 let seen = 0;
-await c.write(1, sample, (at) => { seen = at; });
+await c.write(2, sample, (at) => { seen = at; });
 check(seen === sample.length, "a sample written, progress to the end", seen);
-const back = await c.read(1);
+const back = await c.read(2);
 check(back.length === sample.length && back.every((v, k) => v === sample[k]), "and read back");
 const other = sample.map((v) => v ^ 0x5a);
-await c.write(1, other, null, { stopAfter: 6000 });
-const resumed = await c.write(1, other);
+await c.write(2, other, null, { stopAfter: 6000 });
+const resumed = await c.write(2, other);
 check(resumed >= 6000 && resumed < other.length, "a write cut short, resumed where it stopped", resumed);
-check((await c.read(1)).every((v, k) => v === other[k]), "the resumed one read back");
+check((await c.read(2)).every((v, k) => v === other[k]), "the resumed one read back");
 into(Uint8Array.from([0xf0, 0x7d, 0x43, 0x50, 0x02, 0xf7]));        // (the app plays)
 time(5);
 let code = null;
-try { await c.write(1, sample); } catch (e) { code = e.code; }
+try { await c.write(2, sample); } catch (e) { code = e.code; }
 check(code === "busy", "playing: refused, busy", code);
 into(Uint8Array.from([0xf0, 0x7d, 0x43, 0x50, 0x03, 0xf7]));
 time(5);
+
+const data = Uint8Array.from({ length: 1800 }, (_, k) => (k * 13 + 1) & 255);
+await c.write(0, data);
+const dback = await c.read(0);
+check(dback.length === 1800 && dback.every((v, k) => v === data[k]) && (await c.sum(0)).crc === crc32(data),
+  "data.bin (a store object) written whole, read back, its CRC-32 the FM-1's");
+await c.remove(0);
+check((await c.files())[0].size === 0, "data.bin deleted: empty");
 
 const ps = await c.params();
 check(ps.map((p) => p.name).join() === "TEMPO,SWING,WAVE,CUTOFF,LOAD,MODE", "the parameters", ps.map((p) => p.name));

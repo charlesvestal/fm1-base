@@ -1,8 +1,8 @@
 # Companion services
 
 A firmware's computer side (a web page, a phone app, a script) needs the same few things from every app: what is this
-FM-1 running and what can it do, the app's files (projects, presets, samples) to and from the computer, and the app's
-parameters to show and change. Without a common way each app invents its own SysEx for them, and every page and phone
+FM-1 running and what can it do, the app's files (projects, presets, patterns, songs) to and from the computer, and the
+app's parameters to show and change. Without a common way each app invents its own SysEx for them, and every page and phone
 app is written again for each firmware. The companion services are that common way, in the platform: an app declares
 what it has, the platform speaks the protocol, and one generic page (`web/companion/`), one tool
 (`tools/fm1_companion.py`) and the browser emulator serve every app.
@@ -13,7 +13,7 @@ is built byte for byte as before (its package, its host simulator, its `app.wasm
 | Service | The app gives | The computer can |
 | --- | --- | --- |
 | capability query (always, with `companion = true`) | `APP_NAME`, `APP_VERSION`, optional `APP_COMPANION_EXTRAS` | ask which platform services this firmware has, the app's name, version, its own tags and its backup's format |
-| files (`APP_FILES` in app.h) | a list of named objects and their reads and writes | list them, read one in chunks, write one (checked by CRC-32 before it counts, resumable), delete one; refused while the app is busy (playing) |
+| files (`APP_FILE_OBJS` in app.h: its store objects; `APP_FILES`: files of its own) | the store objects a computer may keep, by name and kind; or its own list with reads and writes | list them, read one in chunks, write one (checked by CRC-32 before it counts), delete one; refused while the app is busy (playing). A file is bytes: the page keeps whatever the app gives, whatever its format |
 | parameters (`APP_PARAMS` in app.h) | a table of parameters (id, name, range, enum labels, unit, group) and get / set | describe them, get and set values, be told when one changes on the FM-1 |
 
 ## On the wire
@@ -23,27 +23,41 @@ The update's SysEx framing, as backup.c and mirror.c use it (felucca-bsp ota.c):
 keeps one frame): send the next after the answer. Every request is answered with the same cmd. The computer may send at
 most 640 bytes between F0 and F7 (felucca-bsp usb.c's buffer): 512 bytes of file data a write. The commands:
 
-| cmd | service |
-| --- | --- |
-| `0x60` | capability query |
-| `0x61` | files |
-| `0x62` | parameters |
+| cmd | service | version (0x60 tells it) |
+| --- | --- | --- |
+| `0x60` | capability query | the answer's first byte (3) |
+| `0x61` | files | 1 |
+| `0x62` | parameters | 1 |
+| `0x63` .. `0x6F` | kept for the companion's next services | |
 
-(0x11 and 0x30 are the update's, 0x41..0x43 backup's, 0x50..0x54 the mirror's.) A firmware without the service does not
-answer: a computer that hears nothing for 300 ms after `0x60` knows the firmware has no companion services (an update's
-handshake, `0x11`, still tells it the identity).
+The commands 0x60 to 0x6F are the companion's. An app's own commands in this framing (`APP_USB_CMD`) never use them,
+with or without `companion = true`: with it, the platform takes the whole range, and answers nothing to the ones it does
+not know yet. (0x11 and 0x30 are the update's, 0x41..0x44 backup's, restore's and the resources', 0x50..0x54 the
+mirror's.) A firmware without the companion does not answer: a computer that hears nothing for 300 ms after `0x60` knows
+the firmware has no companion services (an update's handshake, `0x11`, still tells it the identity).
+
+### Versions
+
+The capability query's answer carries the protocol's version (its first byte) and, from version 3, the version of each
+command the firmware has, after everything else. A command's requests and answers change only with its version raised;
+fields are only ever added at an answer's end, and a reader takes the ones it knows and ignores the rest. A client asks
+0x60 first and then knows, for every command, what this firmware speaks, without a byte more in each request or answer.
+A version 0 means the build does not have that service.
 
 ### 0x60 capability query
 
 Request: an empty body (or one byte, the client's protocol version: ignored for now). Answer:
 
 ```
-u8  version (2)
+u8  version (3)
 u32 services, a bit each:  0 the capability query   1 files            2 parameters      3 backup (backup.c)
                            4 mirror (mirror.c)      5 screen reader    6 Bluetooth MIDI  7 WiFi
                            8 USB audio in           9 USB audio out   10 the app's own SysEx (APP_SYSEX)
                           11 the app's own commands in this framing (APP_USB_CMD)     12 the second core
-                          13 USB MIDI host         14 Bluetooth audio
+                          13 USB MIDI host         14 Bluetooth audio     15 the crash history
+                          16 the debug stats       17 Bluetooth MIDI devices (ble_central)    18 the SD card
+                          19 USB disk mode (msc)   20 a resource region   21 velocity and pressure (APP_TOUCH)
+                          22 USB audio channels beyond two (usb_audio_channels)
 u16 the largest read chunk (256), u16 the largest write chunk (512)
 u16 files, u16 parameters  (their counts now; 0 without the service)
 identity \0   name \0   version \0   extras \0
@@ -52,7 +66,13 @@ identity \0   name \0   version \0   extras \0
         0 0 0 0 without backup (FM1B_BACKUP)
 u16 the backup's format version (APP_BACKUP_VERSION), 0 without backup
 ext \0  the backup files' extension without the dot (fm1.toml backup_ext, "bak" by default), "" without backup
+-- protocol 3, at the end --
+u8 n, then n x (u8 cmd, u8 version): each command's version (0x61 files, 0x62 parameters; 0: not in this build)
 ```
+
+The crash history (`F0 7D 4C 48 F7`) and the debug stats (`F0 7D 4C 53 F7`) have their own SysEx (tools/fm1_remote.py,
+the installer page's "Report a problem"); bits 15 and 16 say a firmware has them. Bits 3 and 4 say the same of backup
+(web/backup) and the mirror (web/mirror).
 
 identity is the package identity (`FM-1_NNNN`, the update handshake's), name `APP_NAME`, version `APP_VERSION`, extras
 `APP_COMPANION_EXTRAS` ("" by default): the app's own tags for its own pages, `key=value` pairs split by `;` (e.g.
@@ -66,7 +86,8 @@ knows and ignores the rest.
 
 ### 0x61 files
 
-A file is a named object the app exposes, by index 0 .. count - 1 in the app's order (the name is what a computer keeps:
+A file is a named object the app exposes, by index 0 .. count - 1: the store objects it lists (`APP_FILE_OBJS`) first,
+in its order, then its own files (`APP_FILES`) (the name is what a computer keeps:
 an index may name another file after the app's list changed). The first body byte is the operation; every answer is
 `op, status, u16 index, ...`. Status: 0 ok, 1 busy (the app plays: stop first), 2 no such file, 3 not allowed (read
 only, not deletable), 4 out of range (offset, size above the file's room), 5 CRC-32 mismatch, 6 the flash refused, 7 out
@@ -116,7 +137,40 @@ any request: a page keeps it with watch 1 every few seconds.
 
 ## The app's side
 
-app.h, with `companion = true` in fm1.toml (plat.h has the types and the helper):
+### Your saved objects as files
+
+Most apps keep their work in the store already (`plat_store_save`, `plat_store_load`: presets, patterns, songs, a
+project). To let a computer keep them as files, list them in app.h, with `companion = true` in fm1.toml:
+
+```c
+#define APP_FILE_OBJS {{OBJ_SONG1, PLAT_FK_PROJECT, PLAT_FF_READ | PLAT_FF_WRITE | PLAT_FF_DELETE, "song1"}, \
+                       {OBJ_KIT, PLAT_FK_PRESET, PLAT_FF_READ | PLAT_FF_WRITE, "kit"}}
+int app_file_busy(void);                           /* 1: no file written or deleted now (playing) */
+void app_file_changed(uint32_t obj);               /* the computer wrote or emptied obj: load it again */
+#define APP_FILE_OBJ_MAX 1024u                     /* optional: the largest a computer may write (PLAT_STORE_MAX) */
+```
+
+Each entry names an object, its kind, what a computer may do with it, and the name it shows. The platform does the
+rest: it lists each object with its size, reads it from the current copy, and takes a write whole. The bytes gather
+in a buffer, their CRC-32 is checked there once they all came, and only then does the platform save them as your app
+would (`plat_store_save`: a new copy, the old one current until the new one is whole), and call `app_file_changed`.
+A delete empties the object: your app finds it as at a first start. Writes and deletes wait while `app_file_busy`
+says 1, unless an entry's flags have `PLAT_FF_PLAYING`, and while a backup streams. Never list `OBJ_PANEL`, the
+unit's own calibration, or Bluetooth's pairings.
+
+The buffer is `APP_FILE_OBJ_MAX` bytes of the pool (`PLAT_STORE_MAX`, 3,840, by default). With `backup = true` and no
+`APP_FILE_OBJ_MAX` of the app's, the companion borrows backup's restore buffer instead and costs no RAM. A restore that
+comes between a write's first and last frame changes that buffer; the CRC-32 check at the end then refuses the write
+(status 5), and the computer sends it again.
+
+Use `app_file_changed` to take the new content: load it as at power-on, redraw, and clear any "changed since the last
+save" mark. The files carry your app's own format; the companion never looks inside, so a page keeps presets,
+patterns or projects alike.
+
+### Files of your own
+
+For files that are not store objects (a sample in the data area, a text the app makes), use the hooks. They come after
+the store objects in the list, and the two kinds may be used together:
 
 ```c
 #define APP_COMPANION_EXTRAS "editor=myapp/1"      /* optional: the app's own tags (0x60) */
@@ -128,7 +182,7 @@ int app_file_begin(uint32_t i, uint32_t size);     /* a new content of size byte
 int app_file_write(uint32_t i, uint32_t off, const uint8_t *src, uint32_t n);   /* in order; 0 = written */
 int app_file_commit(uint32_t i, uint32_t size, uint32_t crc);   /* all of it came, CRC-32 checked: make it current */
 int app_file_delete(uint32_t i);                   /* 0 = gone */
-int app_file_busy(void);                           /* 1: no write or delete now (playing) */
+int app_file_busy(void);                           /* 1: no write or delete now (playing); one hook for both kinds */
 #define APP_FILE_COUNT                             /* optional: uint32_t app_file_count(void), the files' number, for an
                                                       app whose app_file is costly (the list asks it once, not a file each) */
 
@@ -143,7 +197,7 @@ int32_t app_param_set(uint32_t i, int32_t v);      /* -> the value now */
 All of it runs in the main loop (a request is taken where the update's handshake is). A value the render reads is the
 app's to share safely (plat_lock), as for its own UI.
 
-**Files on the flash, the easy way: `plat_file_*`.** A file in the data area (plat.h's windows) as two copies, A and B,
+Use `plat_file_*` to keep such a file in the data area (plat.h's windows) as two copies, A and B,
 each a whole number of 4 KiB sectors: `plat_file_t f = {A, B, BYTES}`. The current copy is the newer one whose head is
 whole; a write goes to the other one (its sectors erased as the data reaches them) and its head (32 bytes: magic, a
 sequence number, the size, the CRC-32 of the data, the head's own CRC-32) is written last, after the data was read
@@ -159,7 +213,7 @@ Measured on the FM-1's build (JieLi toolchain, AC79 reference SDK; tools/build.p
 
 | | flash | RAM |
 | --- | --- | --- |
-| an app without `companion = true` | 0: its package byte for byte as before (the template's, sha256 checked) | 0 |
+| an app without `companion = true` | 0: its package byte for byte as before (examples/ble_own's, sha256 checked, 2026-11-18) | 0 |
 | the capability query (the template with `companion = true`) | +456 B | +592 B of the pool (the answer's buffers), 0 of .data / .bss |
 | files, with `plat_file_*` (tests/companion_app: with its own hooks for three files) | +3,496 B | +32 B of .data / .bss, 0 of the pool |
 | parameters (tests/companion_app: with its own table of six and its hooks) | +2,136 B | +64 B of .data / .bss; +4 B a parameter in the pool (APP_PARAM_MAX; 8 is +32 B), the app's labels its own |

@@ -40,18 +40,21 @@ def serve(out):
 def test_hello(out):
     link, c = serve(out)
     h = c.hello()
-    check("protocol version 2", h["version"] == 2, h["version"])
+    check("protocol version 3", h["version"] == 3, h["version"])
+    check("the commands' versions", h["commands"] == {0x61: 1, 0x62: 1}, h["commands"])
     check("the backup format", h["backup"] == {"magic": "CPTB", "version": 2, "ext": "cpb"}, h["backup"])
     check("identity FM-1_1400", h["identity"] == "FM-1_1400", h["identity"])
     check("name and version", (h["name"], h["app_version"]) == ("CPTEST", "1.2"), (h["name"], h["app_version"]))
     check("the app's tags", h["extras"] == {"editor": "cptest/1", "site": "https://example.invalid/cptest"},
           h["extras"])
-    want = {"capability query", "files", "parameters", "screen reader", "backup", "the app's own SysEx", "USB audio in", "USB audio out"}
+    want = {"capability query", "files", "parameters", "screen reader", "backup", "the app's own SysEx", "USB audio in",
+            "USB audio out", "crash history"}
     check("services", set(h["services"]) == want, h["services"])
     old = c.request(0x60)                         # a version 1 reader: the same fields up to the extras, the end unread
     (ident, name, ver, extras), tail = C.cstrings(old[13:], 4)
     check("a version 1 reader's fields", (ident, name, ver) == (h["identity"], "CPTEST", "1.2") and extras.startswith("editor="), (ident, name, ver, extras))
-    check("the backup format at the answer's end", tail == b"CPTB" + bytes([2, 0]) + b"cpb\0", tail)
+    check("the backup format, then the commands' versions", tail == b"CPTB" + bytes([2, 0]) + b"cpb\0" +
+          bytes([2, 0x61, 1, 0x62, 1]), tail)
     check("chunks", (h["read_max"], h["write_max"]) == (256, 512), (h["read_max"], h["write_max"]))
     # the app's own SysEx: the app's, not the companion's (no answer)
     link.send(bytes([0xF0, 0x7D, 0x43, 0x50, 0x01, 0xF7]))
@@ -65,6 +68,10 @@ def test_hello(out):
     link.send(bytes(bad))
     link.run(20)
     check("cmd 0x6F and a damaged frame unanswered", not link.q, link.q)
+    link.send(INST.frame(0x63, b"\x00"))
+    link.run(20)
+    check("cmd 0x63 (the companion's range, not a service yet): unanswered, not the app's",
+          not link.q and link.cmd("expect own 1")[-1].startswith("  ok"), link.q)
     link.close()
 
 
@@ -75,83 +82,118 @@ def raw_op(c, op, i, body=b""):
 def test_files(out):
     link, c = serve(out)
     h = c.hello()
-    check("files in the services, 3 of them", "files" in h["services"] and h["files"] == 3, (h["services"], h["files"]))
+    check("files in the services, 4 of them", "files" in h["services"] and h["files"] == 4, (h["services"], h["files"]))
     fs = c.files()
     check("the list", [(f["name"], f["kind"], f["size"], f["room"], f["flags"]) for f in fs] ==
-          [("notes.txt", "text", 0, 4064, 15), ("sample.raw", "sample", 0, 65504, 7), ("info", "settings", 300, 300, 1)],
+          [("data.bin", "bank", 0, 2048, 7), ("notes.txt", "text", 0, 4064, 15), ("sample.raw", "sample", 0, 65504, 7),
+           ("info", "settings", 300, 300, 1)],
           fs)
-    st, b = raw_op(c, C.OP_LIST, 3)
-    check("past the last: no such file, the count", st == C.ST_NONE and b[:2] == b"\x03\x00", (st, b))
-    info = c.read(2)
+    st, b = raw_op(c, C.OP_LIST, 4)
+    check("past the last: no such file, the count", st == C.ST_NONE and b[:2] == b"\x04\x00", (st, b))
+    info = c.read(3)
     check("a file the app makes, read whole and checked", info == bytes((k * 7 + 3) & 255 for k in range(300)))
-    st, b = raw_op(c, C.OP_READ, 2, struct.pack("<IH", 290, 256))
+    st, b = raw_op(c, C.OP_READ, 3, struct.pack("<IH", 290, 256))
     check("a read at the end: the rest only", st == 0 and b[4:] == info[290:], (st, len(b)))
-    st, _ = raw_op(c, C.OP_READ, 2, struct.pack("<IH", 301, 4))
+    st, _ = raw_op(c, C.OP_READ, 3, struct.pack("<IH", 301, 4))
     check("a read past the end: out of range", st == 4, st)
-    st, _ = raw_op(c, C.OP_BEGIN, 2, struct.pack("<II", 4, 0))
+    st, _ = raw_op(c, C.OP_BEGIN, 3, struct.pack("<II", 4, 0))
     check("writing a read-only file: not allowed", st == 3, st)
-    st, _ = raw_op(c, C.OP_DELETE, 2)
+    st, _ = raw_op(c, C.OP_DELETE, 3)
     check("deleting it: not allowed", st == 3, st)
-    st, _ = raw_op(c, C.OP_BEGIN, 0, struct.pack("<II", 5000, 0))
+    st, _ = raw_op(c, C.OP_BEGIN, 1, struct.pack("<II", 5000, 0))
     check("more than its room: out of range", st == 4, st)
     # a write, another (the other copy), a delete
-    c.write(0, b"first notes\n" * 8)
-    check("notes.txt written, read back", c.read(0) == b"first notes\n" * 8)
-    c.write(0, b"second")
-    check("written again (the other copy), read back", c.read(0) == b"second" and c.files()[0]["size"] == 6)
-    c.delete(0)
-    check("deleted: empty", c.files()[0]["size"] == 0 and c.read(0) == b"")
+    c.write(1, b"first notes\n" * 8)
+    check("notes.txt written, read back", c.read(1) == b"first notes\n" * 8)
+    c.write(1, b"second")
+    check("written again (the other copy), read back", c.read(1) == b"second" and c.files()[1]["size"] == 6)
+    c.delete(1)
+    check("deleted: empty", c.files()[1]["size"] == 0 and c.read(1) == b"")
     # a sample, cut short after 10 KB and resumed by another client (the cable out and in, the FM-1 on)
     sample = bytes(random.Random(7).randrange(256) for _ in range(40000))
-    c.write(1, sample, stop_after=10000)
-    check("cut short: nothing current yet", c.files()[1]["size"] == 0)
-    resumed = C.Client(link, tries=1).write(1, sample)
+    c.write(2, sample, stop_after=10000)
+    check("cut short: nothing current yet", c.files()[2]["size"] == 0)
+    resumed = C.Client(link, tries=1).write(2, sample)
     check("resumed where it stopped", 10000 <= resumed < 40000, resumed)
-    check("the sample read back whole", c.read(1) == sample)
+    check("the sample read back whole", c.read(2) == sample)
     # a write abandoned by another begin: the old file stays
     other = bytes(reversed(sample))
-    c.write(1, other, stop_after=20000)
-    c.write(0, b"notes meanwhile")
-    check("abandoned: the old sample current still", c.read(1) == sample)
+    c.write(2, other, stop_after=20000)
+    c.write(1, b"notes meanwhile")
+    check("abandoned: the old sample current still", c.read(2) == sample)
     # a CRC-32 that does not match: refused at commit, the old one stays
-    st, _ = raw_op(c, C.OP_BEGIN, 0, struct.pack("<II", 4, 0x12345678))
-    st2, b = raw_op(c, C.OP_DATA, 0, struct.pack("<I", 0) + b"abcd")
-    st3, _ = raw_op(c, C.OP_COMMIT, 0)
+    st, _ = raw_op(c, C.OP_BEGIN, 1, struct.pack("<II", 4, 0x12345678))
+    st2, b = raw_op(c, C.OP_DATA, 1, struct.pack("<I", 0) + b"abcd")
+    st3, _ = raw_op(c, C.OP_COMMIT, 1)
     check("a wrong CRC-32: refused at commit", (st, st2, st3) == (0, 0, 5), (st, st2, st3))
-    check("and the old notes current", c.read(0) == b"notes meanwhile")
+    check("and the old notes current", c.read(1) == b"notes meanwhile")
     # out of order, and a frame again
-    raw_op(c, C.OP_BEGIN, 0, struct.pack("<II", 8, zlib.crc32(b"abcdefgh")))
-    st, b = raw_op(c, C.OP_DATA, 0, struct.pack("<I", 4) + b"efgh")
+    raw_op(c, C.OP_BEGIN, 1, struct.pack("<II", 8, zlib.crc32(b"abcdefgh")))
+    st, b = raw_op(c, C.OP_DATA, 1, struct.pack("<I", 4) + b"efgh")
     check("data past next: out of order, with next", st == 7 and b[:4] == b"\0\0\0\0", (st, b))
-    raw_op(c, C.OP_DATA, 0, struct.pack("<I", 0) + b"abcd")
-    st, b = raw_op(c, C.OP_DATA, 0, struct.pack("<I", 0) + b"abcd")
+    raw_op(c, C.OP_DATA, 1, struct.pack("<I", 0) + b"abcd")
+    st, b = raw_op(c, C.OP_DATA, 1, struct.pack("<I", 0) + b"abcd")
     check("the same frame again: answered, not written twice", st == 0 and b[:4] == b"\x04\0\0\0", (st, b))
-    raw_op(c, C.OP_DATA, 0, struct.pack("<I", 2) + b"cdefgh")
-    st, _ = raw_op(c, C.OP_COMMIT, 0)
-    check("overlapping the end of what came: the rest taken", st == 0 and c.read(0) == b"abcdefgh", st)
+    raw_op(c, C.OP_DATA, 1, struct.pack("<I", 2) + b"cdefgh")
+    st, _ = raw_op(c, C.OP_COMMIT, 1)
+    check("overlapping the end of what came: the rest taken", st == 0 and c.read(1) == b"abcdefgh", st)
     # busy: the app plays
     link.send(bytes([0xF0, 0x7D, 0x43, 0x50, 0x02, 0xF7]))
     link.run(5)
     try:
-        c.write(1, b"x" * 100)
+        c.write(2, b"x" * 100)
         busy = None
     except C.CompanionError as e:
         busy = e.code
     check("playing: a sample refused (busy)", busy == "busy", busy)
     try:
-        c.delete(1)
+        c.delete(2)
         busy = None
     except C.CompanionError as e:
         busy = e.code
     check("playing: its delete refused", busy == "busy", busy)
-    c.write(0, b"while playing")
-    check("playing: notes.txt (written while playing too) taken", c.read(0) == b"while playing")
-    check("playing: reads go on", c.read(1) == sample)
+    c.write(1, b"while playing")
+    check("playing: notes.txt (written while playing too) taken", c.read(1) == b"while playing")
+    check("playing: reads go on", c.read(2) == sample)
     link.send(bytes([0xF0, 0x7D, 0x43, 0x50, 0x03, 0xF7]))
     link.run(5)
-    c.write(1, b"stopped")
-    check("stopped: the sample taken", c.read(1) == b"stopped")
+    c.write(2, b"stopped")
+    check("stopped: the sample taken", c.read(2) == b"stopped")
     check("commits counted by the app", link.cmd("expect commits 7")[-1].startswith("  ok"))
+    link.close()
+
+
+def test_store_files(out):
+    """a store object as a file (APP_FILE_OBJS: data.bin, OBJ_DATA): written whole and checked, read back, the app told
+    (app_file_changed), refused while it plays, too big, with a wrong CRC-32; emptied by a delete"""
+    link, c = serve(out)
+    data = bytes(random.Random(3).randrange(256) for _ in range(1500))
+    c.write(0, data)
+    check("data.bin written: the store's object, read back", c.read(0) == data and c.files()[0]["size"] == 1500)
+    check("its sum: the FM-1's CRC-32 of it", c.sum(0) == (1500, zlib.crc32(data)), c.sum(0))
+    check("the app told once", link.cmd("expect changed 1")[-1].startswith("  ok"))
+    st, _ = raw_op(c, C.OP_BEGIN, 0, struct.pack("<II", 2049, 0))
+    check("more than APP_FILE_OBJ_MAX: out of range", st == 4, st)
+    st, _ = raw_op(c, C.OP_BEGIN, 0, struct.pack("<II", 4, 0x12345678))
+    raw_op(c, C.OP_DATA, 0, struct.pack("<I", 0) + b"abcd")
+    st3, _ = raw_op(c, C.OP_COMMIT, 0)
+    check("a wrong CRC-32: refused, the object as it was", st == 0 and st3 == 5 and c.read(0) == data, (st, st3))
+    link.send(bytes([0xF0, 0x7D, 0x43, 0x50, 0x02, 0xF7]))
+    link.run(5)
+    try:
+        c.write(0, b"while playing")
+        busy = None
+    except C.CompanionError as e:
+        busy = e.code
+    check("playing: refused (busy)", busy == "busy" and c.read(0) == data, busy)
+    link.send(bytes([0xF0, 0x7D, 0x43, 0x50, 0x03, 0xF7]))
+    link.run(5)
+    c.write(0, b"short")
+    check("stopped: a shorter one replaces it whole", c.read(0) == b"short")
+    c.delete(0)
+    check("deleted: empty, the app told", c.files()[0]["size"] == 0 and c.read(0) == b"" and
+          link.cmd("expect changed 3")[-1].startswith("  ok"))
+    check("the app's own files after it, as they were", c.files()[1]["name"] == "notes.txt")
     link.close()
 
 
@@ -289,6 +331,7 @@ def main():
         return 1
     test_hello(out)
     test_files(out)
+    test_store_files(out)
     test_tool(out)
     test_params(out)
     test_watch_script(out)

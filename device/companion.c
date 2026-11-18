@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: MPL-2.0
- * Copyright (C) 2026 Henri David */
+ * Copyright (C) 2026 Henri David
+ * Copyright (C) 2026 Charles Vestal (the store's objects as files, the commands' versions) */
 /* Companion services over USB (fm1.toml companion = true: FM1B_COMPANION; docs/COMPANION.md): what a computer's page,
  * phone app or tool needs from any app, in the platform, so it needs no app-specific protocol for it:
  *   0x60  the capability query: the platform services built, the app's name, version and own tags
- *   0x61  files (app.h APP_FILES): the app's named objects listed, read, written (CRC-32, resumable), deleted;
- *         plat_file_*: a file kept in the data area as two copies, for an app that has nowhere else to keep it
+ *   0x61  files: the app's named objects listed, read, written (CRC-32, resumable), deleted. The app's store objects
+ *         by default (app.h APP_FILE_OBJS: plat_store_*, whole objects); its own (APP_FILES: app_file_* hooks) after
+ *         them, plat_file_*: a file kept in the data area as two copies, for an app that has nowhere else to keep it
  *   0x62  parameters (app.h APP_PARAMS): the app's described (id, name, range, labels, unit, group) for a generic page;
  *         get, set, and while watched what changed on the FM-1
  * In the update's SysEx framing (felucca-bsp ota.c: F0 pack7(00 59 cmd len24 body ~sum8(body)) F7), as backup.c and
@@ -14,8 +16,11 @@
  *   cp_send(p, n)   one whole F0..F7 frame to the computer (may wait for room): 0 = queued
  *   cp_room(n)      a frame of n bytes goes into the SysEx ring now without a wait (and nothing else holds it): 1
  *   cp_link()       the USB connection: 0 none; else a number new at each one
+ *   cp_held()       the platform holds the app's saving now (a backup streams): 1, no file written
+ *   cp_obj_read(obj, off, dst, n)   bytes off .. off + n of store object obj's current copy: 0 = read (APP_FILE_OBJS)
  * and plat_ms (plat.h). comp_step() in the main loop: what a watched parameter did.
- * comp_cmd(d, n) takes a decoded frame (d: 00 59 cmd len24 body sum, n its length, checked): 1 = the companion's. */
+ * comp_cmd(d, n) takes a decoded frame (d: 00 59 cmd len24 body sum, n its length, checked): 1 = the companion's,
+ * every cmd from 0x60 to 0x6F (CP_FIRST .. CP_LAST: the companion's range, never an app's APP_USB_CMD). */
 #ifndef FELUCCA_ID
 #define FELUCCA_ID "FM-1_000"
 #endif
@@ -23,7 +28,24 @@
 #define APP_COMPANION_EXTRAS ""
 #endif
 #define CP_HELLO 0x60u
-#define CP_VERSION 2u                                 /* 2: the backup's format at the answer's end (0x60) */
+#define CP_FILES 0x61u
+#define CP_PARAMS 0x62u
+#ifdef APP_PARAMS
+#define CP_PARAMS_ON 1
+#else
+#define CP_PARAMS_ON 0
+#endif
+#define CP_FIRST 0x60u                                /* the companion's commands: 0x60 .. 0x6F, the ones it does not */
+#define CP_LAST 0x6Fu                                 /* know taken and not answered (no app gets them) */
+#define CP_VERSION 3u                                 /* 2: the backup's format at the answer's end (0x60); 3: each
+                                                       * command's version after it */
+#define CP_FILES_VERSION 1u                           /* the version of 0x61's requests and answers (0x60 tells it) */
+#define CP_PARAMS_VERSION 1u                          /* 0x62's */
+#if defined APP_FILES || defined APP_FILE_OBJS
+#define CP_FILES_ON 1                                 /* files: the store's objects (APP_FILE_OBJS), the app's own (APP_FILES) */
+#else
+#define CP_FILES_ON 0
+#endif
 #ifndef FM1B_BACKUP_EXT
 #define FM1B_BACKUP_EXT "bak"                         /* the backup files' extension (fm1.toml backup_ext: tools/build.py) */
 #endif
@@ -34,6 +56,7 @@
 static int cp_send(const uint8_t *p, uint32_t n);
 static int cp_room(uint32_t n);
 static uint32_t cp_link(void);
+static int cp_held(void);
 
 static uint8_t cp_msg[7u + CP_BODY_MAX] PLAT_POOL;   /* (the pool: RAM the app's .bss does not count) */
 static uint8_t cp_wire[2u + ((7u + CP_BODY_MAX) * 8u + 6u) / 7u] PLAT_POOL;
@@ -95,12 +118,13 @@ enum {
     CP_S_HELLO = 1u << 0, CP_S_FILES = 1u << 1, CP_S_PARAMS = 1u << 2, CP_S_BACKUP = 1u << 3, CP_S_MIRROR = 1u << 4,
     CP_S_READER = 1u << 5, CP_S_BLE = 1u << 6, CP_S_WIFI = 1u << 7, CP_S_UAC_IN = 1u << 8, CP_S_UAC_OUT = 1u << 9,
     CP_S_APP_SYSEX = 1u << 10, CP_S_APP_CMD = 1u << 11, CP_S_CPU2 = 1u << 12, CP_S_USB_HOST = 1u << 13,
-    CP_S_BT_AUDIO = 1u << 14
+    CP_S_BT_AUDIO = 1u << 14, CP_S_CRASHLOG = 1u << 15, CP_S_STATS = 1u << 16, CP_S_BLE_DEV = 1u << 17,
+    CP_S_SD = 1u << 18, CP_S_DISK = 1u << 19, CP_S_RES = 1u << 20, CP_S_TOUCH = 1u << 21, CP_S_UAC_CH = 1u << 22
 };
 static uint32_t cp_services(void)
 {
-    uint32_t s = CP_S_HELLO | CP_S_READER;
-#ifdef APP_FILES
+    uint32_t s = CP_S_HELLO | CP_S_READER | CP_S_CRASHLOG;   /* (the crash history: every build, F0 7D 4C 48) */
+#if CP_FILES_ON
     s |= CP_S_FILES;
 #endif
 #ifdef APP_PARAMS
@@ -139,6 +163,27 @@ static uint32_t cp_services(void)
 #if FM1B_BT_AUDIO
     s |= CP_S_BT_AUDIO;
 #endif
+#if defined FM1B_DBGSTATS && FM1B_DBGSTATS            /* (the debug stats: F0 7D 4C 53) */
+    s |= CP_S_STATS;
+#endif
+#if FM1B_BLE && FM1B_BLE_CENTRAL
+    s |= CP_S_BLE_DEV;
+#endif
+#if defined FM1B_SD && FM1B_SD
+    s |= CP_S_SD;
+#endif
+#if defined FM1B_MSC && FM1B_MSC
+    s |= CP_S_DISK;
+#endif
+#if defined FM1B_RES && FM1B_RES
+    s |= CP_S_RES;
+#endif
+#ifdef APP_TOUCH
+    s |= CP_S_TOUCH;
+#endif
+#if defined FM1B_UAC_CH && FM1B_UAC_CH > 2
+    s |= CP_S_UAC_CH;
+#endif
     return s;
 }
 static uint32_t cp_nfiles(void);
@@ -165,6 +210,9 @@ static void cp_hello(void)
     cp_u16(0);
     cp_str("", 7);
 #endif
+    cp_u8(2);                                         /* version 3: each command's version (u8 n, n x (u8 cmd, u8 v)) */
+    cp_u8(CP_FILES), cp_u8(CP_FILES_ON ? CP_FILES_VERSION : 0u);
+    cp_u8(CP_PARAMS), cp_u8(CP_PARAMS_ON ? CP_PARAMS_VERSION : 0u);
     cp_end(CP_HELLO);
 }
 
@@ -185,27 +233,145 @@ static uint32_t cp_rd32(const uint8_t *p) { return cp_rd16(p) | cp_rd16(p + 2) <
 
 /* an answer's status (files, parameters) */
 enum { CP_OK, CP_BUSY, CP_NONE, CP_DENIED, CP_RANGE, CP_CRC, CP_FLASH, CP_ORDER, CP_BAD, CP_UNKNOWN };
-#ifdef APP_FILES
+#if CP_FILES_ON
 /* ---------------------------------------------------------------- files --- */
-#define CP_FILES 0x61u
 enum { CF_LIST, CF_READ, CF_SUM, CF_BEGIN, CF_DATA, CF_COMMIT, CF_DELETE };
 static struct {
     uint8_t on;
     uint16_t i;
     uint32_t size, crc, next, run;                    /* the file's size and CRC-32; the bytes come so far, their CRC */
 } cw;
-#ifdef APP_FILE_COUNT
-static uint32_t cp_nfiles(void) { return app_file_count(); }   /* (the app's own count: its app_file is costly) */
+
+/* The store's objects as files (APP_FILE_OBJS: files 0 .. CS_N - 1): read in place from the current copy (cp_obj_read),
+ * a write gathered whole in cs_buf, its CRC-32 checked there again at commit, then saved as the app saves it
+ * (plat_store_save: a new copy, the old one current until it is whole) and the app told (app_file_changed). */
+#ifdef APP_FILE_OBJS
+static const plat_file_obj_t cs_obj[] = APP_FILE_OBJS;
+#define CS_N ((uint32_t)(sizeof cs_obj / sizeof cs_obj[0]))
+static int cp_obj_read(uint32_t obj, uint32_t off, uint8_t *dst, uint32_t n);
+#if defined FM1B_BACKUP && FM1B_BACKUP && !defined PLAT_HOST && !defined APP_FILE_OBJ_MAX
+#define APP_FILE_OBJ_MAX ST_PAYLOAD_MAX
+#define cs_buf bu_buf                                 /* (backup.c's restore buffer: a restore in between fails the CRC) */
 #else
-static uint32_t cp_nfiles(void)
+#ifndef APP_FILE_OBJ_MAX
+#define APP_FILE_OBJ_MAX PLAT_STORE_MAX               /* the largest object a computer may write */
+#endif
+static uint8_t cs_buf[APP_FILE_OBJ_MAX] __attribute__((aligned(4))) PLAT_POOL;
+#endif
+_Static_assert(APP_FILE_OBJ_MAX <= PLAT_STORE_MAX, "APP_FILE_OBJ_MAX: a store object holds PLAT_STORE_MAX bytes at most");
+#else
+#define CS_N 0u
+#endif
+#ifdef APP_FILES
+#ifdef APP_FILE_COUNT
+static uint32_t cp_napp(void) { return app_file_count(); }   /* (the app's own count: its app_file is costly) */
+#else
+static uint32_t cp_napp(void)
 {
     plat_file_info_t f;
     uint32_t i = 0;
-    while (i < 0xFFFFu && app_file(i, &f) == 0)
+    while (i < 0xFFFFu - CS_N && app_file(i, &f) == 0)
         i++;
     return i;
 }
 #endif
+#else
+static uint32_t cp_napp(void) { return 0; }
+#endif
+static uint32_t cp_nfiles(void) { return CS_N + cp_napp(); }
+
+/* file i, the store's objects first: what it is (0 = there), its bytes, a new content begun, written, made current,
+ * deleted (0 = done; commit -2: the bytes gathered changed, CRC) */
+static int cf_info(uint32_t i, plat_file_info_t *f)
+{
+#ifdef APP_FILE_OBJS
+    if (i < CS_N) {
+        int n = plat_store_size(cs_obj[i].obj);
+        f->name = cs_obj[i].name, f->kind = cs_obj[i].kind, f->flags = cs_obj[i].flags;
+        f->size = n < 0 ? 0u : (uint32_t)n, f->room = APP_FILE_OBJ_MAX;
+        return 0;
+    }
+#endif
+#ifdef APP_FILES
+    return app_file(i - CS_N, f);
+#else
+    return -1;
+#endif
+}
+static int cf_read(uint32_t i, uint32_t off, uint8_t *dst, uint32_t n)
+{
+#ifdef APP_FILE_OBJS
+    if (i < CS_N)
+        return cp_obj_read(cs_obj[i].obj, off, dst, n);
+#endif
+#ifdef APP_FILES
+    return app_file_read(i - CS_N, off, dst, n);
+#else
+    return -1;
+#endif
+}
+static int cf_begin(uint32_t i, uint32_t size)
+{
+#ifdef APP_FILE_OBJS
+    if (i < CS_N)
+        return size <= APP_FILE_OBJ_MAX ? 0 : -1;
+#endif
+#ifdef APP_FILES
+    return app_file_begin(i - CS_N, size);
+#else
+    return -1;
+#endif
+}
+static int cf_write(uint32_t i, uint32_t off, const uint8_t *src, uint32_t n)
+{
+#ifdef APP_FILE_OBJS
+    if (i < CS_N) {
+        if (off > APP_FILE_OBJ_MAX || n > APP_FILE_OBJ_MAX - off)
+            return -1;
+        memcpy(cs_buf + off, src, n);
+        return 0;
+    }
+#endif
+#ifdef APP_FILES
+    return app_file_write(i - CS_N, off, src, n);
+#else
+    return -1;
+#endif
+}
+static int cf_commit(uint32_t i, uint32_t size, uint32_t crc)
+{
+#ifdef APP_FILE_OBJS
+    if (i < CS_N) {
+        if (cp_crc(0, cs_buf, size) != crc)
+            return -2;                                /* (the buffer was lent meanwhile: send it again) */
+        if (plat_store_save(cs_obj[i].obj, cs_buf, size))
+            return -1;
+        app_file_changed(cs_obj[i].obj);
+        return 0;
+    }
+#endif
+#ifdef APP_FILES
+    return app_file_commit(i - CS_N, size, crc);
+#else
+    return -1;
+#endif
+}
+static int cf_delete(uint32_t i)
+{
+#ifdef APP_FILE_OBJS
+    if (i < CS_N) {
+        if (plat_store_save(cs_obj[i].obj, cs_buf, 0))   /* (an empty object is none: plat_store_load) */
+            return -1;
+        app_file_changed(cs_obj[i].obj);
+        return 0;
+    }
+#endif
+#ifdef APP_FILES
+    return app_file_delete(i - CS_N);
+#else
+    return -1;
+#endif
+}
 static void cp_head(uint32_t op, uint32_t st, uint32_t i)   /* an answer's start: op, status, index */
 {
     cp_begin();
@@ -213,7 +379,7 @@ static void cp_head(uint32_t op, uint32_t st, uint32_t i)   /* an answer's start
     cp_u8(st);
     cp_u16(i);
 }
-static int cp_busy(const plat_file_info_t *f) { return !(f->flags & PLAT_FF_PLAYING) && app_file_busy(); }
+static int cp_busy(const plat_file_info_t *f) { return cp_held() || (!(f->flags & PLAT_FF_PLAYING) && app_file_busy()); }
 static uint32_t cp_file_op(uint32_t op, uint32_t i, const uint8_t *b, uint32_t n, const plat_file_info_t *f)
 {
     switch (op) {
@@ -229,7 +395,7 @@ static uint32_t cp_file_op(uint32_t op, uint32_t i, const uint8_t *b, uint32_t n
         k = k > CP_READ_MAX ? CP_READ_MAX : k;
         k = k > f->size - off ? f->size - off : k;
         cp_u32(off);
-        if (k && app_file_read(i, off, cp_msg + 6u + cp_n, k))
+        if (k && cf_read(i, off, cp_msg + 6u + cp_n, k))
             return CP_FLASH;
         cp_n += k;
         return CP_OK;
@@ -240,7 +406,7 @@ static uint32_t cp_file_op(uint32_t op, uint32_t i, const uint8_t *b, uint32_t n
             return CP_DENIED;
         for (off = 0; off < f->size; off += CP_READ_MAX) {
             uint32_t k = f->size - off > CP_READ_MAX ? CP_READ_MAX : f->size - off;
-            if (app_file_read(i, off, cp_wire, k))   /* (cp_wire: free until the answer is framed) */
+            if (cf_read(i, off, cp_wire, k))   /* (cp_wire: free until the answer is framed) */
                 return CP_FLASH;
             c = cp_crc(c, cp_wire, k);
         }
@@ -261,7 +427,7 @@ static uint32_t cp_file_op(uint32_t op, uint32_t i, const uint8_t *b, uint32_t n
             return CP_BUSY;
         if (!(cw.on && cw.i == i && cw.size == size && cw.crc == crc)) {   /* (the same again: it resumes) */
             cw.on = 0;
-            if (app_file_begin(i, size))
+            if (cf_begin(i, size))
                 return CP_FLASH;
             cw.on = 1, cw.i = (uint16_t)i, cw.size = size, cw.crc = crc, cw.next = 0, cw.run = 0;
         }
@@ -287,7 +453,7 @@ static uint32_t cp_file_op(uint32_t op, uint32_t i, const uint8_t *b, uint32_t n
                 cp_u32(cw.next);
                 return CP_BUSY;
             }
-            if (app_file_write(i, cw.next, b + skip, k - skip)) {
+            if (cf_write(i, cw.next, b + skip, k - skip)) {
                 cw.on = 0;
                 cp_u32(0);
                 return CP_FLASH;
@@ -300,12 +466,14 @@ static uint32_t cp_file_op(uint32_t op, uint32_t i, const uint8_t *b, uint32_t n
     }
     case CF_COMMIT: {                                 /* -> u32 size, u32 CRC-32 */
         uint32_t rc;
+        int r;
         if (!cw.on || cw.i != i || cw.next != cw.size)
             return CP_ORDER;
         if (cp_busy(f))
             return CP_BUSY;
         cw.on = 0;
-        rc = cw.run != cw.crc ? CP_CRC : app_file_commit(i, cw.size, cw.crc) ? CP_FLASH : CP_OK;
+        r = cw.run != cw.crc ? -2 : cf_commit(i, cw.size, cw.crc);
+        rc = r == -2 ? CP_CRC : r ? CP_FLASH : CP_OK;
         cp_u32(cw.size);
         cp_u32(cw.crc);
         return rc;
@@ -317,7 +485,7 @@ static uint32_t cp_file_op(uint32_t op, uint32_t i, const uint8_t *b, uint32_t n
             return CP_BUSY;
         if (cw.on && cw.i == i)
             cw.on = 0;
-        return app_file_delete(i) ? CP_FLASH : CP_OK;
+        return cf_delete(i) ? CP_FLASH : CP_OK;
     default:
         return CP_UNKNOWN;
     }
@@ -331,7 +499,7 @@ static void cp_files(const uint8_t *b, uint32_t n)   /* b: the body (op, u16 ind
         cp_end(CP_FILES);
         return;
     }
-    if (app_file(i, &f)) {                            /* (no such file: list says how many there are) */
+    if (cf_info(i, &f)) {                             /* (no such file: list says how many there are) */
         cp_head(op, CP_NONE, i);
         if (op == CF_LIST)
             cp_u16(cp_nfiles());
@@ -356,6 +524,7 @@ static void cp_files(const uint8_t *b, uint32_t n)   /* b: the body (op, u16 ind
     cp_end(CP_FILES);
 }
 
+#ifdef APP_FILES
 /* ------------------------------------ files kept in the data area, A / B --- */
 #define PF_MAGIC 0x31464D46u                          /* "FMF1" */
 typedef struct {
@@ -458,13 +627,13 @@ int plat_file_delete(const plat_file_t *f)
         return -1;
     return 0;
 }
+#endif
 #else
 static uint32_t cp_nfiles(void) { return 0; }
 #endif
 
 #ifdef APP_PARAMS
 /* ----------------------------------------------------------- parameters --- */
-#define CP_PARAMS 0x62u
 #ifndef APP_PARAM_MAX
 #define APP_PARAM_MAX 64                              /* the most an app has (watching keeps a value each) */
 #endif
@@ -695,15 +864,16 @@ static int comp_cmd(const uint8_t *d, uint32_t n)
 {
     if (n < 7u)
         return 0;
+    if (d[2] < CP_FIRST || d[2] > CP_LAST)
+        return 0;                                     /* (not the companion's: the platform's, the app's) */
 #ifdef APP_PARAMS
-    if (d[2] >= CP_HELLO && d[2] <= CP_PARAMS)
-        cq.heard = plat_ms();                         /* (any request keeps a watch on) */
+    cq.heard = plat_ms();                             /* (any request keeps a watch on) */
 #endif
     switch (d[2]) {
     case CP_HELLO:
         cp_hello();
         return 1;
-#ifdef APP_FILES
+#if CP_FILES_ON
     case CP_FILES:
         cp_files(d + 6, n - 7u);
         return 1;
@@ -714,7 +884,7 @@ static int comp_cmd(const uint8_t *d, uint32_t n)
         return 1;
 #endif
     default:
-        return 0;
+        return 1;                                     /* (the companion's range: not answered, never the app's) */
     }
 }
 

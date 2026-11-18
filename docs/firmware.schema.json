@@ -36,7 +36,7 @@
           "items": {
             "enum": ["bluetooth-midi", "bluetooth-midi-devices", "bluetooth-audio", "usb-audio-in", "usb-audio-out",
                      "usb-midi-host", "usb-disk", "sd-card", "wifi", "second-core", "velocity", "pressure", "screen-reader",
-                     "screen-mirror", "backup", "resources"]
+                     "screen-mirror", "backup", "resources", "companion"]
           }
         }
       },

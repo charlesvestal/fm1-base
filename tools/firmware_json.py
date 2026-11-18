@@ -42,6 +42,7 @@ FEATURES = (
     ("screen-mirror", "screen mirroring"),                # mirror
     ("backup", "backup and restore"),                     # backup
     ("resources", "a resource region"),                   # resources
+    ("companion", "companion services"),                  # companion
 )
 FEATURE_NAMES = tuple(f for f, _ in FEATURES)
 
@@ -92,6 +93,7 @@ def parts(conf, ble, own, wifi, cpu2, touch, words, env=None):
         "screen-mirror": on("mirror", "FM1B_MIRROR"),
         "backup": on("backup", "FM1B_BACKUP"),
         "resources": on("resources", "FM1B_RES"),
+        "companion": on("companion", "FM1B_COMPANION"),
     }
     return {f: have[f] for f in FEATURE_NAMES}
 

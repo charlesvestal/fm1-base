@@ -94,6 +94,7 @@ cpu2 = true
 mirror = true
 backup = true
 resources = "res.bin"
+companion = true
 author = "Someone Else"
 licence = "MPL-2.0"
 tagline = "Everything at once"

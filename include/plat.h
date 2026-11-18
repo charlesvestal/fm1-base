@@ -439,7 +439,10 @@ void plat_console_present(int on);        /* the console presented (the default)
 
 /* the app's own commands in the update's SysEx framing (F0 pack7(00 59 cmd len24 body ~sum) F7: felucca-bsp ota.c),
  * an app with APP_USB_CMD: app_usb_cmd(d, n) gets each frame whose cmd the platform does not take (d: the decoded
- * frame, cmd d[2], the body from d + 6). Inside it the app may pull data from the host as an update does: */
+ * frame, cmd d[2], the body from d + 6). The platform's cmds are not the app's: 0x11 and 0x30 (the update), 0x41..0x44
+ * (backup, restore, resources), 0x50..0x54 (the mirror) and 0x60..0x6F (the companion services: docs/COMPANION.md,
+ * taken whole with companion = true, kept free without it). Inside it the app may pull data from the host as an update
+ * does: */
 int plat_host_read(uint32_t addr, uint8_t *dst, uint32_t n);   /* n bytes (512 at most) at the host's addr; 0 = ok.
                                                                  * Waits (tries: 3); main loop only */
 void plat_host_patience(uint32_t try_ms, uint32_t total_ms);   /* each try's wait (default 5000) and the whole
@@ -512,6 +515,14 @@ typedef struct {
     uint8_t kind, flags;
     uint32_t size, room;
 } plat_file_info_t;
+/* A store object a computer may manage as a file (app.h APP_FILE_OBJS, a list of these): obj the app's object (never
+ * OBJ_PANEL, the unit's calibration), kind PLAT_FK_*, flags PLAT_FF_* (PLAT_FF_DELETE: the object emptied, as the app
+ * finds it at a first start), name unique among the app's files. A write replaces the object whole */
+typedef struct {
+    uint16_t obj;
+    uint8_t kind, flags;
+    const char *name;
+} plat_file_obj_t;
 /* A file kept in the data area (plat_data's windows) as two copies, A at a and B at b, n bytes each (whole 4 KiB
  * sectors): the current one is the newer whose head (its first PLAT_FILE_HEAD bytes: the size, the data's CRC-32, a
  * sequence number) is whole; a write goes to the other, its sectors erased as the data reaches them, its head written
@@ -772,7 +783,12 @@ int app_stats_quiet(void);
  * Companion services over USB (fm1.toml companion = true: FM1B_COMPANION 1, device/companion.c; docs/COMPANION.md,
  * tools/fm1_companion.py): a computer asks what the firmware is and has (the platform services built, APP_NAME,
  * APP_VERSION, the backup's magic, version and file extension). The app may add its own tags for its own pages: APP_COMPANION_EXTRAS "key=value;...".
- * Its files (APP_FILES): int app_file(i, plat_file_info_t *f) (file i: 0 = there, -1 past the last), app_file_read(i,
+ * Its files: the store's objects it names (APP_FILE_OBJS {{OBJ_X, PLAT_FK_PRESET, PLAT_FF_READ | PLAT_FF_WRITE, "x"},
+ * ...}: plat_file_obj_t), listed, read and replaced whole by the platform (plat_store_save), then void
+ * app_file_changed(obj) (the computer wrote or emptied obj: load it again); APP_FILE_OBJ_MAX (optional, PLAT_STORE_MAX
+ * by default) the largest a computer may write, the size of the buffer a write is gathered in (backup.c's when backup
+ * is on and the app sets none). With either kind of file, int app_file_busy(void) (1: no write or delete now).
+ * Files that are not store objects come after them (APP_FILES): int app_file(i, plat_file_info_t *f) (file i: 0 = there, -1 past the last), app_file_read(i,
  * off, dst, n), app_file_begin(i, size), app_file_write(i, off, src, n) (in order), app_file_commit(i, size, crc) (all
  * of it came, its CRC-32 checked: make it current), app_file_delete(i) (0 = done each), app_file_busy() (1: no write or
  * delete now, playing). The name app_file gives stays valid until its next call. APP_FILE_COUNT (optional): uint32_t

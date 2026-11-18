@@ -1746,6 +1746,17 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)
 static int cp_send(const uint8_t *p, uint32_t n) { return plat_sysex_send(p, n); }
 static int cp_room(uint32_t n) { return plat_sysex_room() >= n; }
 static uint32_t cp_link(void) { return plat_usb_session(); }
+static int cp_held(void) { return 0; }
+#ifdef APP_FILE_OBJS
+static int cp_obj_read(uint32_t obj, uint32_t off, uint8_t *dst, uint32_t n)
+{
+    store_ready();
+    if (obj >= OBJ_NOBJ || store_len[obj] < 0 || off > (uint32_t)store_len[obj] || n > (uint32_t)store_len[obj] - off)
+        return -1;
+    memcpy(dst, store[obj] + off, n);
+    return 0;
+}
+#endif
 #endif
 
 #if FM1B_MIRROR

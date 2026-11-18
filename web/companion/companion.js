@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (C) 2026 Henri David
+// Copyright (C) 2026 Charles Vestal (the commands' versions)
 // The companion services' client (docs/COMPANION.md, device/companion.c): what any fm1-base firmware built with
 // companion = true is and has, its files and its parameters, over a MIDI port pair (Web MIDI's, or the browser
 // emulator's: web/emu/parts/port_client.js). tools/fm1_companion.py is the same in Python.
@@ -12,7 +13,8 @@
 export const HELLO = 0x60, FILES = 0x61, PARAMS = 0x62;
 export const SERVICES = ["capability query", "files", "parameters", "backup", "mirror", "screen reader",
   "Bluetooth MIDI", "WiFi", "USB audio in", "USB audio out", "the app's own SysEx", "the app's own commands",
-  "the second core", "USB MIDI host", "Bluetooth audio"];
+  "the second core", "USB MIDI host", "Bluetooth audio", "crash history", "debug stats", "Bluetooth MIDI devices",
+  "the SD card", "USB disk mode", "a resource region", "velocity and pressure", "USB audio channels beyond two"];
 export const STATUS = ["ok", "busy (the app plays: stop it first)", "no such file", "not allowed", "out of range",
   "CRC-32 mismatch", "the flash refused", "out of order", "a malformed request", "an unknown operation"];
 export const KINDS = ["other", "project", "preset", "sample", "bank", "pattern", "settings", "text", "log"];
@@ -150,10 +152,15 @@ export class Companion {
     const bits = le.u32(b, 1);
     const [[identity, name, version, extras], at] = strings(b, 13, 4);
     let backup = null;                          // protocol 2: the backup's format at the answer's end (an older answer has none)
-    if (b[0] >= 2 && b.length >= at + 7 && (b[at] | b[at + 1] | b[at + 2] | b[at + 3]))
-      backup = { magic: String.fromCharCode(b[at], b[at + 1], b[at + 2], b[at + 3]), version: le.u16(b, at + 4),
-        ext: strings(b, at + 6, 1)[0][0] };
-    return { backup, version: b[0], bits, services: SERVICES.filter((_, i) => bits >> i & 1), readMax: le.u16(b, 5),
+    const commands = {};                        // protocol 3: each command's version after it (0: not in this build)
+    if (b[0] >= 2 && b.length >= at + 7) {
+      const [[ext], next] = strings(b, at + 6, 1);
+      if (b[at] | b[at + 1] | b[at + 2] | b[at + 3])
+        backup = { magic: String.fromCharCode(b[at], b[at + 1], b[at + 2], b[at + 3]), version: le.u16(b, at + 4), ext };
+      if (b[0] >= 3 && next < b.length)
+        for (let k = 0; k < b[next] && next + 2 + 2 * k < b.length; k++) commands[b[next + 1 + 2 * k]] = b[next + 2 + 2 * k];
+    }
+    return { backup, commands, version: b[0], bits, services: SERVICES.filter((_, i) => bits >> i & 1), readMax: le.u16(b, 5),
       writeMax: le.u16(b, 7), files: le.u16(b, 9), params: le.u16(b, 11), identity, name, appVersion: version,
       extras: Object.fromEntries(extras.split(";").filter(Boolean).map((kv) => kv.includes("=") ? kv.split(/=(.*)/s).slice(0, 2) : [kv, ""])) };
   }

@@ -2,8 +2,9 @@
  * Copyright (C) 2026 Henri David */
 /* The companion test app (tests/companion_test.py): an app with the companion services (fm1.toml companion = true,
  * device/companion.c), its own SysEx beside them (APP_SYSEX: frames F0 7D 43 50 cmd .. F7, "CP": 1 counted, 2 plays,
- * 3 stops; never answered), its own tags, a backup (only its format is the test's), and three files (APP_FILES): notes.txt (written while playing too) and
- * sample.raw kept by plat_file_* in the data area, info read only (made by the app); six parameters (APP_PARAMS) in
+ * 3 stops; never answered), its own tags, a backup (only its format is the test's), a store object as a file
+ * (APP_FILE_OBJS: data.bin, OBJ_DATA) and three files of its own after it (APP_FILES): notes.txt (written while playing
+ * too) and sample.raw kept by plat_file_* in the data area, info read only (made by the app); six parameters (APP_PARAMS) in
  * three groups: TEMPO, SWING, WAVE (4 labels), CUTOFF, LOAD (read only), MODE (40 labels); SysEx cmd 4 v sets TEMPO
  * as the panel would (v + 40). No sound, a black screen. */
 #pragma once
@@ -39,6 +40,10 @@ void app_say(const char *a, const char *b);
 #define APP_SYSEX
 int app_sysex(const uint8_t *p, uint32_t n);
 
+#define APP_FILE_OBJS {{OBJ_DATA, PLAT_FK_BANK, PLAT_FF_READ | PLAT_FF_WRITE | PLAT_FF_DELETE, "data.bin"}}
+#define APP_FILE_OBJ_MAX 2048u                         /* (a write of data.bin: 2 KB at most) */
+void app_file_changed(uint32_t obj);
+
 #define APP_FILES
 int app_file(uint32_t i, plat_file_info_t *f);
 int app_file_read(uint32_t i, uint32_t off, uint8_t *dst, uint32_t n);
@@ -55,6 +60,7 @@ const char *app_param_group(uint32_t g);
 int32_t app_param_get(uint32_t i);
 int32_t app_param_set(uint32_t i, int32_t v);
 
-/* the host simulator's checks: own (the app's SysEx frames it took), commits (files made current) */
+/* the host simulator's checks: own (the app's SysEx frames it took), commits (files made current), changed (store
+ * objects the computer wrote or emptied: app_file_changed) */
 #define APP_HOST_EXPECT
 int app_expect(const char *what, int *got);

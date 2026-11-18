@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Henri David */
 /* The companion test app: see app.h */
-static uint32_t cp_own, cp_commits;
+static uint32_t cp_own, cp_commits, cp_changed;
 static uint8_t playing;
 static int32_t tempo = 120;
 
@@ -82,6 +82,7 @@ int app_file_commit(uint32_t i, uint32_t size, uint32_t crc)
 }
 int app_file_delete(uint32_t i) { return app_pf(i) ? plat_file_delete(app_pf(i)) : -1; }
 int app_file_busy(void) { return playing; }
+void app_file_changed(uint32_t obj) { cp_changed += obj == OBJ_DATA; }   /* (an app loads it again here) */
 
 /* the parameters: TEMPO's value is the app's own (cmd 4 changes it), the others kept here */
 static const char *const WAVES[] = {"SAW", "SQR", "TRI", "SIN"};
@@ -134,6 +135,8 @@ int app_expect(const char *what, int *got)
         *got = (int)cp_own;
     else if (!strcmp(what, "commits"))
         *got = (int)cp_commits;
+    else if (!strcmp(what, "changed"))
+        *got = (int)cp_changed;
     else
         return 0;
     return 1;

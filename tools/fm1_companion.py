@@ -38,7 +38,8 @@ INST = importlib.import_module("fm1_install")   # (tools/: the update's wire for
 HELLO = 0x60
 SERVICES = ["capability query", "files", "parameters", "backup", "mirror", "screen reader", "Bluetooth MIDI", "WiFi",
             "USB audio in", "USB audio out", "the app's own SysEx", "the app's own commands", "the second core",
-            "USB MIDI host", "Bluetooth audio"]
+            "USB MIDI host", "Bluetooth audio", "crash history", "debug stats", "Bluetooth MIDI devices", "the SD card",
+            "USB disk mode", "a resource region", "velocity and pressure", "USB audio channels beyond two"]
 FILES = 0x61
 PARAMS = 0x62
 PQ_INFO, PQ_LABELS, PQ_GROUP, PQ_GET, PQ_SET, PQ_WATCH, PQ_CHANGED = range(7)
@@ -131,12 +132,16 @@ class Client:
         b = self.request(HELLO)
         ver, svc, rmax, wmax, nf, np_ = struct.unpack_from("<BIHHHH", b)
         (ident, name, version, extras), rest = cstrings(b[13:], 4)
-        backup = None                                 # protocol 2 (an answer's end an old reader skips): the backup's format
+        backup, commands = None, {}                   # protocol 2 (an answer's end an old reader skips): the backup's format
         if ver >= 2 and len(rest) >= 7:
             magic, bver = struct.unpack_from("<4sH", rest)
             if magic != bytes(4):
                 backup = {"magic": magic.decode("latin-1"), "version": bver, "ext": cstrings(rest[6:], 1)[0][0]}
-        return {"backup": backup, "version": ver, "services": [s for i, s in enumerate(SERVICES) if svc >> i & 1], "bits": svc,
+            (_,), rest = cstrings(rest[6:], 1)
+            if ver >= 3 and rest:                     # protocol 3: each command's version (0: not in this build)
+                n = rest[0]
+                commands = {rest[1 + 2 * k]: rest[2 + 2 * k] for k in range(n) if 2 + 2 * k < len(rest)}
+        return {"backup": backup, "version": ver, "commands": commands, "services": [s for i, s in enumerate(SERVICES) if svc >> i & 1], "bits": svc,
                 "read_max": rmax, "write_max": wmax, "files": nf, "params": np_, "identity": ident, "name": name,
                 "app_version": version,
                 "extras": dict(kv.split("=", 1) if "=" in kv else (kv, "") for kv in extras.split(";") if kv)}
