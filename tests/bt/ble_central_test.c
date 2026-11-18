@@ -178,6 +178,9 @@ static struct {
     int enc_wait, mic_on_enc;                  /* events until its LL_ENC_RSP (its host's LTK lookup); it leaves
                                                 * with 0x3D on our LL_ENC_REQ (a key it cannot use) */
     uint8_t enc_req[23];
+    /* a Roland FP-30X (fm1-base#44): the CCCD only on an encrypted link, Insufficient Encryption (0x0F) when not, and
+     * still for a while after the link is (its side counts it encrypted only later) */
+    int need_enc, enc_late, enc_evt;           /* that; events after the encryption it still refuses (-1: always); when */
 } P;
 
 static void p_reset(void)
@@ -344,6 +347,7 @@ static void p_enc_answer(const uint8_t *p)
     d[0] = LL_START_ENC_REQ;
     p_ctrl(d, 1);
     P.enc_rx = 1;
+    P.enc_evt = P.evt;
 }
 
 /* its SMP responder (legacy Just Works, bonding): c1 / s1 from the stack's primitives (checked against the Core
@@ -523,6 +527,10 @@ static void p_att_rx(const uint8_t *p, int n)
                 P.late_pending = 0;
                 p_l2(6, f, 2);
             }
+            return;
+        }
+        if (P.need_enc && (!P.enc_rx || P.enc_late < 0 || (int)(uint16_t)(P.evt - P.enc_evt) < P.enc_late)) {
+            p_att_err(0x12, PH_CCCD, 0x0F);    /* Insufficient Encryption */
             return;
         }
         P.cccd = p[3] & 1;
@@ -1038,6 +1046,30 @@ static void test_passkey(void)
               P.pause_n == 1 && P.pair_reqs == 1 && ble_central_passkey() == BLE_NO_PASSKEY);
     P.no_pause = 0;
 }
+
+/* a Roland FP-30X (fm1-base#44): Insufficient Encryption, and still for a while once the link is encrypted */
+static void test_late_encryption(void)
+{
+    uint32_t r0;
+    leave();
+    connect(0);
+    P.need_enc = 1;
+    P.enc_late = 50;                           /* (562 ms) */
+    r0 = ble_dgc.gc_retries;
+    p_events(250);
+    check("FP-30X-like: Insufficient Encryption -> Just Works, refused again once encrypted -> asked again later, "
+          "ready; one pairing", ble_central_state() == BLE_CS_READY && P.cccd && P.pair_reqs == 1 &&
+          ble_dgc.gc_retries - r0 >= 2);
+    leave();
+    connect(0);
+    P.need_enc = 1;
+    P.enc_late = -1;
+    r0 = ble_dgc.gc_retries;
+    p_events(800);                             /* (9 s) */
+    check("refused for good once encrypted: asked again BLE_GATTC_LATE_TRIES times, then the link left, AUTH (0x0F)",
+          !ble_connected() && ble_central_fail() == BLE_CF_AUTH && ble_central_code() == 0x0F && P.pair_reqs == 1 &&
+          ble_dgc.gc_retries - r0 == 1 + BLE_GATTC_LATE_TRIES);
+}
 #endif
 
 #if !BLE_CEN_PAIR
@@ -1155,6 +1187,7 @@ int main(void)
 #if BLE_CEN_PAIR
     test_pairing();
     test_passkey();
+    test_late_encryption();
 #else
     test_no_pairing();
 #endif
