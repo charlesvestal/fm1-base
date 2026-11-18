@@ -274,8 +274,8 @@ repository (APP_DIR named app) also has the repository's firmware.json written, 
 
 The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it, or tools/setup_toolchain.sh puts the pinned
 one in .toolchain/ (tools/toolchain.lock), where this looks when JIELI_TOOLCHAIN is unset; on macOS (or with
-JIELI_DOCKER=1) the tools run in a linux/amd64 container: the image pinned by digest in the lock (distroless's cc,
-JIELI_DOCKER_IMAGE overrides it), as the user, with no network and no capabilities. One long-lived container serves
+JIELI_DOCKER=1) the tools run in a linux/amd64 container (Docker or podman, the first that answers): the image
+pinned by digest in the lock (distroless's cc, JIELI_DOCKER_IMAGE overrides it), as the user, with no network and no capabilities. One long-lived container serves
 every build of the tree; FM1B_ISOLATE=1 gives each tool a run of its own instead, with the tree read-only (tc). The package's three SDK files come from $AC79_SDK or from .toolchain/ac79-sdk (the same script).
 """
 import argparse
@@ -400,6 +400,27 @@ DOCKER_HARDEN = ["--platform", "linux/amd64", "--network", "none", "--cap-drop",
                  "--security-opt", "no-new-privileges", "--read-only", "--tmpfs", "/tmp"]
 _BUILDER = None
 _BUILDER_LOCK = __import__("threading").Lock()
+_CTR = None
+_CTR_LOCK = __import__("threading").Lock()
+
+
+def ctr():
+    """the container tool: Docker or podman, the first whose info answers (asked once a build), so podman needs no
+    docker alias and a docker installed with no daemon running doesn't hide a working podman"""
+    global _CTR
+    with _CTR_LOCK:
+        if not _CTR:
+            for c in ("docker", "podman"):
+                try:
+                    if not subprocess.run([c, "info"], capture_output=True).returncode:
+                        _CTR = c
+                        break
+                except OSError:
+                    pass
+            else:
+                raise SystemExit("build: the JieLi tools need a container here, and neither Docker nor podman answers "
+                                 "(docker info, podman info)")
+        return _CTR
 
 
 def builder():
@@ -416,12 +437,12 @@ def builder():
                 # the keep-alive, in the image's shell (busybox, in distroless's debug variant); each build touches it.
                 "touch /tmp/alive; while [ $(( $(date +%s) - $(stat -c %Y /tmp/alive) )) -lt 3600 ]; do sleep 30; done"]
         name = "jieli-" + hashlib.sha1(repr(args).encode()).hexdigest()[:10]
-        st = subprocess.run(["docker", "inspect", "-f", "{{.State.Running}}", name], capture_output=True, text=True)
+        st = subprocess.run([ctr(), "inspect", "-f", "{{.State.Running}}", name], capture_output=True, text=True)
         if st.stdout.strip() == "true":
-            r = subprocess.run(["docker", "exec", name, "touch", "/tmp/alive"], capture_output=True, text=True)
+            r = subprocess.run([ctr(), "exec", name, "touch", "/tmp/alive"], capture_output=True, text=True)
         else:
-            subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-            r = subprocess.run(["docker", "run", "-d", "--rm", "--name", name, *args], capture_output=True, text=True)
+            subprocess.run([ctr(), "rm", "-f", name], capture_output=True)
+            r = subprocess.run([ctr(), "run", "-d", "--rm", "--name", name, *args], capture_output=True, text=True)
         if r.returncode:
             sys.stderr.write(r.stderr)
             raise SystemExit("build: cannot start the toolchain container")
@@ -447,12 +468,12 @@ def tc(tool, *args, cwd=None):
     if not use_docker():
         cmd = [str(toolchain() / tool), *rel]
     elif isolated():
-        cmd = ["docker", "run", "--rm", *DOCKER_HARDEN, "--pids-limit", "64",
+        cmd = [ctr(), "run", "--rm", *DOCKER_HARDEN, "--pids-limit", "64",
                "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{ROOT}:/work:ro",
                "-v", f"{OUT}:/work/{OUT.relative_to(ROOT)}", "-v", f"{toolchain()}:/opt/jieli:ro",
                "-w", str(work), "--entrypoint", f"/opt/jieli/{tool}", DOCKER_IMAGE, *rel]
     else:
-        cmd = ["docker", "exec", "-w", str(work), builder(), f"/opt/jieli/{tool}", *rel]
+        cmd = [ctr(), "exec", "-w", str(work), builder(), f"/opt/jieli/{tool}", *rel]
     r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if r.returncode:
         sys.stderr.write(r.stdout + r.stderr)
