@@ -738,6 +738,8 @@ int plat_sd_read(uint32_t lba, void *buf, uint32_t n)
 {
     int rc = 0, t;
     uint32_t old;
+    fm1_wdt_feed();                        /* (one FatFs call may be thousands of these: a big card's free space, a
+                                            * long file's cluster map. Each is bounded by its budget) */
     if (sd.state != 1)
         return SD_E_STATE;
     if (lba >= sd.sectors || n > sd.sectors - lba)
@@ -767,6 +769,7 @@ int plat_sd_write(uint32_t lba, const void *buf, uint32_t n)
 {
     int rc = 0, t;
     uint32_t old;
+    fm1_wdt_feed();
     if (sd.state != 1)
         return SD_E_STATE;
     if (lba >= sd.sectors || n > sd.sectors - lba)

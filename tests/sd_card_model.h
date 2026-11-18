@@ -44,6 +44,8 @@ static uint32_t sdm_ms;                 /* the test's plat_ms: one ms every 64 b
 #define SD_TICKS() (sdm.xfers * 1000u / 64u)   /* (device/sd.c's fine clock: here us, on the same bytes) */
 #define SD_TICKS_PER_US 1u
 static uint32_t fm1_sd_timeouts;
+static uint32_t sdm_wdt_feeds;
+static void fm1_wdt_feed(void) { sdm_wdt_feeds++; }   /* (felucca-bsp fm1_sys.h's, counted) */
 
 static uint8_t sdm_crc7(const uint8_t *p, int n)
 {

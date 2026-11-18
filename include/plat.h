@@ -625,7 +625,9 @@ void plat_sd_stop(void);           /* files closed or not, the card let go (unmo
 int plat_sd_state(void);           /* 1 started (with or without files), 0 not, < 0 the last start's SD_E_* */
 const char *plat_sd_what(int e);   /* an SD_E_* (or 0, 1) in a few words, for a screen: "no card", "ready", ... */
 uint32_t plat_sd_sectors(void);    /* the card's 512-byte sectors (0: not started) */
-int plat_sd_read(uint32_t sector, void *buf, uint32_t n);         /* n sectors into buf (RAM): 0 or SD_E_* */
+int plat_sd_read(uint32_t sector, void *buf, uint32_t n);         /* n sectors into buf (RAM): 0 or SD_E_*. This and
+                                                                    * plat_sd_write feed the watchdog: one FatFs call
+                                                                    * may be thousands of them */
 int plat_sd_write(uint32_t sector, const void *buf, uint32_t n);  /* n sectors from buf: 0 or SD_E_* */
 typedef struct {
     uint32_t sectors, khz;          /* the size; SPI1's clock for the card now (it steps down after errors) */

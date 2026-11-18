@@ -532,6 +532,7 @@ int main(int argc, char **argv)
     card(1024, 1, 1);                                      /* (the last card's counts in) */
     CHECK(crc7_bad == 0 && crc16_bad == wflips);       /* (only the blocks damaged on purpose refused) */
     CHECK(sdm.lcd_overlap == 0 && lcd_syncs > 0);
+    CHECK(sdm_wdt_feeds > 1000);                           /* (every plain read and write fed the watchdog) */
     CHECK(busy_talk == 0);                                 /* (nothing said to a busy card: it isn't heard) */
     printf("sd: %u commands; every command's CRC7 and written block's CRC16 accepted\n", cmds);
     if (fails) {
