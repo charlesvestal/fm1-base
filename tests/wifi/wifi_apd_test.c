@@ -594,7 +594,7 @@ int main(void)
     check(wa.st == WA_UP && wa.ssid_len == 8u && memcmp(wa.ssid, "FM1-4455", 8) == 0 && wn_st.ap.ssid_len == 0u,
           "the automatic name: FM1- and the last four digits of the address");
 
-#if FM1B_WIFI_JAM
+#if FM1B_WIFI_JANK
     /* 13b. MODE JANK: no access point, no manager: the group's channel, the group's BSSID, open frames at the never-keyed WCID */
     {
         uint8_t raw[WN_STORE_SIZE], fr[128];
@@ -659,13 +659,13 @@ int main(void)
     }
 #else
     plat_wifi_mode(WIFI_MODE_JANK);
-    check(plat_wifi_get_mode() != WIFI_MODE_JANK_AUTO && plat_wifi_get_mode() != WIFI_MODE_JANK, "without wifi_jam: MODE JANK refused");
+    check(plat_wifi_get_mode() != WIFI_MODE_JANK_AUTO && plat_wifi_get_mode() != WIFI_MODE_JANK, "without wifi_jank: MODE JANK refused");
     plat_wifi_mode(WIFI_MODE_JANK_AUTO);
     check(plat_wifi_get_mode() != WIFI_MODE_JANK_AUTO, "... asked by its stored number too");
     {
         struct wn_store r = wn_st;
         uint8_t m0 = wn_st.mode;
-        r.mode = WN_MODE_JANK_AUTO;                  /* (a record written by a build with wifi_jam) */
+        r.mode = WN_MODE_JANK_AUTO;                  /* (a record written by a build with wifi_jank) */
         wn_save(&r, store_raw);
         store_len = WN_STORE_SIZE;
         own_store_ok = 0;

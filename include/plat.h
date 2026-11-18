@@ -353,11 +353,11 @@ int plat_net_task(void (*fn)(void *), void *arg, const char *name);   /* a task 
 #define PLAT_WIFI_STORE_SIZE 336u
 enum { WIFI_MODE_OFF, WIFI_MODE_AUTO, WIFI_MODE_MAN, WIFI_MODE_AP, WIFI_MODE_AP_MAN, WIFI_MODE_JANK, WIFI_MODE_JANK_HOST, WIFI_MODE_JANK_AUTO };   /* JANK_AUTO: MODE JANK (wifi/wifi_jank.h: the FM-1s of a GROUP on one channel, no access point), what is stored; WIFI_MODE_JANK asks for it too, and a
                                          * record's JANK or JANK_HOST (from before 2026-11-04) reads as it */
-/* MODE JANK only with fm1.toml wifi_jam = true (FM1B_WIFI_JAM): its frames are open (no keys), anyone in range on the
- * group's channel can read them and send into the group. Without wifi_jam plat_wifi_mode refuses it, and a record that
+/* MODE JANK only with fm1.toml wifi_jank = true (FM1B_WIFI_JANK): its frames are open (no keys), anyone in range on the
+ * group's channel can read them and send into the group. Without wifi_jank plat_wifi_mode refuses it, and a record that
  * has it reads as AUTO. */
-#ifndef FM1B_WIFI_JAM
-#define FM1B_WIFI_JAM 0
+#ifndef FM1B_WIFI_JANK
+#define FM1B_WIFI_JANK 0
 #endif
 void plat_wifi_mode(int mode);         /* OFF: nothing runs (the radio, once started, stays up); MAN: joins when asked;
                                         * AUTO: and the best saved network heard, at the start and whenever none is

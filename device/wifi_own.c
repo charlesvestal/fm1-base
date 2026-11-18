@@ -120,7 +120,7 @@ static void own_store_load(void)
             wn_reset(&wn_st);
     }
 #endif
-    if (!FM1B_WIFI_JAM && wn_st.mode == WN_MODE_JANK_AUTO)   /* (a record from a build with wifi_jam, wn_load's one JANK mode: */
+    if (!FM1B_WIFI_JANK && wn_st.mode == WN_MODE_JANK_AUTO)   /* (a record from a build with wifi_jank, wn_load's one JANK mode: */
         wn_st.mode = WN_MODE_AUTO;                          /* AUTO here, MODE JANK not built) */
 }
 static void own_store_changed(void)
@@ -319,8 +319,8 @@ static struct {
 #endif
     uint8_t jn;                                   /* MODE JANK: the service is on the group's air (jn_*) */
 } wl;
-#define WL_JN (FM1B_WIFI_JAM && wl.jn)            /* (0 without wifi_jam: MODE JANK's code is not built in) */
-#define JNK_UP (FM1B_WIFI_JAM && jnk.up)
+#define WL_JN (FM1B_WIFI_JANK && wl.jn)            /* (0 without wifi_jank: MODE JANK's code is not built in) */
+#define JNK_UP (FM1B_WIFI_JANK && jnk.up)
 static struct {
     uint16_t port;
     void (*rx)(void *ctx, uint32_t src_ip, uint16_t src_port, const uint8_t *p, uint32_t n, int64_t at_us);
@@ -516,7 +516,7 @@ static struct {
     struct jn_net n;
 } jnk;
 static uint32_t own_jank_group(void) { return wn_st.ap.grp >= 1u && wn_st.ap.grp <= WN_GROUPS ? wn_st.ap.grp : 1u; }
-static int own_jank(void) { return FM1B_WIFI_JAM && wn_st.mode == WN_MODE_JANK_AUTO; }   /* (wifi_jam only: plat.h FM1B_WIFI_JAM) */
+static int own_jank(void) { return FM1B_WIFI_JANK && wn_st.mode == WN_MODE_JANK_AUTO; }   /* (wifi_jank only: plat.h FM1B_WIFI_JANK) */
 static void jn_new_addr(void)             /* the address is someone else's too: another one, Link told */
 {
     uint8_t b[2];
@@ -947,9 +947,9 @@ void plat_wifi_mode(int mode)
 {
     own_store_load();
     if (mode < WIFI_MODE_OFF || (mode > (FM1B_WIFI_AP ? WIFI_MODE_AP_MAN : WIFI_MODE_MAN) &&
-                                 !(FM1B_WIFI_JAM && (mode == WIFI_MODE_JANK || mode == WIFI_MODE_JANK_AUTO))) ||
+                                 !(FM1B_WIFI_JANK && (mode == WIFI_MODE_JANK || mode == WIFI_MODE_JANK_AUTO))) ||
         wn_st.mode == (uint8_t)mode)
-        return;                                   /* (JANK: wifi_jam only, plat.h FM1B_WIFI_JAM) */
+        return;                                   /* (JANK: wifi_jank only, plat.h FM1B_WIFI_JANK) */
     wn_st.mode = (uint8_t)(mode == WIFI_MODE_JANK ? WIFI_MODE_JANK_AUTO : mode);   /* (one JANK mode) */
     own_store_changed();
 }
@@ -966,7 +966,7 @@ void plat_wifi_set_group(int g)
 int plat_wifi_step(void) { return wc.st; }
 int plat_wifi_jank(void)
 {
-    if (FM1B_WIFI_JAM && jnk.fail)
+    if (FM1B_WIFI_JANK && jnk.fail)
         return -2;
     return JNK_UP ? (int)jn_count(&jnk.n, own_ms()) : -1;
 }
