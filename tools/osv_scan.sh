@@ -69,9 +69,13 @@ print(" ".join(r["version"] for r in newer if r["security"]))' "$have") || newer
             esac
         else skip node "no node in tools/toolchain.lock"; fi ;;
     build-image)
-        # Docker or podman (podman's save has no --platform: its pull of one platform keeps that one alone).
-        CTR=$(command -v docker || command -v podman) || CTR=
-        if [ -n "$CTR" ] && "$CTR" info >/dev/null 2>&1; then
+        # Docker or podman, the first that answers: a docker installed with no daemon running must not hide a working
+        # podman (podman's save has no --platform: its pull of one platform keeps that one alone).
+        CTR=
+        for c in docker podman; do
+            if command -v $c >/dev/null && $c info >/dev/null 2>&1; then CTR=$c; break; fi
+        done
+        if [ -n "$CTR" ]; then
             PLAT="--platform linux/amd64"
             "$CTR" --version 2>/dev/null | grep -qi podman && PLAT=
             IMG=$(awk '$1 == "build-image" { print $5 "@sha256:" $4 }' tools/toolchain.lock)
