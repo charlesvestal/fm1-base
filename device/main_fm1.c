@@ -1134,6 +1134,9 @@ static void fm1_fault(const fm1_crash_t *c)
 void plat_restart(void)
 {
     app_panic();
+#if FM1B_SD
+    sd_bus_release();                               /* (as before an update: the card idle for what starts next) */
+#endif
     fm1_audio_stop();
     usb_detach();
     fm1_delay_ms(30);
@@ -1148,7 +1151,7 @@ static void enter_uboot(const char *why)
 {
     fm1_clock_restore();                            /* (the chip's update mode at the stock clock) */
     fm1_audio_stop();
-    lcd_fill(0, 0, 240, 240, C_BLACK);
+    lcd_fill(0, 0, 240, 240, C_BLACK);              /* (lcd_sync: an SD card's open transfer ended, the card idle) */
     sys_box(0, 110, 240, SYS_S, why, C_WHITE, 1);
     fm1_delay_ms(20);
     usb_detach();
@@ -1470,6 +1473,11 @@ static void fm1_main(void)
             usb.ota_req = 0;
             app_panic();                            /* silence: the update rewrites the flash */
             fm1_clock_restore();                    /* (the update loader at the stock clock) */
+#if FM1B_SD
+            sd_bus_release();                       /* the card's open transfer (the USB drive's) ended: the next
+                                                     * firmware finds it idle (a reset restarts the chip, not the card);
+                                                     * the card stays started if nothing is installed */
+#endif
             if (flash_ok)
                 ota_session();                      /* returns only if nothing was committed */
 #if FM1B_CPU_396

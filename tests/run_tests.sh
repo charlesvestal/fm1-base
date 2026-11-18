@@ -62,6 +62,20 @@ run trs-stamp sh -c "$CC -O2 -w -DFELUCCA_MIDI_STAMP=1 -Ibsp/chip -Ibsp/boards/f
 # each stamp against its message's landing (within +-0.05 ms; the poll's and the read's stamps beside it)
 run midi-stamp sh -c "$CC -std=c11 -O2 -Wall -Wextra -Werror -Wno-unused-function -Ibsp/chip -Ibsp/boards/fm1 -Idevice -o $OUT/midi_stamp_test tests/midi_stamp_test.c && $OUT/midi_stamp_test"
 run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/storage_test"
+# the SD card (device/sd.c) against a modelled card in SPI mode (tests/sd_card_model.h), FatFs on top (lib/sd_fs.c):
+# card kinds, sectors, a file system made and read back, the clock's steps, DMA refused, damaged blocks, no card; its
+# FAT32 image read back with mtools when they're here. Then the SD example in the simulator on that image
+run sd sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT_HOST -DFF_USE_MKFS=1 -Iinclude -Ilib \
+    -Itests -o $OUT/sd_test tests/sd_test.c && $OUT/sd_test $OUT/sd_card.img && \
+    if command -v mdir >/dev/null; then MTOOLS_SKIP_CHECK=1 mdir -i $OUT/sd_card.img@@32256 ::/SAMPLES | grep -q 70000; fi"
+# disk mode (device/msc.c) against a faked computer: residue, no medium, "medium changed", a WRITE never reaching a
+# medium put in during it, sync's answers; and the SD drive's writes on the host simulator's plain streams
+run msc sh -c "$CC -std=c99 -O1 -Wall -Wextra -Werror -Wno-unused-function -Iinclude -Idevice -o $OUT/msc_test \
+    tests/msc_test.c && $OUT/msc_test"
+run sd-host-disk sh -c "$CC -std=c99 -O1 -w -DPLAT_HOST -Iinclude -Ilib -o $OUT/sd_host_disk_test \
+    tests/sd_host_disk_test.c && $OUT/sd_host_disk_test"
+run sd-example sh -c "$PY tools/build.py examples/sd --host >/dev/null && \
+    FM1B_SD_IMAGE=$OUT/sd_card.img examples/sd/build/host/sd_host examples/sd/tests/sd.txt $OUT"
 run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts
 # plat_headphones' debounce (device/plat_hp.c) over a simulated jack: a plug's bounce gives one change, 100 ms on

@@ -117,6 +117,7 @@ Each of these is listed only when the build has it:
 | `usb-audio-out` | `usb_audio_out` (on unless set false, with `usb_audio_in`): the computer plays through the FM-1 |
 | `usb-midi-host` | `usb_host = true`: USB MIDI controllers and synths plugged into the FM-1 |
 | `usb-disk` | `msc = true`: the FM-1 as a USB drive |
+| `sd-card` | `sd = true`: files on a microSD card (a card mod: m-card on the FM-1) |
 | `wifi` | `wifi = true` |
 | `second-core` | `cpu2 = true` |
 | `velocity` | `APP_TOUCH` in app.h (lib/touch): velocity from the keys |

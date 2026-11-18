@@ -33,6 +33,7 @@ FEATURES = (
     ("usb-audio-out", "USB audio out"),                   # usb_audio_out (the default: on, with usb_audio_in)
     ("usb-midi-host", "USB MIDI host"),                   # usb_host
     ("usb-disk", "USB disk mode"),                        # msc
+    ("sd-card", "the SD card"),                           # sd (a card mod: m-card on the FM-1)
     ("wifi", "WiFi"),                                     # wifi
     ("second-core", "the second core"),                   # cpu2
     ("velocity", "velocity"),                             # APP_TOUCH in app.h (lib/touch)
@@ -82,6 +83,7 @@ def parts(conf, ble, own, wifi, cpu2, touch, words, env=None):
         "usb-audio-out": usb_in and on("usb_audio_out", "FM1B_UAC_OUT", True),
         "usb-midi-host": on("usb_host", "FM1B_USB_HOST"),
         "usb-disk": on("msc", "FM1B_MSC"),
+        "sd-card": on("sd", "FM1B_SD"),
         "wifi": bool(wifi),
         "second-core": bool(cpu2),
         "velocity": bool(touch),
