@@ -404,6 +404,9 @@ uint32_t plat_sysex_queued(void);      /* the bytes still in the ring, not yet r
  * computer drops a frame cut short at the next F0), the rest of its puts and its end return -1. Main loop; built for
  * an app with APP_SYSEX */
 #define PLAT_SYSEX_STALL_MS 30u
+/* a stream with no put for PLAT_SYSEX_HOLD_MS (an app that began one and never ended it) is ended by the main loop: the
+ * ring free again, its frame cut; else nothing else would ever go out (the update's and the console's replies) */
+#define PLAT_SYSEX_HOLD_MS 250u
 int plat_sysex_begin(void);            /* 0 = the stream is open; -1 = no computer, or a send under way */
 int plat_sysex_put(const uint8_t *p, uint32_t n);   /* 0 = in the ring (the last bytes held until more or end) */
 int plat_sysex_end(void);              /* the last packet out, the ring free again: 0 = the frame went whole */

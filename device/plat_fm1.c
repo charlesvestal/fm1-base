@@ -194,14 +194,23 @@ uint32_t plat_usb_session(void) { return usb.config ? usb.resets + 1u : 0u; }   
  * packet into it each 3 bytes (CIN 4: more follow; 5..7: the last, with F7) */
 static struct {
     uint8_t on, cut, k, acc[3];
+    uint32_t ms, held;                          /* the last begin or put (fm1_ms); streams let go (plat_sysex_hold) */
 } sxs;
 int plat_sysex_begin(void)
 {
     if (!usb.config || sx_busy)
         return -1;
     sx_busy = 1;
-    sxs.on = 1, sxs.cut = 0, sxs.k = 0;
+    sxs.on = 1, sxs.cut = 0, sxs.k = 0, sxs.ms = fm1_ms;
     return 0;
+}
+static void plat_sysex_hold(void)              /* main loop: a stream with no put for PLAT_SYSEX_HOLD_MS let go (plat.h) */
+{
+    if (sxs.on && fm1_ms - sxs.ms > PLAT_SYSEX_HOLD_MS) {
+        sxs.cut = 1;                            /* (its frame cut: no last packet) */
+        (void)plat_sysex_end();
+        sxs.held++;
+    }
 }
 static int sxs_pkt(uint32_t cin)               /* the packet in sxs.acc into the ring, waiting while the computer reads */
 {
@@ -224,6 +233,7 @@ int plat_sysex_put(const uint8_t *p, uint32_t n)
     uint32_t i;
     if (!sxs.on || sxs.cut)
         return -1;
+    sxs.ms = fm1_ms;
     for (i = 0; i < n; i++) {
         if (sxs.k == 3u && sxs_pkt(4u)) {       /* (a full packet goes when the next byte comes: the last carries F7) */
             sxs.cut = 1;

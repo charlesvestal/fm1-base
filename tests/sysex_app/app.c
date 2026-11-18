@@ -73,6 +73,9 @@ int app_sysex(const uint8_t *p, uint32_t n)
         rc |= rc ? 0 : plat_sysex_put(&END, 1u);
         rc |= plat_sysex_end();
         sx_stream = rc != 0;
+    } else if (p[3] == 6u) {                         /* a stream begun and left open (an app that forgot its end) */
+        static const uint8_t HEAD[5] = {0xF0, 0x7D, 0x53, 0x58, 6};
+        sx_stream = plat_sysex_begin() || plat_sysex_put(HEAD, 5u);
     } else if (p[3] == 5u) {                         /* restart */
         plat_restart();
     }
