@@ -374,3 +374,12 @@ static void fm1_sd_rx_start(void *p, uint32_t n) { fm1_sd_rx(p, n); }
 static void fm1_sd_tx_start(const void *p, uint32_t n) { fm1_sd_tx(p, n); }
 static int fm1_sd_dma_done(void) { return 1; }
 static int fm1_sd_dma_end(uint32_t n) { (void)n; return 0; }
+/* the interrupt-driven receive (device/sd_ahead.h): the bytes at once, the interrupt left pending for the test to run */
+static int sdm_irq_pending;
+static void fm1_sd_rx_irq_start(void *p, uint32_t n)
+{
+    fm1_sd_rx(p, n);
+    sdm_irq_pending = 1;
+}
+static void fm1_sd_rx_irq_ack(void) { sdm_irq_pending = 0; }
+static void fm1_sd_rx_irq_stop(void) { sdm_irq_pending = 0; }

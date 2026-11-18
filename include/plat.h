@@ -642,9 +642,10 @@ void plat_sd_info(plat_sd_info_t *i);
 int plat_sd_read_open(uint32_t sector, uint32_t n);    /* a read from sector, n blocks (0: up to the card's end) */
 int plat_sd_read_next(void *buf, uint32_t wait_us);    /* the next block into buf: 0; SD_E_BUSY (not begun within
                                                         * wait_us: call again; nothing waits longer, but a block begun
-                                                        * is read whole, ~0.2 ms at 20 MHz); SD_E_CRC (damaged: the
-                                                        * same block at the next call); SD_E_RANGE (past n or the
-                                                        * card's end); SD_E_TIMEOUT (no block for 250 ms) */
+                                                        * is read whole, ~0.2 ms at 20 MHz); SD_E_CRC, SD_E_READ
+                                                        * (damaged, refused: the same block at the next call);
+                                                        * SD_E_RANGE (past n or the card's end); SD_E_TIMEOUT (no
+                                                        * block for 250 ms: the read is over) */
 int plat_sd_write_open(uint32_t sector);               /* a write from sector on */
 int plat_sd_write_next(const void *buf);               /* the next block sent: 0; SD_E_BUSY (the card still writes
                                                         * the one before: nothing sent); buf 0: only asks (0: it
@@ -652,6 +653,9 @@ int plat_sd_write_next(const void *buf);               /* the next block sent: 0
                                                         * written) */
 int plat_sd_close(void);                               /* the stream ended (a write's last block on the card): 0 or
                                                         * SD_E_* */
+/* fm1.toml sd_read_ahead = N: a read's blocks taken in SPI1's interrupt, up to N ahead of plat_sd_read_next, so the
+ * card streams on while the render holds the main loop up (the calls above unchanged). For a console: */
+void plat_sd_ahead(uint32_t *c);                       /* c[4]: interrupts, blocks, runs, runs ended by an error */
 /* the card as a USB drive (with fm1.toml msc = true: disk mode): plat_disk_mode(plat_sd_disk()) (0: not started), then
  * plat_sd_disk_poll() from the main loop (APP_LOOP) in place of plat_disk_poll, with the same answers. Its files are
  * unmounted meanwhile (the computer owns them): plat_disk_mode(0) and plat_sd_start() to have them back. Reads run

@@ -185,6 +185,10 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #ifndef FM1B_SD
 #define FM1B_SD 0
 #endif
+#ifndef FM1B_SD_AHEAD
+#define FM1B_SD_AHEAD 0           /* with FM1B_SD: an app's read read ahead in SPI1's interrupt, this many blocks
+                                   * (fm1.toml sd_read_ahead; sd_ahead.h) */
+#endif
 #ifndef FM1B_MIDI_STAMP
 #define FM1B_MIDI_STAMP 0         /* 1: MIDI in stamped where it lands, USB and the jack (fm1.toml midi_stamp = true;
                                    * plat_midi_in_t24); 0: when the app read it */

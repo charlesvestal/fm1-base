@@ -115,6 +115,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              plat.h; felucca-bsp usb.c FELUCCA_MSC), no USB MIDI or audio meanwhile
   sd = true                  a microSD card and its files (FM1B_SD: device/sd.c, lib/sd_fs.c, FatFs in lib/fatfs; plat_sd_* in
                              plat.h; felucca-bsp's fm1_sd_hw.h): a card mod, the m-card board on the FM-1 (docs/SD.md)
+  sd_read_ahead = 16         with sd: an app's read stream (plat_sd_read_open) read ahead in SPI1's interrupt, up to this many
+                             blocks (FM1B_SD_AHEAD: device/sd_ahead.h; ~544 B of the pool each), so the card streams on
+                             while the render holds the main loop up. 0 (the default): read as plat_sd_read_next asks
   lcd_panel = true           the M-VAVE panel's own ST7789V setup after the reset (FM1B_LCD_PANEL: porch, gate voltages, VCOM
                              0x18, supplies, 60 Hz, gammas; device/lcd.c LCD_SEQ). Off: the init is byte-identical
   backup = true              backup and restore of the app's saved objects over USB (FM1B_BACKUP: device/backup.c;
@@ -1443,6 +1446,11 @@ def opt_flags():
             if (CONF.get(key) and os.environ.get(flag) != "0") or os.environ.get(flag) == "1"]   # (FM1B_MIRROR=1: a build with it, fm1.toml as it is; FM1B_BACKUP=0: without)
     if cache_ram_ways():
         flags.append(f"-DFM1B_CACHE_RAM={cache_ram_ways()}")   # (the host and the web: plat_cache_ram's stand-in)
+    ahead = int(CONF.get("sd_read_ahead", 0))
+    if CONF.get("sd") and ahead:
+        if not 2 <= ahead <= 64:
+            raise SystemExit("fm1.toml sd_read_ahead: 2 to 64 blocks (0: none)")
+        flags.append(f"-DFM1B_SD_AHEAD={ahead}")
     if usb_audio_channels() > 2:
         flags.append(f"-DFM1B_UAC_CH={usb_audio_channels()}")  # (the host and the web: plat_usb_ch's stand-in)
     if "-DFM1B_COMPANION=1" in flags and PRODUCT:

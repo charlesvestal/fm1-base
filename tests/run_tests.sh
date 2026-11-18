@@ -77,9 +77,12 @@ run sd sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT
     -Itests -o $OUT/sd_test tests/sd_test.c && $OUT/sd_test $OUT/sd_card.img && \
     if command -v mdir >/dev/null; then MTOOLS_SKIP_CHECK=1 mdir -i $OUT/sd_card.img@@32256 ::/SAMPLES | grep -q 70000; fi"
 # an app's streams on the same model (plat_sd_read_open ... plat_sd_close): waits within their budget, the LCD between
-# blocks (a read opened again, a write kept open), damaged and refused blocks, a card pulled or stuck
+# blocks (a read opened again, a write kept open), damaged and refused blocks, a card pulled or stuck; then the same
+# with the read ahead in SPI1's interrupt (fm1.toml sd_read_ahead)
 run sd-stream sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT_HOST -Iinclude -Ilib -Itests \
     -o $OUT/sd_stream_test tests/sd_stream_test.c && $OUT/sd_stream_test"
+run sd-stream-ahead sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT_HOST -DFM1B_SD_AHEAD=16 \
+    -Iinclude -Ilib -Itests -o $OUT/sd_stream_ahead_test tests/sd_stream_test.c && $OUT/sd_stream_ahead_test"
 # disk mode (device/msc.c) against a faked computer: residue, no medium, "medium changed", a WRITE never reaching a
 # medium put in during it, sync's answers; and the SD drive's writes on the host simulator's plain streams
 run msc sh -c "$CC -std=c99 -O1 -Wall -Wextra -Werror -Wno-unused-function -Iinclude -Idevice -o $OUT/msc_test \

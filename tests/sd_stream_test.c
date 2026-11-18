@@ -5,6 +5,8 @@
  * budget while the card is slow to answer, the LCD drawing between blocks (a read opened again where it was, a write
  * kept open: the card deselected between two blocks, never left busy under the LCD), a damaged block, a card pulled or
  * stuck, the card's end, a plain call in the middle, a refused block.
+ * With -DFM1B_SD_AHEAD=N the same with the read ahead in SPI1's interrupt (device/sd_ahead.h; the interrupt run by the
+ * test while a read waits, and between calls as a main loop held up by the render would let it run).
  *   cc -std=c99 -DPLAT_HOST -Iinclude -Ilib -Itests -o sd_stream_test tests/sd_stream_test.c && ./sd_stream_test */
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,9 +27,33 @@ static void lcd_sync(void)                 /* as device/lcd.c's: the bus lent to
 }
 #define LCD_BAUD 0u
 uint32_t plat_ms(void) { return sdm_ms; }
+#if FM1B_SD_AHEAD
+#define FM1_IRQ_SPI1 16u                   /* (felucca-bsp chip/fm1_irq.h's, stood in for) */
+static uint32_t irq_masked = 1, irq_attached;
+static void fm1_irq_attach(uint32_t n, void (*h)(void), uint32_t prio) { (void)n, (void)h, (void)prio; irq_attached++; }
+static void fm1_irq_mask(uint32_t n) { (void)n; irq_masked = 1; }
+static void fm1_irq_unmask(uint32_t n) { (void)n; irq_masked = 0; }
+static uint32_t irq_save(void) { return 0; }
+static void irq_restore(uint32_t f) { (void)f; }
+void isr_spi1(void) {}
+static void irq_run(void);
+#define SD_AHEAD_WAIT() irq_run()
+#endif
 
 #include "../device/sd.c"
 #include "../lib/sd_fs.c"
+
+#if FM1B_SD_AHEAD
+static void irq_run(void)                  /* the interrupt, if one is pending; else time passes */
+{
+    if (sdm_irq_pending && !irq_masked) {
+        fm1_spi1_irq();
+        return;
+    }
+    if (++sdm.xfers % 64 == 0)
+        sdm_ms++;
+}
+#endif
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); fails++; } } while (0)
@@ -108,7 +134,11 @@ static void reads(void)
         CHECK(r == 0 && same(b, 3000 + i));
     }
     printf("  4 blocks: %u answers busy, the longest %u bytes (500 us = 32 here)\n", busy, worst);
+#if FM1B_SD_AHEAD
+    CHECK(busy >= 4 * 8);                                   /* (the blocks' DMA is the interrupt's, not the call's) */
+#else
     CHECK(busy >= 4 * 8 && worst <= 33);
+#endif
     CHECK(plat_sd_close() == 0);
     sdm.nac = 0;
 
@@ -155,6 +185,40 @@ static void reads(void)
     CHECK(next(b) == 0 && same(b, 6001));
     CHECK(plat_sd_close() == 0);
 }
+
+#if FM1B_SD_AHEAD
+static void ahead(void)
+{
+    static uint8_t b[512] __attribute__((aligned(4)));
+    uint32_t i, k, x0, c12;
+    printf("sd stream: read ahead: the card streams on while the main loop is held up\n");
+    card(131072);
+    CHECK(irq_attached == 1);
+    CHECK(plat_sd_read_open(20000, 40) == 0);
+    for (k = 0; k < 4000 && sdm_irq_pending; k++)         /* the main loop held up: only the interrupt runs */
+        fm1_spi1_irq();
+    CHECK(sdx.state == SDA_FULL && sdx.wr == FM1B_SD_AHEAD);
+    for (i = 0; i < FM1B_SD_AHEAD; i++) {                   /* then the blocks come at once */
+        x0 = sdm.xfers;
+        CHECK(plat_sd_read_next(b, 0) == 0 && same(b, 20000 + i));
+        CHECK(sdm.xfers - x0 <= 520u);                      /* (only the hunt a freed slot starts) */
+    }
+    for (; i < 40; i++)
+        CHECK(next(b) == 0 && same(b, 20000 + i));
+    CHECK(sdx.wr == 40 && sdx.state == SDA_FULL);           /* the run planned: not a block past it */
+    c12 = sdm.count[12];
+    CHECK(plat_sd_close() == 0 && sdm.count[12] - c12 == 1 && sdm.phase != SDM_READ && irq_masked);
+
+    printf("sd stream: read ahead: no DMA, no read ahead\n");
+    card(131072);
+    sdm.dma_bad = 1;
+    CHECK(plat_sd_start() == SD_E_NOFS);
+    CHECK(plat_sd_read_open(100, 4) == 0 && !sd_ahead_on());
+    for (i = 0; i < 4; i++)
+        CHECK(next(b) == 0 && same(b, 100 + i));
+    CHECK(plat_sd_close() == 0);
+}
+#endif
 
 static void writes(void)
 {
@@ -247,9 +311,11 @@ static void lost(void)
     CHECK(next(b) == 0);
     sdm.absent = 1;
     t0 = sdm_ms;
-    r = next(b);
+    while ((r = next(b)) == SD_E_CRC)                       /* (a block cut off: damaged; then nothing) */
+        ;
     printf("  pulled while reading: %d after %u ms\n", r, sdm_ms - t0);
-    CHECK(r == SD_E_TIMEOUT && sdm_ms - t0 <= 300u);
+    CHECK((r == SD_E_TIMEOUT || r == SD_E_READ) && sdm_ms - t0 <= 300u);
+    CHECK(plat_sd_read_next(b, 100) == SD_E_STATE);         /* the read is over */
     CHECK(plat_sd_close() == 0);
     sdm.absent = 0;
     sdm_power_cycle();
@@ -272,7 +338,14 @@ static void lost(void)
 int main(void)
 {
     setvbuf(stdout, 0, _IONBF, 0);
+#if FM1B_SD_AHEAD
+    sd_ahead_attach();                     /* (main_fm1.c's, at the start) */
+    printf("sd stream: read ahead, %u slots\n", FM1B_SD_AHEAD);
+#endif
     reads();
+#if FM1B_SD_AHEAD
+    ahead();
+#endif
     writes();
     lost();
     CHECK(sdm.crc7_bad == 0 && sdm.busy_talk == 0);

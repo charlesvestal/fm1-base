@@ -1633,6 +1633,9 @@ void plat_sd_info(plat_sd_info_t *i)
 static uint8_t host_sda;                        /* 1 a read, 2 a write */
 static uint32_t host_sda_next, host_sda_end;
 int plat_sd_close(void) { host_sda = 0; return 0; }
+#if FM1B_SD_AHEAD
+void plat_sd_ahead(uint32_t *c) { c[0] = c[1] = c[2] = c[3] = 0; }   /* (no interrupt here: nothing read ahead) */
+#endif
 int plat_sd_read_open(uint32_t sector, uint32_t n)
 {
     host_sda = 0;
