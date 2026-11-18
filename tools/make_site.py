@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1]
-MBOOT_VERSION = "1.2"                             # web/m-bootloader/fm1-uboot-X.Y.fwsc: a new release is a new file and this
+MBOOT_VERSION = "2.3"                             # web/m-bootloader/fm1-uboot-X.Y.fwsc: a new release is a new file and this
 sys.path.insert(0, str(SRC / "tools"))
 from build import read_conf  # noqa: E402
 
