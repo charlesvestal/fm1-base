@@ -81,7 +81,7 @@ run sd sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT
 # with the read ahead in SPI1's interrupt (fm1.toml sd_read_ahead)
 run sd-stream sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT_HOST -Iinclude -Ilib -Itests \
     -o $OUT/sd_stream_test tests/sd_stream_test.c && $OUT/sd_stream_test"
-run sd-stream-ahead sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT_HOST -DFM1B_SD_AHEAD=16 \
+run sd-stream-ahead sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT_HOST -DFM1B_SD_AHEAD=16 -DFM1B_SD_FINE=1 \
     -Iinclude -Ilib -Itests -o $OUT/sd_stream_ahead_test tests/sd_stream_test.c && $OUT/sd_stream_ahead_test"
 # disk mode (device/msc.c) against a faked computer: residue, no medium, "medium changed", a WRITE never reaching a
 # medium put in during it, sync's answers; and the SD drive's writes on the host simulator's plain streams

@@ -5,7 +5,8 @@
  * budget while the card is slow to answer, the LCD drawing between blocks (a read opened again where it was, a write
  * kept open: the card deselected between two blocks, never left busy under the LCD), a damaged block, a card pulled or
  * stuck, the card's end, a plain call in the middle, a refused block.
- * With -DFM1B_SD_AHEAD=N the same with the read ahead in SPI1's interrupt (device/sd_ahead.h; the interrupt run by the
+ * With -DFM1B_SD_FINE=1 the start's finer clock steps (fm1.toml sd_clock_fine). With -DFM1B_SD_AHEAD=N the same with
+ * the read ahead in SPI1's interrupt (device/sd_ahead.h; the interrupt run by the
  * test while a read waits, and between calls as a main loop held up by the render would let it run).
  *   cc -std=c99 -DPLAT_HOST -Iinclude -Ilib -Itests -o sd_stream_test tests/sd_stream_test.c && ./sd_stream_test */
 #include <stdio.h>
@@ -220,6 +221,20 @@ static void ahead(void)
 }
 #endif
 
+static void clock(void)                    /* a board whose ceiling falls between the coarse steps */
+{
+    plat_sd_info_t in;
+    uint32_t t0;
+    printf("sd stream: a card that reads right up to 9 MHz\n");
+    card(131072);
+    sdm.max_khz = 9000;
+    t0 = sdm_ms;
+    CHECK(plat_sd_start() == SD_E_NOFS);
+    plat_sd_info(&in);
+    printf("  %u kHz (sd_clock_fine %d), the start %u ms\n", in.khz, FM1B_SD_FINE, sdm_ms - t0);
+    CHECK(in.khz == (FM1B_SD_FINE ? 8571u : 5000u) && sdm_ms - t0 < 4000u);
+}
+
 static void writes(void)
 {
     static uint8_t w[512] __attribute__((aligned(4))), b[512] __attribute__((aligned(4)));
@@ -346,6 +361,7 @@ int main(void)
 #if FM1B_SD_AHEAD
     ahead();
 #endif
+    clock();
     writes();
     lost();
     CHECK(sdm.crc7_bad == 0 && sdm.busy_talk == 0);

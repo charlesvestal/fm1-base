@@ -27,7 +27,15 @@
 #define SD_LSB_KHZ 60000u                  /* SPI1's source: LSB, 60 MHz at the stock 360 MHz */
 #endif
 #define SD_BAUD_SLOW ((SD_LSB_KHZ + 399u) / 400u - 1u)          /* 400 kHz at most: the start */
+#ifndef FM1B_SD_FINE
+#define FM1B_SD_FINE 0
+#endif
+#if FM1B_SD_FINE                           /* fm1.toml sd_clock_fine: every step SPI1 has between 20 and 5 MHz (20 15 12
+                                            * 10 8.57 7.5 6.67 6 5), for a board whose ceiling falls between the four */
+static const uint16_t SD_BAUDS[] = {2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 11u, SD_BAUD_SLOW};
+#else
 static const uint16_t SD_BAUDS[] = {2u, 3u, 5u, 11u, SD_BAUD_SLOW};   /* LSB / (b + 1) */
+#endif
 #define SD_NBAUDS (sizeof SD_BAUDS / sizeof SD_BAUDS[0])
 #define SD_ACMD 0x80u
 #define SD_R1_IDLE 0x01u
