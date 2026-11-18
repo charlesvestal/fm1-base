@@ -7,15 +7,21 @@
  * less how much older than the packet's newest it is). A late message keeps o (a packet lost waits for the next connection event: 30 ms and more while Bluetooth
  * audio streams beside it); only BLE_TIME_LATE_N in a row more than BLE_TIME_LATE_MS late take o from the last one
  * (2026-10-25, on an FM-1 following a Mac: one message 40 ms late did, and at 30 ms events that moved the clock every
- * few ticks). From Optimist's io/midi/midi_ble.c. */
+ * few ticks). A time more than BLE_TIME_FAR_MS from the arrival (one odd ts or last_ts: issue 54, one F8 1.3 s old) is
+ * no use to a clock: that message gets its arrival and leaves the state as it was; it counts as late, so a sender
+ * whose clock really jumped is followed after BLE_TIME_LATE_N of them. From Optimist's io/midi/midi_ble.c. */
 #include "ble_time.h"
 
 #define BLE_TIME_LATE_MS 100u
 #define BLE_TIME_LATE_N 24u                       /* (a beat of F8s) */
+#ifndef BLE_TIME_FAR_MS
+#define BLE_TIME_FAR_MS 500u                      /* a time this far from the arrival: an odd stamp, the arrival taken */
+#endif
 #define BLE_TIME_STILL_MS 20u                     /* the same stamp again this much later: a sender whose times do not move */
 
 BLE_API uint32_t ble_in_time(struct ble_in_clock *c, uint32_t now, uint32_t tick_ms, uint16_t ts, uint16_t last_ts)
 {
+    struct ble_in_clock was = *c;                 /* (kept for an odd stamp) */
     uint32_t arr, t, rise;
     uint32_t back = (uint32_t)(uint16_t)(last_ts - ts) & 0x1FFFu;   /* ms older than the packet's newest */
     arr = now - back * tick_ms;                   /* (its arrival, less that) */
@@ -32,6 +38,12 @@ BLE_API uint32_t ble_in_time(struct ble_in_clock *c, uint32_t now, uint32_t tick
     else
         c->o += rise;
     t = c->o + c->s * tick_ms;
+    if ((uint32_t)((int32_t)(now - t) < 0 ? t - now : now - t) > BLE_TIME_FAR_MS * tick_ms &&
+        was.late + 1u < BLE_TIME_LATE_N) {
+        *c = was;                                 /* an odd stamp: its arrival, the state as before, one more late */
+        c->late = (uint8_t)(was.late + 1u);
+        return now;
+    }
     c->late = (int32_t)(now - t) > (int32_t)(BLE_TIME_LATE_MS * tick_ms) ? (uint8_t)(c->late + 1u) : 0u;
     if (c->late >= BLE_TIME_LATE_N || (int32_t)(t - now) > 0) {
         c->s = 0;                                 /* late a beat long, or ahead of now: from this one */
