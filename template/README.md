@@ -11,6 +11,7 @@ manual.
 | `fm1.toml` | Build and site settings: name, package identity, USB names, tagline, source, licence, and firmware.json's |
 | `words.tsv` | The screen reader's words (fm1-reader): the screen's text and how to say it |
 | `tests/basic.txt` | Host simulator checks: keys, MIDI, settings across a reboot, the sound, the screen reader |
+| `tests/companion.txt` | Host simulator checks: the saved settings as a file over the companion services, listed, written and read back |
 | `tests/screens.txt` | The manual's screenshots |
 | `docs/MANUAL.md` | The manual (an example to rewrite) |
 | `site/landing.md` | The site's front page |
@@ -51,7 +52,10 @@ rebuilt. For the site, download that package and give it to `publish_site.sh`, s
 ## Make it your own
 
 1. Copy `template/` to your firmware's repository, with fm1-base beside it as a git submodule.
-2. In `app.h`, set `APP_NAME`, and the store's objects and their flash offsets (`APP_STORE_MAP`).
+2. In `app.h`, set `APP_NAME`, and the store's objects and their flash offsets (`APP_STORE_MAP`). List the objects a
+   computer may keep as files in `APP_FILE_OBJS` (your presets, patterns or songs); the companion page backs them up
+   and puts them back (fm1-base's docs/COMPANION.md). To leave the companion out, remove `companion = true` from
+   `fm1.toml`.
 3. In `fm1.toml`, set the name, an `id_prefix` of your own (`FM-1_` and digits; each firmware has its own), the USB
    names, the site's tagline, source and credits, and your name, a description, tags, your install page and a
    screenshot. The build writes them to `firmware.json` at your repository's root, which firmware hubs read

@@ -19,7 +19,10 @@ emu.send({ type: "keys", mask: 1 << 7 });
 const loud = emu.run(300);
 check(loud > 0.01 && loud > quiet * 4, `a key sounds (peak ${loud.toFixed(4)}, ${quiet.toFixed(4)} before)`);
 const pkts = new Uint32Array(emu.ex.memory.buffer, emu.ex.web_out_pkts(), emu.ex.web_out_n());
-check([...pkts].some((p) => (p >> 8 & 0xff) === 0x90 && (p >> 16 & 0xff) === 60), "its note goes out (USB-MIDI 90 3C ..)");
+// (with the part "midi", which the template's companion = true brings, the packets reach the page through it)
+const viaPart = emu.take("midi").flatMap((m) => m.msgs || []).map((m) => new Uint8Array(m));
+check([...pkts].some((p) => (p >> 8 & 0xff) === 0x90 && (p >> 16 & 0xff) === 60) ||
+  viaPart.some((m) => m[0] === 0x90 && m[1] === 60), "its note goes out (USB-MIDI 90 3C ..)");
 emu.ex.web_out_clear();
 check(emu.take("frame").some((f) => f.keys & 1 << 7), "the key's light reaches the page");
 emu.send({ type: "keys", mask: 0 });

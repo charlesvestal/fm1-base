@@ -217,6 +217,7 @@ Measured on the FM-1's build (JieLi toolchain, AC79 reference SDK; tools/build.p
 | the capability query (the template with `companion = true`) | +456 B | +592 B of the pool (the answer's buffers), 0 of .data / .bss |
 | files, with `plat_file_*` (tests/companion_app: with its own hooks for three files) | +3,496 B | +32 B of .data / .bss, 0 of the pool |
 | parameters (tests/companion_app: with its own table of six and its hooks) | +2,136 B | +64 B of .data / .bss; +4 B a parameter in the pool (APP_PARAM_MAX; 8 is +32 B), the app's labels its own |
+| the template as it is (2026-11-18): the capability query and its settings as a file (`APP_FILE_OBJS`, one object) | +2,224 B | +32 B of .data / .bss; +4,432 B of the pool (the answer's buffers, and a write's buffer of 3,840 B: `APP_FILE_OBJ_MAX` makes it smaller, backup's restore buffer stands in for it with `backup = true`) |
 
 
 ## The page and the tools

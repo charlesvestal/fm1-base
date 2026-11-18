@@ -205,6 +205,8 @@ run font-cache sh -c "mkdir -p $OUT/font/full $OUT/font/pack && \
     $OUT/font/cache_test $OUT/font/cache.bin && cmp $OUT/font/full.bin $OUT/font/cache_small.bin && \
     cmp $OUT/font/full.bin $OUT/font/cache.bin"
 run template template/build/host/template_host template/tests/basic.txt template/build/host
+# the template's saved settings as a file over the companion services (app.h APP_FILE_OBJS): listed, written, taken, read back
+run template-companion template/build/host/template_host template/tests/companion.txt template/build/host
 # Bluetooth audio's calls (plat_bta_*) on the host simulator's stand-in, from a test app's buttons
 run bta sh -c "$PY tools/build.py tests/bta_app --host && tests/bta_app/build/host/bta_test_host tests/bta_app/tests/bta.txt tests/bta_app/build/host"
 # the same with the buffers lent by the app (fm1.toml bt_audio_mem = "app", plat_bta_mem): on only with the block lent, refused back while on

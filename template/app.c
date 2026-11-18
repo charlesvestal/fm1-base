@@ -97,12 +97,14 @@ static void settings_defaults(void)
     set.ble_off = 0;
 }
 
-void app_init(void)
+static void settings_load(void)          /* the saved settings, or the defaults when there are none or they are wrong */
 {
     if (plat_store_load(OBJ_SETTINGS, &set, sizeof set) != (int)sizeof set || set.magic != SET_MAGIC
         || set.octave < -2 || set.octave > 2 || set.wave > 1u || set.ble_off > 1u)
         settings_defaults();
 }
+
+void app_init(void) { settings_load(); }
 
 /* --------------------------------------------------------------------- UI --- */
 static struct {
@@ -498,6 +500,19 @@ void app_frame(void)
         ui.redraw = 0;
         draw();
     }
+}
+
+/* ------------------------------------------------------------ companion --- */
+/* the computer's side (fm1.toml companion = true: docs/COMPANION.md): the saved settings are a file a page can
+ * download and send back (app.h APP_FILE_OBJS); the platform checks a file whole before it saves it */
+int app_file_busy(void) { return 0; }   /* (nothing plays on its own here: a file may come at any time) */
+void app_file_changed(uint32_t obj)      /* the computer replaced the settings: use them */
+{
+    if (obj != OBJ_SETTINGS)
+        return;
+    settings_load();
+    set_dirty = 0;
+    ui.redraw = 1;
 }
 
 #ifdef PLAT_HOST

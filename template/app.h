@@ -19,6 +19,12 @@ int template_ble_off(void);
 enum { OBJ_SETTINGS, OBJ_PANEL, OBJ_BLE, OBJ_NOBJ };
 #define APP_STORE_MAP {0xFC000u, 0xDC000u, 0xDE000u}
 
+/* the objects a computer may keep as files (fm1.toml companion = true: web/companion, tools/fm1_companion.py): object,
+ * kind, what it may do, the file's name. Never OBJ_PANEL (the unit's own) or OBJ_BLE (this FM-1's pairings) */
+#define APP_FILE_OBJS {{OBJ_SETTINGS, PLAT_FK_SETTINGS, PLAT_FF_READ | PLAT_FF_WRITE, "settings"}}
+int app_file_busy(void);                 /* 1: no file written now (playing) */
+void app_file_changed(uint32_t obj);     /* the computer wrote obj: load it again */
+
 /* the contract: the platform calls these */
 void app_init(void);                     /* boot: the engine, then the saved settings (or defaults) */
 void app_render(int32_t *lr, uint32_t n, uint32_t master_q12);   /* audio interrupt: n stereo frames, 24-bit */
