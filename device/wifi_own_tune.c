@@ -161,9 +161,9 @@ static void wt_poll(void)
         wt_rate_reset(&wt.rate, now);
     }
     wt.joined = (uint8_t)assoc;
-    want = (assoc || wl.jn) && (m & WT_FILT);   /* (b) */
+    want = (assoc || WL_JN) && (m & WT_FILT);   /* (b) */
     if (want != wt.filt) {
-        fm1_wifi_mac_wr(FM1_WIFI_RX_FILTER, !want ? FM1_WIFI_RX_FILTER_ALL : wl.jn ? WT_FILT_JANK : FM1_WIFI_RX_FILTER_STA);
+        fm1_wifi_mac_wr(FM1_WIFI_RX_FILTER, !want ? FM1_WIFI_RX_FILTER_ALL : WL_JN ? WT_FILT_JANK : FM1_WIFI_RX_FILTER_STA);
         wt.filt = (uint8_t)want;
     }
     if (assoc && (m & WT_AGC))           /* (c) */
