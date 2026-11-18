@@ -48,7 +48,7 @@ def test_hello(out):
     check("the app's tags", h["extras"] == {"editor": "cptest/1", "site": "https://example.invalid/cptest"},
           h["extras"])
     want = {"capability query", "files", "parameters", "screen reader", "backup", "the app's own SysEx", "USB audio in",
-            "USB audio out", "crash history"}
+            "USB audio out"}
     check("services", set(h["services"]) == want, h["services"])
     old = c.request(0x60)                         # a version 1 reader: the same fields up to the extras, the end unread
     (ident, name, ver, extras), tail = C.cstrings(old[13:], 4)

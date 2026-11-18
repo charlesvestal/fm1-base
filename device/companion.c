@@ -123,7 +123,10 @@ enum {
 };
 static uint32_t cp_services(void)
 {
-    uint32_t s = CP_S_HELLO | CP_S_READER | CP_S_CRASHLOG;   /* (the crash history: every build, F0 7D 4C 48) */
+    uint32_t s = CP_S_HELLO | CP_S_READER;
+#if defined FM1B_CRASHLOG && FM1B_CRASHLOG             /* (the crash history: fm1.toml crash_history = true, F0 7D 4C 48) */
+    s |= CP_S_CRASHLOG;
+#endif
 #if CP_FILES_ON
     s |= CP_S_FILES;
 #endif

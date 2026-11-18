@@ -54,7 +54,7 @@ u32 services, a bit each:  0 the capability query   1 files            2 paramet
                            4 mirror (mirror.c)      5 screen reader    6 Bluetooth MIDI  7 WiFi
                            8 USB audio in           9 USB audio out   10 the app's own SysEx (APP_SYSEX)
                           11 the app's own commands in this framing (APP_USB_CMD)     12 the second core
-                          13 USB MIDI host         14 Bluetooth audio     15 the crash history
+                          13 USB MIDI host         14 Bluetooth audio     15 the crash history (crash_history = true)
                           16 the debug stats       17 Bluetooth MIDI devices (ble_central)    18 the SD card
                           19 USB disk mode (msc)   20 a resource region   21 velocity and pressure (APP_TOUCH)
                           22 USB audio channels beyond two (usb_audio_channels)
