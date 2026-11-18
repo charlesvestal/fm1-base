@@ -275,8 +275,10 @@ repository (APP_DIR named app) also has the repository's firmware.json written, 
 The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it, or tools/setup_toolchain.sh puts the pinned
 one in .toolchain/ (tools/toolchain.lock), where this looks when JIELI_TOOLCHAIN is unset; on macOS (or with
 JIELI_DOCKER=1) the tools run in a linux/amd64 container (Docker or podman, the first that answers): the image
-pinned by digest in the lock (distroless's cc, JIELI_DOCKER_IMAGE overrides it), as the user, with no network and no capabilities. One long-lived container serves
-every build of the tree; FM1B_ISOLATE=1 gives each tool a run of its own instead, with the tree read-only (tc). The package's three SDK files come from $AC79_SDK or from .toolchain/ac79-sdk (the same script).
+pinned by digest in the lock (distroless's cc, JIELI_DOCKER_IMAGE overrides it), as the user, with no network and no
+capabilities. One long-lived container serves every build of the tree; FM1B_ISOLATE=1 gives each tool a run of its
+own instead, with the tree read-only (tc). The package's three SDK files come from $AC79_SDK or from
+.toolchain/ac79-sdk (the same script).
 """
 import argparse
 import functools
@@ -406,20 +408,25 @@ _CTR_LOCK = __import__("threading").Lock()
 
 def ctr():
     """the container tool: Docker or podman, the first whose info answers (asked once a build), so podman needs no
-    docker alias and a docker installed with no daemon running doesn't hide a working podman"""
+    docker alias and a docker installed with no daemon running doesn't hide a working podman. With neither, the
+    build stops with what each said (no daemon, no permission on its socket)"""
     global _CTR
     with _CTR_LOCK:
         if not _CTR:
+            said = []
             for c in ("docker", "podman"):
                 try:
-                    if not subprocess.run([c, "info"], capture_output=True).returncode:
-                        _CTR = c
-                        break
-                except OSError:
-                    pass
+                    r = subprocess.run([c, "info"], capture_output=True, text=True)
+                except OSError:             # not installed, which is expected of one of the two: try the other
+                    said.append(f"  {c}: not installed")
+                    continue
+                if not r.returncode:
+                    _CTR = c
+                    break
+                said.append(f"  {c} info: " + (r.stderr.strip().splitlines() or ["failed"])[-1])
             else:
-                raise SystemExit("build: the JieLi tools need a container here, and neither Docker nor podman answers "
-                                 "(docker info, podman info)")
+                raise SystemExit("build: the JieLi tools need a container here, and neither Docker nor podman answers\n"
+                                 + "\n".join(said))
         return _CTR
 
 
