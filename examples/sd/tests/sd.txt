@@ -4,14 +4,18 @@
 #   FM1B_SD_IMAGE=card.img examples/sd/build/host/SD_host examples/sd/tests/sd.txt examples/sd/build/host
 wait 600
 expect sd_state 0
+expect sd_present 1
+expect sd_reads >2
 expect sd_files 2
 shot sd.png
 tap REC
 wait 100
 expect sd_test 1
+expect sd_writes >2047
 expect sd_files 3
 shot sd_test.png
 sd out
 tap PLAY
 wait 50
 expect sd_state -1
+expect sd_present 0

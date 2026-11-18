@@ -1561,6 +1561,7 @@ static FILE *host_sd;
 static int host_sd_state;
 static uint32_t host_sd_n;
 static uint8_t host_sd_out;                     /* "sd out": taken out while started */
+static uint32_t host_sd_reads, host_sd_writes;  /* blocks, since the start (expect sd_reads, sd_writes) */
 static int sd_card_start(void)
 {
     const char *p = host_sd_path[0] ? host_sd_path : getenv("FM1B_SD_IMAGE");
@@ -1611,6 +1612,7 @@ static int host_sd_io(uint32_t lba, void *buf, uint32_t n, int write)
     if (!n)
         return 0;
     fseek(host_sd, (long)lba * 512, SEEK_SET);
+    *(write ? &host_sd_writes : &host_sd_reads) += n;
     if (write) {
         if (fwrite(buf, 512, n, host_sd) != n || fflush(host_sd))
             return SD_E_WRITE;
@@ -2428,6 +2430,14 @@ static int expect(const char *what, const char *val)
         got = data_cmd_rc;
     else if (!strcmp(what, "sx_held"))             /* streams left open, let go after PLAT_SYSEX_HOLD_MS */
         got = (int)hsx_held;
+#if FM1B_SD
+    else if (!strcmp(what, "sd_present"))          /* the card started (plat_sd_state 1) */
+        got = plat_sd_state() == 1;
+    else if (!strcmp(what, "sd_reads"))            /* blocks read from the card image, writes to it */
+        got = (int)host_sd_reads;
+    else if (!strcmp(what, "sd_writes"))
+        got = (int)host_sd_writes;
+#endif
 #ifdef APP_BATTERY_RAW
     else if (!strcmp(what, "battery_raw"))          /* plat_battery_raw: the battery's reading (the host's: full) */
         got = (int)plat_battery_raw();
