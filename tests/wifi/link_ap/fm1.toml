@@ -2,7 +2,7 @@
 # MODE AP's host test app (tests/wifi/run.sh): the Link example (examples/link) built with wifi_ap = true, so the
 # simulator's client joins the FM-1's own access point and is a Link peer over it (tests/ap.txt)
 name = "LINKAP"
-id_prefix = "FM-1_13"
+id_prefix = "FM-1_40"
 usb_manufacturer = "fm1-base"
 usb_product = "LINK AP FM-1"
 ble = true
