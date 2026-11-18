@@ -1629,6 +1629,62 @@ void plat_sd_info(plat_sd_info_t *i)
     i->dma = host_sd_state == 1;
     i->ver = 2;
 }
+/* an app's streams (plat_sd_read_open ...): plain sector calls, never busy */
+static uint8_t host_sda;                        /* 1 a read, 2 a write */
+static uint32_t host_sda_next, host_sda_end;
+int plat_sd_close(void) { host_sda = 0; return 0; }
+int plat_sd_read_open(uint32_t sector, uint32_t n)
+{
+    host_sda = 0;
+    if (host_sd_state != 1)
+        return SD_E_STATE;
+    if (sector >= host_sd_n || n > host_sd_n - sector)
+        return SD_E_RANGE;
+    host_sda = 1;
+    host_sda_next = sector;
+    host_sda_end = n ? sector + n : host_sd_n;
+    return 0;
+}
+int plat_sd_read_next(void *buf, uint32_t wait_us)
+{
+    int rc;
+    (void)wait_us;
+    if (host_sda != 1)
+        return SD_E_STATE;
+    if (host_sda_next >= host_sda_end)
+        return SD_E_RANGE;
+    rc = host_sd_io(host_sda_next, buf, 1, 0);
+    if (rc)
+        host_sda = 0;
+    else
+        host_sda_next++;
+    return rc;
+}
+int plat_sd_write_open(uint32_t sector)
+{
+    host_sda = 0;
+    if (host_sd_state != 1)
+        return SD_E_STATE;
+    if (sector >= host_sd_n)
+        return SD_E_RANGE;
+    host_sda = 2;
+    host_sda_next = sector;
+    return 0;
+}
+int plat_sd_write_next(const void *buf)
+{
+    int rc;
+    if (host_sda != 2)
+        return SD_E_STATE;
+    if (!buf)
+        return 0;
+    rc = host_sd_io(host_sda_next, (void *)buf, 1, 1);
+    if (rc)
+        host_sda = 0;
+    else
+        host_sda_next++;
+    return rc;
+}
 #define SD_NO_STREAMS                                  /* (disk mode's streams as plain sector calls: lib/sd_fs.c) */
 #include "sd_fs.c"                              /* the files: FatFs on these sectors, plat_sd_start */
 #endif

@@ -5,7 +5,8 @@
  * ACMD41 (busy for a few tries), CMD58, CMD16, CMD59 (then every command's CRC7 and every written block's CRC16
  * checked), CMD9 (CSD 1.0 or 2.0), CMD17 / CMD18 / CMD12, CMD24 / CMD25 (data response, busy), CMD13; others are
  * illegal. Faults to set: a clock above max_khz damages a bit of each block read, DMA reads (fm1_sd_rx) arrive
- * damaged with dma_bad, the next n blocks read come damaged (flip_next), no card (absent). */
+ * damaged with dma_bad, the next n blocks read come damaged (flip_next), no card (absent), each block read late by
+ * nac bytes (the card's access time before its start token). */
 #pragma once
 #include <stdint.h>
 #include <string.h>
@@ -22,6 +23,7 @@ static struct {
     uint32_t wflips;                    /* written blocks damaged so far (their CRC16 refused on purpose) */
     uint32_t busy_talk;                 /* bytes other than 0xFF sent while busy (unheard: a command lost) */
     uint32_t max_khz;                   /* 0: any clock */
+    int nac;                            /* 0xFF bytes before each block read (its access time; up to 3000) */
     /* state */
     int idle, crc_on, acmd, init_left, open, sel;
     uint32_t baud;
@@ -39,6 +41,8 @@ static struct {
     uint32_t count[64];                 /* commands by number (ACMD23 at 23) */
 } sdm;
 static uint32_t sdm_ms;                 /* the test's plat_ms: one ms every 64 bytes on the wire */
+#define SD_TICKS() (sdm.xfers * 1000u / 64u)   /* (device/sd.c's fine clock: here us, on the same bytes) */
+#define SD_TICKS_PER_US 1u
 static uint32_t fm1_sd_timeouts;
 
 static uint8_t sdm_crc7(const uint8_t *p, int n)
@@ -79,6 +83,8 @@ static void sdm_block(const uint8_t *d, int n)  /* a data block out: token, data
     if (sdm.flip_next > 0 && n == 512)
         sdm.flip_next--;
     sdm_put(0xFF);
+    for (int i = 0; n == 512 && i < sdm.nac; i++)
+        sdm_put(0xFF);
     sdm_put(0xFE);
     for (int i = 0; i < n; i++)
         sdm_put((uint8_t)(d[i] ^ (flip && i == n / 3 ? 0x10 : 0)));

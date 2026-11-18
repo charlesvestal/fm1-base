@@ -15,10 +15,10 @@
 #include "sd_card_model.h"
 
 static uint32_t lcd_syncs;
-static void sd_bus_release(void);
+static void sd_bus_lend(void);
 static void lcd_sync(void)                 /* as device/lcd.c's: a card stream ended first */
 {
-    sd_bus_release();
+    sd_bus_lend();
     lcd_syncs++;
     if (sdm.open)
         sdm.lcd_overlap++;

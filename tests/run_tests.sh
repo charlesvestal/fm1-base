@@ -76,6 +76,10 @@ run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/
 run sd sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT_HOST -DFF_USE_MKFS=1 -Iinclude -Ilib \
     -Itests -o $OUT/sd_test tests/sd_test.c && $OUT/sd_test $OUT/sd_card.img && \
     if command -v mdir >/dev/null; then MTOOLS_SKIP_CHECK=1 mdir -i $OUT/sd_card.img@@32256 ::/SAMPLES | grep -q 70000; fi"
+# an app's streams on the same model (plat_sd_read_open ... plat_sd_close): waits within their budget, the LCD between
+# blocks (a read opened again, a write kept open), damaged and refused blocks, a card pulled or stuck
+run sd-stream sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT_HOST -Iinclude -Ilib -Itests \
+    -o $OUT/sd_stream_test tests/sd_stream_test.c && $OUT/sd_stream_test"
 # disk mode (device/msc.c) against a faked computer: residue, no medium, "medium changed", a WRITE never reaching a
 # medium put in during it, sync's answers; and the SD drive's writes on the host simulator's plain streams
 run msc sh -c "$CC -std=c99 -O1 -Wall -Wextra -Werror -Wno-unused-function -Iinclude -Idevice -o $OUT/msc_test \

@@ -31,13 +31,13 @@ static void lcd_spin(uint32_t n)
 }
 
 #if FM1B_SD
-static void sd_bus_release(void);  /* sd.c: a card transfer left open on SPI1 (disk mode's streams), ended */
+static void sd_bus_lend(void);     /* sd.c: a card transfer left open on SPI1 ended (an app's write: parked) */
 #endif
 
 static void lcd_sync(void)          /* finish the running transfer (before touching its buffer) */
 {
 #if FM1B_SD
-    sd_bus_release();              /* (every LCD access comes through here first: the bus is the panel's again) */
+    sd_bus_lend();                 /* (every LCD access comes through here first: the bus is the panel's again) */
 #endif
     if (!lcd_busy)
         return;
