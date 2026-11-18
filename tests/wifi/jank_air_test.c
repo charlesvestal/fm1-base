@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* Copyright (C) 2026 Henri David */
-/* MODE JAM on a model of the air: several units in one process, each with its own IP layer (wifi/wifi_ip.c as ad-hoc), Link
- * (link/link.c, unchanged) and group state (wifi/wifi_jam.c), its own clock (an offset and a crystal error) and its own main
+/* MODE JANK on a model of the air: several units in one process, each with its own IP layer (wifi/wifi_ip.c as ad-hoc), Link
+ * (link/link.c, unchanged) and group state (wifi/wifi_jank.c), its own clock (an offset and a crystal error) and its own main
  * loop (a frame received is stamped when a pass reads it, as device/wifi_own.c does). The air:
  *   one medium a channel: a frame takes its time at 1 Mb/s (192 us preamble, 8 us a byte), one at a time, after a random
  *   backoff; each receiver loses it with a chance; unicast is acknowledged and retried (the MAC's), a group frame is not;
- *   the MAC's filter by BSSID is left to ja_heard here (the same frames, more work).
+ *   the MAC's filter by BSSID is left to jn_heard here (the same frames, more work).
  * What it shows: units find each other with nobody hosting, whenever they start and leave; a session forms and the phase
  * between units; loss; two groups on one channel stay apart. The pass times, the backoff and the crystal errors are
  * assumptions of this model, not measurements of an FM-1.
@@ -15,7 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../../wifi/wifi_ip.c"
-#include "../../wifi/wifi_jam.c"
+#include "../../wifi/wifi_jank.c"
 #include "../../link/link.c"
 
 #define UNITS 6u
@@ -57,7 +57,7 @@ struct unit {
     int64_t pass_at;                     /* true us of the next pass */
     uint32_t pass_lo, pass_hi;           /* a pass takes this many us */
     uint8_t mac[6];
-    struct ja_net n;
+    struct jn_net n;
     struct wifi_ip ip;
     struct lk_node k;
     struct rxf q[QMAX];
@@ -138,13 +138,13 @@ static void unit_rx(struct unit *r, const struct rxf *q, int64_t now)
 {
     uint8_t b[FRAME_MAX];
     uint32_t tl = 0, ip;
-    if (!ja_heard(&r->n, q->f, q->n, q->rssi, (uint32_t)(t_now / 1000)))
+    if (!jn_heard(&r->n, q->f, q->n, q->rssi, (uint32_t)(t_now / 1000)))
         return;
-    ip = ja_sender_ip(q->f, q->n);
+    ip = jn_sender_ip(q->f, q->n);
     if (ip == r->ip.ip) {
         uint8_t d[2];
         rand_bytes(d, 2);
-        r->ip.ip = ja_addr(d);
+        r->ip.ip = jn_addr(d);
         lk_set_addr(&r->k, r->ip.ip, LK_MCAST_PORT);
         conflicts++;
         return;
@@ -185,8 +185,8 @@ static void unit_on(uint32_t i, uint32_t grp, double ppm, uint32_t lo, uint32_t 
     memcpy(p->mac, "\x02\x11\x22\x33", 4);
     p->mac[4] = (uint8_t)(0x40u + i);
     p->mac[5] = (uint8_t)(rnd() | 1u);
-    ja_init(&p->n, p->mac, grp);
-    ip = ja_addr(p->mac + 4);
+    jn_init(&p->n, p->mac, grp);
+    ip = jn_addr(p->mac + 4);
     wifi_ip_ibss_init(&p->ip, p->mac, p->n.bssid, ip, rand_bytes);
     p->ip.send = unit_send;
     p->ip.udp_rx = udp_rx;
@@ -284,20 +284,20 @@ int main(void)
     uint32_t i, n, t;
 
     /* the names and the channels */
-    ja_init(&u[0].n, (const uint8_t *)"\x02\x01\x02\x03\x04\x05", 1);
+    jn_init(&u[0].n, (const uint8_t *)"\x02\x01\x02\x03\x04\x05", 1);
     check(u[0].n.name_len == 7u && !memcmp(u[0].n.name, "fm1-jam", 7) && u[0].n.ch == 1u, "group 1: fm1-jam, channel 1");
-    ja_init(&u[0].n, (const uint8_t *)"\x02\x01\x02\x03\x04\x05", 2);
+    jn_init(&u[0].n, (const uint8_t *)"\x02\x01\x02\x03\x04\x05", 2);
     check(u[0].n.name_len == 9u && !memcmp(u[0].n.name, "fm1-jam-2", 9) && u[0].n.ch == 6u, "group 2: fm1-jam-2, channel 6");
-    ja_init(&u[0].n, (const uint8_t *)"\x02\x01\x02\x03\x04\x05", 4);
+    jn_init(&u[0].n, (const uint8_t *)"\x02\x01\x02\x03\x04\x05", 4);
     check(u[0].n.ch == 1u, "group 4: channel 1 again");
-    ja_init(&u[0].n, (const uint8_t *)"\x02\x01\x02\x03\x04\x05", 9);
+    jn_init(&u[0].n, (const uint8_t *)"\x02\x01\x02\x03\x04\x05", 9);
     check(u[0].n.name_len == 9u && !memcmp(u[0].n.name, "fm1-jam-9", 9) && u[0].n.ch == 11u, "group 9: fm1-jam-9, channel 11");
     memcpy(b, u[0].n.bssid, 6);
     check(b[0] == 2u && !(b[0] & 1u) && b[5] == 9u, "the BSSID: locally administered, not a group address, the group in it");
     for (i = 0; i < 300u; i++) {
         uint32_t a;
         rand_bytes(b, 2);
-        a = ja_addr(b);
+        a = jn_addr(b);
         if ((a >> 16) != 0xA9FEu || (a >> 8 & 255u) < 1u || (a >> 8 & 255u) > 254u || (a & 255u) < 1u || (a & 255u) > 254u)
             break;
     }
@@ -310,16 +310,16 @@ int main(void)
     check(n && f[0] == 0x08u && f[1] == 0u, "a data frame: open, neither ToDS nor FromDS");
     check(!memcmp(f + 4, "\x01\x00\x5e\x4c\x4e\x4b", 6), "addr1: Link's group's multicast address");
     check(!memcmp(f + 10, u[0].mac, 6) && !memcmp(f + 16, u[0].n.bssid, 6), "addr2 the sender, addr3 the group's BSSID");
-    check(ja_sender_ip(f, n) == u[0].ip.ip, "the sender's IP read off the frame");
+    check(jn_sender_ip(f, n) == u[0].ip.ip, "the sender's IP read off the frame");
     unit_on(1, 1, 0, 1000, 2000);
-    check(ja_heard(&u[1].n, f, n, -50, 0) && u[1].n.peer[0].n_data == 1u, "another unit of the group: heard, counted");
-    check(!ja_heard(&u[0].n, f, n, -50, 0), "our own frame: not");
+    check(jn_heard(&u[1].n, f, n, -50, 0) && u[1].n.peer[0].n_data == 1u, "another unit of the group: heard, counted");
+    check(!jn_heard(&u[0].n, f, n, -50, 0), "our own frame: not");
     unit_on(2, 2, 0, 1000, 2000);
-    check(!ja_heard(&u[2].n, f, n, -50, 0) && !u[2].n.peer[0].used, "another group's: dropped, not counted");
+    check(!jn_heard(&u[2].n, f, n, -50, 0) && !u[2].n.peer[0].used, "another group's: dropped, not counted");
     f[1] = 0x42u;
-    check(!ja_heard(&u[1].n, f, n, -50, 0), "an access point's (FromDS): not ours");
+    check(!jn_heard(&u[1].n, f, n, -50, 0), "an access point's (FromDS): not ours");
     f[1] = 0x40u;
-    check(!ja_heard(&u[1].n, f, n, -50, 0), "a protected one: not ours");
+    check(!jn_heard(&u[1].n, f, n, -50, 0), "a protected one: not ours");
     /* an ARP who-has from a computer on the network */
     reset();
     unit_on(0, 1, 0, 1000, 2000);
@@ -336,7 +336,7 @@ int main(void)
         memcpy(a + 40, a + 10, 6);
         a[46] = 169, a[47] = 254, a[48] = 9, a[49] = 9;
         a[56] = (uint8_t)(u[0].ip.ip >> 24), a[57] = (uint8_t)(u[0].ip.ip >> 16), a[58] = (uint8_t)(u[0].ip.ip >> 8), a[59] = (uint8_t)u[0].ip.ip;
-        check(ja_heard(&u[0].n, a, 60, -50, 0) && wifi_ip_early_filter(&u[0].ip, a, 60) &&
+        check(jn_heard(&u[0].n, a, 60, -50, 0) && wifi_ip_early_filter(&u[0].ip, a, 60) &&
               wifi_ip_rx_frame(&u[0].ip, a, 60, 0, r, &tl) == 1 && tl, "a who-has for our address: answered");
         check(r[1] == 0u && !memcmp(r + 4, a + 10, 6) && !memcmp(r + 16, u[0].n.bssid, 6), "the answer: an ad-hoc frame to the asker");
     }
@@ -356,7 +356,7 @@ int main(void)
         snprintf(s, sizeof s, "%u units: airtime %.1f %%", n, (double)air_us[1] * 100.0 / (double)t_now);
         check((double)air_us[1] / (double)t_now < 0.25, s);
         for (i = 0; i < n; i++)
-            check(ja_count(&u[i].n, (uint32_t)(t_now / 1000)) == n - 1u, "  the unit counts the others");
+            check(jn_count(&u[i].n, (uint32_t)(t_now / 1000)) == n - 1u, "  the unit counts the others");
     }
 
     /* a third unit comes late, one leaves, it plays on */
@@ -376,7 +376,7 @@ int main(void)
     }
     unit_off(0);                         /* the founder goes */
     run_ms(8000);
-    check(ja_count(&u[1].n, (uint32_t)(t_now / 1000)) == 1u && lk_peers(&u[1].k) == 1u, "the founder gone: the two left see each other only");
+    check(jn_count(&u[1].n, (uint32_t)(t_now / 1000)) == 1u && lk_peers(&u[1].k) == 1u, "the founder gone: the two left see each other only");
     phase("the two left", 2, 60, 3000);
     unit_on(0, 1, 5, 1000, 9000);
     t = ms_until_one(3, 30000);
@@ -410,7 +410,7 @@ int main(void)
     run_ms(10000);
     check(u[0].n.ch == u[2].n.ch && u[0].ip.ip != 0, "groups 1 and 4 share channel 1");
     check(lk_peers(&u[0].k) == 1u && lk_peers(&u[2].k) == 1u && same_session(0, 1) && same_session(2, 3) && !same_session(0, 2), "they stay two sessions");
-    check(ja_count(&u[0].n, (uint32_t)(t_now / 1000)) == 1u, "each counts its own only");
+    check(jn_count(&u[0].n, (uint32_t)(t_now / 1000)) == 1u, "each counts its own only");
 
     /* two units with one address: the second that hears it draws another */
     reset();

@@ -17,8 +17,8 @@
  *   MODE AUTO  as MAN, and the best saved network heard is joined, at start-up and whenever none is joined.
  *   MODE AP, AP_MAN  (wifi_ap = true: FM1B_WIFI_AP) the FM-1 is the access point (device/wifi_own_ap.c); without
  *                    wifi_ap a record's AP modes are as OFF.
- *   MODE JAM   no access point at all: the FM-1s of a GROUP on one channel, open ad-hoc frames, IP and Link on them
- *              (wifi/wifi_jam.h, ja_* below); the manager rests.
+ *   MODE JANK   no access point at all: the FM-1s of a GROUP on one channel, open ad-hoc frames, IP and Link on them
+ *              (wifi/wifi_jank.h, jn_* below); the manager rests.
  * The networks kept (four: the SSID and the WPA2 key made from the password, never the password) and the mode are a
  * record of WIFI_STORE_SIZE bytes (wifi/wifi_nets.h struct wn_store): in the app's store object OBJ_WIFI, or the app's
  * own (APP_WIFI_STORE: app_wifi_store gives it, app_wifi_store_dirty is told when it changed).
@@ -33,7 +33,7 @@
 #include "wifi_ip.c"
 #include "wifi_nets.c"
 #include "wifi_tune.c"                   /* the tuning's pure part (device/wifi_own_tune.c: the radio's) */
-#include "wifi_jam.c"                    /* MODE JAM's air */
+#include "wifi_jank.c"                    /* MODE JANK's air */
 #if defined(PLAT_HOST) || FM1B_WIFI_AP
 #include "wifi_ap.c"                         /* (MODE AP: wifi_own_ap.c; the host: its simulated access point too, host/wifi_air.c) */
 #include "wifi_ap_dhcp.c"
@@ -43,8 +43,8 @@ _Static_assert(sizeof(struct plat_wifi_ap) == sizeof(struct wn_ap), "plat.h plat
 _Static_assert(PLAT_WIFI_STORE_SIZE == WN_STORE_SIZE, "plat.h PLAT_WIFI_STORE_SIZE: wifi_nets.h WN_STORE_SIZE");
 _Static_assert((int)WIFI_MODE_OFF == (int)WN_MODE_OFF && (int)WIFI_MODE_AUTO == (int)WN_MODE_AUTO && (int)WIFI_MODE_MAN == (int)WN_MODE_MAN &&
                (int)WIFI_MODE_AP == (int)WN_MODE_AP && (int)WIFI_MODE_AP_MAN == (int)WN_MODE_AP_MAN &&
-               (int)WIFI_MODE_JAM == (int)WN_MODE_JAM && (int)WIFI_MODE_JAM_HOST == (int)WN_MODE_JAM_HOST &&
-               (int)WIFI_MODE_JAM_AUTO == (int)WN_MODE_JAM_AUTO,
+               (int)WIFI_MODE_JANK == (int)WN_MODE_JANK && (int)WIFI_MODE_JANK_HOST == (int)WN_MODE_JANK_HOST &&
+               (int)WIFI_MODE_JANK_AUTO == (int)WN_MODE_JANK_AUTO,
                "plat.h WIFI_MODE_*: wifi_nets.h's");
 
 #define WC_CH_MS 150u                    /* one channel's listening in a scan */
@@ -120,8 +120,8 @@ static void own_store_load(void)
             wn_reset(&wn_st);
     }
 #endif
-    if (!FM1B_WIFI_JAM && wn_st.mode == WN_MODE_JAM_AUTO)   /* (a record from a build with wifi_jam, wn_load's one JAM mode: */
-        wn_st.mode = WN_MODE_AUTO;                          /* AUTO here, MODE JAM not built) */
+    if (!FM1B_WIFI_JAM && wn_st.mode == WN_MODE_JANK_AUTO)   /* (a record from a build with wifi_jam, wn_load's one JANK mode: */
+        wn_st.mode = WN_MODE_AUTO;                          /* AUTO here, MODE JANK not built) */
 }
 static void own_store_changed(void)
 {
@@ -317,7 +317,7 @@ static struct {
 #if FM1B_WIFI_AP
     uint8_t ap;                                   /* MODE AP: the service is the access point's (wifi_own_ap.c) */
 #endif
-    uint8_t ja;                                   /* MODE JAM: the service is on the group's air (ja_*) */
+    uint8_t jn;                                   /* MODE JANK: the service is on the group's air (jn_*) */
 } wl;
 static struct {
     uint16_t port;
@@ -333,7 +333,7 @@ static void wa_send(uint32_t len);                /* wifi_own_ap.c: the frame ou
 static void wa_rx(const uint8_t *f, uint32_t len, int8_t rssi, int64_t now);
 static uint32_t wa_udp_srv(struct wifi_ip *wip, const uint8_t *src_mac, const uint8_t *msg, uint32_t n, uint8_t *tx_buf);
 #endif
-#define JA_WCID 8u                                /* MODE JAM's frames: a WCID that is never keyed (MODE AP's WA_PLAIN: its beacons,
+#define JN_WCID 8u                                /* MODE JANK's frames: a WCID that is never keyed (MODE AP's WA_PLAIN: its beacons,
                                                    * its EAPOL data frames, acknowledged by a station it has no entry for yet) */
 static void wl_send(uint32_t len)                 /* what wifi_txb's frame holds, out */
 {
@@ -343,8 +343,8 @@ static void wl_send(uint32_t len)                 /* what wifi_txb's frame holds
         return;
     }
 #endif
-    if (wl.ja)
-        wt_prepare(len, JA_WCID, !(own_frame()[4] & 1u));   /* (no key, no client entry; unicast acknowledged, a group frame not) */
+    if (wl.jn)
+        wt_prepare(len, JN_WCID, !(own_frame()[4] & 1u));   /* (no key, no client entry; unicast acknowledged, a group frame not) */
     else
         wt_prepare(len, 1u, 1u);                  /* (WCID 1, the AP: the MAC encrypts what carries the Protected bit) */
     if (fm1_wifi_tx(wifi_txb) == 0)
@@ -382,7 +382,7 @@ static void own_ip_attach(void)                   /* the app's ports and the gro
             (void)wifi_ip_bind(&wl.ip, own_sock[i].port);
 }
 static uint32_t own_group;                        /* the multicast group the app joined (plat_net_join) */
-static void ja_rx(const uint8_t *f, uint32_t len, int8_t rssi, int64_t now);
+static void jn_rx(const uint8_t *f, uint32_t len, int8_t rssi, int64_t now);
 static void wl_rx(const uint8_t *f, uint32_t len, int8_t rssi, int64_t now)   /* one 802.11 frame the AP sent */
 {
     uint32_t tx_len = 0, hl;
@@ -425,7 +425,7 @@ static void wl_poll(void)                         /* once a main-loop pass */
         own_rx(wa_rx, 24u);                       /* (the access point answers probes and joins among the neighbours' traffic) */
     else
 #endif
-    own_rx(wl.ja ? ja_rx : wl_rx, wl.ja ? 24u : 6u);                            /* (a few frames a pass: the rest wait in the MAC) */
+    own_rx(wl.jn ? jn_rx : wl_rx, wl.jn ? 24u : 6u);                            /* (a few frames a pass: the rest wait in the MAC) */
     now = own_us();
     tx_len = wifi_ip_poll(&wl.ip, now, own_frame());
     if (tx_len)
@@ -506,32 +506,32 @@ static struct {
 static struct wn_scan wc_tab;                     /* the APs heard */
 #include "wifi_own_tune.c"                       /* the tuning on the radio (wifi/wifi_tune.h) */
 
-/* MODE JAM on the air (wifi/wifi_jam.h): the service (wl, the IP layer, Link) on the group's channel, from the moment the radio is up
- * to the moment the mode or the GROUP changes. The stored mode is JAM_AUTO's number (7), whatever a record said before */
+/* MODE JANK on the air (wifi/wifi_jank.h): the service (wl, the IP layer, Link) on the group's channel, from the moment the radio is up
+ * to the moment the mode or the GROUP changes. The stored mode is JANK_AUTO's number (7), whatever a record said before */
 static struct {
     uint8_t up, fail;                     /* running; the radio cannot start */
     uint8_t grp;
-    struct ja_net n;
-} ja;
-static uint32_t own_jam_group(void) { return wn_st.ap.grp >= 1u && wn_st.ap.grp <= WN_GROUPS ? wn_st.ap.grp : 1u; }
-static int own_jam(void) { return FM1B_WIFI_JAM && wn_st.mode == WN_MODE_JAM_AUTO; }   /* (wifi_jam only: plat.h FM1B_WIFI_JAM) */
-static void ja_new_addr(void)             /* the address is someone else's too: another one, Link told */
+    struct jn_net n;
+} jnk;
+static uint32_t own_jank_group(void) { return wn_st.ap.grp >= 1u && wn_st.ap.grp <= WN_GROUPS ? wn_st.ap.grp : 1u; }
+static int own_jank(void) { return FM1B_WIFI_JAM && wn_st.mode == WN_MODE_JANK_AUTO; }   /* (wifi_jam only: plat.h FM1B_WIFI_JAM) */
+static void jn_new_addr(void)             /* the address is someone else's too: another one, Link told */
 {
     uint8_t b[2];
     own_rand(b, 2);
-    wl.ip.ip = ja_addr(b);
+    wl.ip.ip = jn_addr(b);
     own_on_addr(0, wl.ip.ip);
 }
-static void ja_rx(const uint8_t *f, uint32_t len, int8_t rssi, int64_t now)
+static void jn_rx(const uint8_t *f, uint32_t len, int8_t rssi, int64_t now)
 {
     uint32_t tx_len = 0, ip;
     wl.n_rx++;
-    if (!ja_heard(&ja.n, f, len, rssi, own_ms()))
+    if (!jn_heard(&jnk.n, f, len, rssi, own_ms()))
         return;
     oq_signal(1u, rssi);                          /* (the quality's signal: as a client's in MODE AP) */
-    ip = ja_sender_ip(f, len);
+    ip = jn_sender_ip(f, len);
     if (ip == wl.ip.ip) {
-        ja_new_addr();
+        jn_new_addr();
         return;
     }
     if (ip)
@@ -542,49 +542,49 @@ static void ja_rx(const uint8_t *f, uint32_t len, int8_t rssi, int64_t now)
     if (wifi_ip_rx_frame(&wl.ip, f, len, now, own_frame(), &tx_len) == 1 && tx_len)
         wl_send(tx_len);
 }
-static void ja_start(void)
+static void jn_start(void)
 {
     uint8_t mac[6];
-    ja.grp = (uint8_t)own_jam_group();
+    jnk.grp = (uint8_t)own_jank_group();
     own_mac(mac);
-    ja_init(&ja.n, mac, ja.grp);
+    jn_init(&jnk.n, mac, jnk.grp);
     wifi_sta_clear_hw_keys();
-    wifi_sta_set_mac_regs(mac, ja.n.bssid, ja.n.ch);
-    wifi_ip_ibss_init(&wl.ip, mac, ja.n.bssid, ja_addr(mac + 4), own_rand);
+    wifi_sta_set_mac_regs(mac, jnk.n.bssid, jnk.n.ch);
+    wifi_ip_ibss_init(&wl.ip, mac, jnk.n.bssid, jn_addr(mac + 4), own_rand);
     own_ip_attach();
     wl.ip.protect = 0;                            /* (open: no keys) */
     wifi_ip_join(&wl.ip, own_group);
     wl.n_rx = wl.n_kept = wl.n_tx = wl.n_tx_err = 0;
-    wl.ja = wl.on = 1;
-    ja.up = 1;
+    wl.jn = wl.on = 1;
+    jnk.up = 1;
     own_on_addr(0, wl.ip.ip);
 }
-static void ja_stop(void)
+static void jn_stop(void)
 {
     wl_stop();
-    wl.ja = 0;
-    ja.up = 0;
+    wl.jn = 0;
+    jnk.up = 0;
 }
-static void ja_poll(void)                 /* after the manager and the access point: either has left the radio by then */
+static void jn_poll(void)                 /* after the manager and the access point: either has left the radio by then */
 {
     uint32_t now = own_ms();
-    ja.fail = 0;
-    if (!own_jam()) {
-        if (ja.up)
-            ja_stop();
+    jnk.fail = 0;
+    if (!own_jank()) {
+        if (jnk.up)
+            jn_stop();
         return;
     }
-    if (ja.up && ja.grp != own_jam_group())
-        ja_stop();                        /* (another group: another channel, the next pass) */
-    if (!ja.up && now >= WC_RADIO_MS) {
+    if (jnk.up && jnk.grp != own_jank_group())
+        jn_stop();                        /* (another group: another channel, the next pass) */
+    if (!jnk.up && now >= WC_RADIO_MS) {
         int r = own_radio_up();
-        ja.fail = r < 0;
+        jnk.fail = r < 0;
         if (r > 0)
-            ja_start();
+            jn_start();
     }
 }
 static int wc_auto(void) { return wn_st.mode == WN_MODE_AUTO; }   /* (saved networks joined by themselves) */
-static int wc_mode_off(void) { uint8_t m = wn_st.mode; return m == WN_MODE_OFF || m == WN_MODE_AP || m == WN_MODE_AP_MAN || m == WN_MODE_JAM_AUTO; }
+static int wc_mode_off(void) { uint8_t m = wn_st.mode; return m == WN_MODE_OFF || m == WN_MODE_AP || m == WN_MODE_AP_MAN || m == WN_MODE_JANK_AUTO; }
 static void wc_to(uint32_t st) { wc.st = (uint8_t)st; wc.t0 = own_ms(); }
 static void wc_fail(uint32_t why) { wc.fail = (uint8_t)why; wc.fails++; wc_to(WC_FAIL); wc.t_retry = own_ms(); }
 static void wc_send(uint32_t len) { own_tx(len, 1u, 1u); }
@@ -618,7 +618,7 @@ static void wc_leave(void)                        /* joined (UP, LINK): tell the
 #if FM1B_WIFI_AP
     if (!wl.ap)                                   /* (the access point's service is not the station's to stop) */
 #endif
-    if (!wl.ja)
+    if (!wl.jn)
         wl_stop();
     wl.joined = 0;
     wc.joined_slot = 0;
@@ -925,7 +925,7 @@ static void wifi_poll(void)
 #if FM1B_WIFI_AP
     wa_poll();
 #endif
-    ja_poll();
+    jn_poll();
     wl_poll();
     own_rx_second();
     wt_poll();                                    /* (the tuning; the quality counters' second) */
@@ -945,39 +945,39 @@ void plat_wifi_mode(int mode)
 {
     own_store_load();
     if (mode < WIFI_MODE_OFF || (mode > (FM1B_WIFI_AP ? WIFI_MODE_AP_MAN : WIFI_MODE_MAN) &&
-                                 !(FM1B_WIFI_JAM && (mode == WIFI_MODE_JAM || mode == WIFI_MODE_JAM_AUTO))) ||
+                                 !(FM1B_WIFI_JAM && (mode == WIFI_MODE_JANK || mode == WIFI_MODE_JANK_AUTO))) ||
         wn_st.mode == (uint8_t)mode)
-        return;                                   /* (JAM: wifi_jam only, plat.h FM1B_WIFI_JAM) */
-    wn_st.mode = (uint8_t)(mode == WIFI_MODE_JAM ? WIFI_MODE_JAM_AUTO : mode);   /* (one JAM mode) */
+        return;                                   /* (JANK: wifi_jam only, plat.h FM1B_WIFI_JAM) */
+    wn_st.mode = (uint8_t)(mode == WIFI_MODE_JANK ? WIFI_MODE_JANK_AUTO : mode);   /* (one JANK mode) */
     own_store_changed();
 }
 int plat_wifi_get_mode(void) { own_store_load(); return wn_st.mode; }
-int plat_wifi_group(void) { own_store_load(); return (int)own_jam_group(); }
+int plat_wifi_group(void) { own_store_load(); return (int)own_jank_group(); }
 void plat_wifi_set_group(int g)
 {
     own_store_load();
-    if (g < 1 || g > (int)WN_GROUPS || (int)own_jam_group() == g)
+    if (g < 1 || g > (int)WN_GROUPS || (int)own_jank_group() == g)
         return;
-    wn_st.ap.grp = (uint8_t)g;                    /* (ja_poll moves to its channel) */
+    wn_st.ap.grp = (uint8_t)g;                    /* (jn_poll moves to its channel) */
     own_store_changed();
 }
 int plat_wifi_step(void) { return wc.st; }
-int plat_wifi_jam(void)
+int plat_wifi_jank(void)
 {
-    if (ja.fail)
+    if (jnk.fail)
         return -2;
-    return ja.up ? (int)ja_count(&ja.n, own_ms()) : -1;
+    return jnk.up ? (int)jn_count(&jnk.n, own_ms()) : -1;
 }
-int plat_wifi_jam_stat(int i, uint32_t v[4])
+int plat_wifi_jank_stat(int i, uint32_t v[4])
 {
-    const struct ja_peer *q;
-    if (!ja.up || i < 0 || i > (int)JA_PEERS)
+    const struct jn_peer *q;
+    if (!jnk.up || i < 0 || i > (int)JN_PEERS)
         return 0;
     if (!i) {
-        v[0] = ja.n.ch, v[1] = wl.n_tx, v[2] = wl.n_tx_err, v[3] = wl.n_kept;
+        v[0] = jnk.n.ch, v[1] = wl.n_tx, v[2] = wl.n_tx_err, v[3] = wl.n_kept;
         return 1;
     }
-    q = &ja.n.peer[i - 1];
+    q = &jnk.n.peer[i - 1];
     v[0] = (uint32_t)q->mac[4] << 8 | q->mac[5], v[1] = q->n_data, v[2] = (uint32_t)-(int32_t)q->rssi, v[3] = own_ms() - q->t_heard;
     return q->used;
 }
@@ -985,8 +985,8 @@ int plat_wifi_fail(void) { return wc.fail; }
 uint32_t plat_wifi_fails(void) { return wc.fails; }
 int plat_wifi_state(void)
 {
-    if (own_jam())
-        return ja.up ? WIFI_ON : WIFI_STARTING;
+    if (own_jank())
+        return jnk.up ? WIFI_ON : WIFI_STARTING;
     switch (wc.st) {
     case WC_OFF: return WIFI_OFF;
     case WC_RADIO: return WIFI_STARTING;
@@ -1008,9 +1008,9 @@ const char *plat_wifi_ssid(void)
 {
     static char s[WN_SSID_MAX + 1];
     uint32_t n = wc.st >= WC_PMK && wc.st != WC_FAIL ? wc.ap.ssid_len : 0u;
-    if (ja.up) {
-        n = ja.n.name_len;
-        memcpy(s, ja.n.name, n);
+    if (jnk.up) {
+        n = jnk.n.name_len;
+        memcpy(s, jnk.n.name, n);
     } else
         memcpy(s, wc.ap.ssid, n);
     s[n] = 0;
@@ -1125,7 +1125,7 @@ int plat_wifi_quality(struct plat_wifi_quality *q)
 #if FM1B_WIFI_AP
     ap = wl.ap && wl.on;
 #endif
-    ap |= wl.ja;                                  /* (MODE JAM: the frames the MAC counted, its unicast acknowledged or not) */
+    ap |= wl.jn;                                  /* (MODE JANK: the frames the MAC counted, its unicast acknowledged or not) */
     if (!ap && wc.st != WC_UP)
         return 0;
     oq_ask();

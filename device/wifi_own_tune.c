@@ -5,7 +5,7 @@
  * (plat_wifi_tune_set), on and off, so SYSTEM > WI-FI's numbers can be compared within a minute:
  *   (a) WT_CAL   at the Wi-Fi side's start (own_radio_up) and when switched: the stored 187's IQ fields into the PHY
  *                (felucca-bsp fm1_ble_rf.h fm1_rf_cal_wifi_iq), or the start's own back; the VM read once.
- *   (b) WT_FILT  each pass: the station filter while associated (WC_HS .. WC_UP, not MODE AP), MODE JAM's while on its air
+ *   (b) WT_FILT  each pass: the station filter while associated (WC_HS .. WC_UP, not MODE AP), MODE JANK's while on its air
  *                (other networks dropped as well), else everything in, written only when that changes (and nothing at all
  *                while the switch stays off).
  *   (c) WT_AGC   each pass while associated: the gain from the AP's signal mean (wt_agc_next), written on a change only;
@@ -19,9 +19,9 @@
 #endif
 #define WT_FAST_W0 FM1_WIFI_RATE_CCK2    /* (f)'s rate: see wifi_tune.h and the report on fm1-next-wififix for the choice */
 #define WT_FAST_KBPS 2000u
-#define WT_FILT_JAM (FM1_WIFI_RX_FILTER_STA | 8u)   /* MODE JAM: the station's, and Ralink's DROP_NOT_MYBSS: frames of another BSSID (0x1010, the
+#define WT_FILT_JANK (FM1_WIFI_RX_FILTER_STA | 8u)   /* MODE JANK: the station's, and Ralink's DROP_NOT_MYBSS: frames of another BSSID (0x1010, the
                                           * group's) never reach the DMA: another group on the channel costs no pass. Not yet
-                                          * confirmed on an FM-1 (wifi tune without b: everything in, ja_heard drops them) */
+                                          * confirmed on an FM-1 (wifi tune without b: everything in, jn_heard drops them) */
 
 static struct {
     uint8_t up;                          /* the Wi-Fi side is up (own_radio_up) */
@@ -161,9 +161,9 @@ static void wt_poll(void)
         wt_rate_reset(&wt.rate, now);
     }
     wt.joined = (uint8_t)assoc;
-    want = (assoc || wl.ja) && (m & WT_FILT);   /* (b) */
+    want = (assoc || wl.jn) && (m & WT_FILT);   /* (b) */
     if (want != wt.filt) {
-        fm1_wifi_mac_wr(FM1_WIFI_RX_FILTER, !want ? FM1_WIFI_RX_FILTER_ALL : wl.ja ? WT_FILT_JAM : FM1_WIFI_RX_FILTER_STA);
+        fm1_wifi_mac_wr(FM1_WIFI_RX_FILTER, !want ? FM1_WIFI_RX_FILTER_ALL : wl.jn ? WT_FILT_JANK : FM1_WIFI_RX_FILTER_STA);
         wt.filt = (uint8_t)want;
     }
     if (assoc && (m & WT_AGC))           /* (c) */

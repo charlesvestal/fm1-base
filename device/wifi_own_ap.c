@@ -27,7 +27,7 @@
  * from the password, never the password) is the record's (wifi_nets.h struct wn_apcfg), kept with the networks:
  * The password is the typed one (the record keeps its key), else one made for this FM-1 from the radio's random source
  * (wa_gen_pass: 12 characters, kept in the record and shown by plat_wifi_ap_default_key; never a function of the name,
- * which anyone could work out); forgetting the typed one makes a new one. (MODE JAM joins no access point: wifi/wifi_jam.h.)
+ * which anyone could work out); forgetting the typed one makes a new one. (MODE JANK joins no access point: wifi/wifi_jank.h.)
  *   MODE AP      (WIFI_MODE_AP, "AP AUTO") runs from power-on
  *   MODE AP_MAN  (WIFI_MODE_AP_MAN, "AP MAN") the same, but started by plat_wifi_ap_run(1) or a password set, and off at
  *                power-on

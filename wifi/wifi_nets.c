@@ -47,9 +47,9 @@ int wn_load(struct wn_store *s, const uint8_t raw[WN_STORE_SIZE])
     if (t.mark != WN_MARK || t.ver < 1u || t.ver > WN_VER)
         return 0;
     s->rsv = t.rsv & 0x80u ? t.rsv : 0u;               /* (the spare byte: the Wi-Fi tuning's switches, wifi_tune.h WT_KEPT) */
-    s->mode = t.mode <= WN_MODE_MAN || ((t.mode == WN_MODE_AP || t.mode == WN_MODE_AP_MAN || t.mode == WN_MODE_JAM || t.mode == WN_MODE_JAM_HOST || t.mode == WN_MODE_JAM_AUTO) && t.ver >= 2u) ? t.mode : WN_MODE_OFF;
-    if (s->mode == WN_MODE_JAM || s->mode == WN_MODE_JAM_HOST)
-        s->mode = WN_MODE_JAM_AUTO;                     /* (one JAM mode now: the two it came from, JOIN and HOST, are what it does by itself) */
+    s->mode = t.mode <= WN_MODE_MAN || ((t.mode == WN_MODE_AP || t.mode == WN_MODE_AP_MAN || t.mode == WN_MODE_JANK || t.mode == WN_MODE_JANK_HOST || t.mode == WN_MODE_JANK_AUTO) && t.ver >= 2u) ? t.mode : WN_MODE_OFF;
+    if (s->mode == WN_MODE_JANK || s->mode == WN_MODE_JANK_HOST)
+        s->mode = WN_MODE_JANK_AUTO;                     /* (one JANK mode now: the two it came from, JOIN and HOST, are what it does by itself) */
     for (i = 0; i < WN_SLOTS; i++)
         if (wn_entry_ok(&t.n[i]))
             s->n[j++] = t.n[i];                         /* (damaged ones dropped, the rest closed up in order) */
@@ -62,7 +62,7 @@ int wn_load(struct wn_store *s, const uint8_t raw[WN_STORE_SIZE])
         s->ap.ssid_len = t.ap.ssid_len;
         memcpy(s->ap.ssid, t.ap.ssid, t.ap.ssid_len);
     }
-    s->ap.grp = t.ver >= 2u && t.ap.grp >= 1u && t.ap.grp <= WN_GROUPS ? t.ap.grp : 0u;                         /* (the JAM group, kept whatever else the access point's record holds) */
+    s->ap.grp = t.ver >= 2u && t.ap.grp >= 1u && t.ap.grp <= WN_GROUPS ? t.ap.grp : 0u;                         /* (the JANK group, kept whatever else the access point's record holds) */
     return 1;
 }
 

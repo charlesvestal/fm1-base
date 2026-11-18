@@ -248,7 +248,7 @@ static uint32_t build_80211_data_hdr(struct wifi_ip *wip, const uint8_t da[6], u
     memset(tx_buf, 0, 32);
     tx_buf[0] = 0x08;                               /* Type: Data, Subtype: Data */
     tx_buf[2] = 0x00; tx_buf[3] = 0x00;             /* Duration */
-    if (wip->ap == WIFI_IP_IBSS) {                  /* MODE JAM: neither ToDS nor FromDS: RA = DA, TA = us, addr3 = the group's BSSID */
+    if (wip->ap == WIFI_IP_IBSS) {                  /* MODE JANK: neither ToDS nor FromDS: RA = DA, TA = us, addr3 = the group's BSSID */
         memcpy(tx_buf + 4, da, 6);
         memcpy(tx_buf + 10, wip->mac, 6);
         memcpy(tx_buf + 16, wip->bssid, 6);
