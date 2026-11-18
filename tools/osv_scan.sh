@@ -70,14 +70,15 @@ print(" ".join(r["version"] for r in newer if r["security"]))' "$have") || newer
         else skip node "no node in tools/toolchain.lock"; fi ;;
     build-image)
         # Docker or podman, the first that answers: a docker installed with no daemon running must not hide a working
-        # podman (podman's save has no --platform: its pull of one platform keeps that one alone).
+        # podman. save takes --platform only where the tool's save has it (podman's hasn't: its pull of one platform
+        # keeps that one alone), asked of save itself, since a podman reached as docker gives its version as docker's.
         CTR=
         for c in docker podman; do
             if command -v $c >/dev/null && $c info >/dev/null 2>&1; then CTR=$c; break; fi
         done
         if [ -n "$CTR" ]; then
-            PLAT="--platform linux/amd64"
-            "$CTR" --version 2>/dev/null | grep -qi podman && PLAT=
+            PLAT=
+            "$CTR" save --help 2>/dev/null | grep -q -e --platform && PLAT="--platform linux/amd64"
             IMG=$(awk '$1 == "build-image" { print $5 "@sha256:" $4 }' tools/toolchain.lock)
             rm -f build/osv/build-image*.json             # (a report left from the last run must not stand in)
             # Each step fails the scan on its own: a pull or save that fails must not leave the image unscanned.
