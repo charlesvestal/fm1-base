@@ -5785,6 +5785,10 @@ FRESULT f_expand (
 			} else {
 				scl = clst; ncl = 0;		/* Not a free cluster */
 			}
+			if (clst == 2) {		/* fm1-base: wrapped round the volume's end: a run starts again at 2 (R0.16 counted the free
+									   clusters at the end and those from 2 as one run: FR_INT_ERR, a chain past the FAT's end) */
+				scl = 2; ncl = 0;
+			}
 			if (clst == stcl) {		/* No contiguous cluster? */
 				res = FR_DENIED; break;
 			}
