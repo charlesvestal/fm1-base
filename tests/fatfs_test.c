@@ -4,6 +4,9 @@
  *   expand   f_expand's search for a contiguous run wraps round the volume's end to cluster 2: the free clusters at
  *            the end and those from 2 are two runs, not one (R0.16 counted them as one: FR_INT_ERR, or a chain
  *            past the FAT's end)
+ *   unlink   f_unlink_entry: a rename cut by a power loss (f_rename writes the new entry, then removes the old one)
+ *            leaves one cluster chain under two names; f_unlink of either frees the chain the other still names,
+ *            f_unlink_entry removes the name alone
  *   cc -std=c99 -DFF_USE_MKFS=1 -Ilib -o fatfs_test tests/fatfs_test.c && ./fatfs_test */
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +16,8 @@
 
 #define SECTORS 4096u                          /* 2 MiB: FAT12, a sector a cluster */
 static uint8_t disk[SECTORS][512];
+static uint8_t *snap[16];                      /* the volume after each write of a step (cut tests) */
+static int snaps, snapping;
 
 DSTATUS disk_status(BYTE pdrv) { return pdrv ? STA_NOINIT : 0; }
 DSTATUS disk_initialize(BYTE pdrv) { return disk_status(pdrv); }
@@ -28,6 +33,10 @@ DRESULT disk_write(BYTE pdrv, const BYTE *buf, LBA_t sector, UINT n)
     if (pdrv || sector + n > SECTORS)
         return RES_PARERR;
     memcpy(disk[sector], buf, n * 512u);
+    if (snapping && snaps < 16) {
+        snap[snaps] = malloc(sizeof disk);
+        memcpy(snap[snaps++], disk, sizeof disk);
+    }
     return RES_OK;
 }
 DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buf)
@@ -96,10 +105,67 @@ static void expand(void)
     CHECK(f_mount(0, "", 0) == FR_OK);
 }
 
+static int has(const char *name, const uint8_t *data, UINT size)
+{
+    static uint8_t b[8192];
+    FIL f;
+    UINT got = 0;
+    int ok = f_open(&f, name, FA_READ) == FR_OK && f_read(&f, b, sizeof b, &got) == FR_OK && got == size &&
+             !memcmp(b, data, size);
+    f_close(&f);
+    return ok;
+}
+
+static void unlink_entry(void)
+{
+    static uint8_t data[5000];
+    FIL f;
+    FILINFO fi;
+    UINT bw = 0;
+    DWORD before;
+    int k, cut = -1;
+    printf("fatfs: a rename cut by a power loss, and f_unlink_entry\n");
+    for (k = 0; k < (int)sizeof data; k++)
+        data[k] = (uint8_t)(k * 7 + 1);
+    fresh();
+    CHECK(f_mkdir("SUB") == FR_OK);            /* (the new name in another folder's sector: two writes, a cut between) */
+    CHECK(f_open(&f, "SONG.TMP", FA_CREATE_NEW | FA_WRITE) == FR_OK && f_write(&f, data, sizeof data, &bw) == FR_OK);
+    CHECK(bw == sizeof data && f_close(&f) == FR_OK);
+    snapping = 1;
+    CHECK(f_rename("SONG.TMP", "SUB/SONG.BIN") == FR_OK);
+    snapping = 0;
+    for (k = 0; k < snaps && cut < 0; k++) {   /* the cut: the new name written, the old one not yet removed */
+        memcpy(disk, snap[k], sizeof disk);
+        CHECK(f_mount(&fs, "", 1) == FR_OK);
+        if (f_stat("SONG.TMP", &fi) == FR_OK && f_stat("SUB/SONG.BIN", &fi) == FR_OK)
+            cut = k;
+    }
+    printf("  %d writes in the rename; both names after write %d\n", snaps, cut + 1);
+    CHECK(cut >= 0);
+    CHECK(has("SONG.TMP", data, sizeof data) && has("SUB/SONG.BIN", data, sizeof data));
+    before = nfree();
+    CHECK(f_unlink_entry("SONG.TMP") == FR_OK);
+    CHECK(f_stat("SONG.TMP", &fi) == FR_NO_FILE && has("SUB/SONG.BIN", data, sizeof data));
+    CHECK(nfree() == before);                  /* the chain kept: SONG.BIN's */
+    CHECK(f_mount(0, "", 0) == FR_OK && f_mount(&fs, "", 1) == FR_OK && has("SUB/SONG.BIN", data, sizeof data));
+    CHECK(f_mkdir("DIR") == FR_OK && f_unlink_entry("DIR") == FR_DENIED);   /* files only */
+    CHECK(f_unlink_entry("NONE.BIN") == FR_NO_FILE);
+
+    memcpy(disk, snap[cut], sizeof disk);      /* what f_unlink would have done: the chain freed under the other */
+    CHECK(f_mount(&fs, "", 1) == FR_OK);
+    before = nfree();
+    CHECK(f_unlink("SONG.TMP") == FR_OK && nfree() > before);
+    for (k = 0; k < snaps; k++)
+        free(snap[k]);
+    snaps = 0;
+    CHECK(f_mount(0, "", 0) == FR_OK);
+}
+
 int main(void)
 {
     setvbuf(stdout, 0, _IONBF, 0);
     expand();
+    unlink_entry();
     if (fails) {
         printf("fatfs: %d FAILED\n", fails);
         return 1;

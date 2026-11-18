@@ -76,7 +76,7 @@ run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/
 run sd sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT_HOST -DFF_USE_MKFS=1 -Iinclude -Ilib \
     -Itests -o $OUT/sd_test tests/sd_test.c && $OUT/sd_test $OUT/sd_card.img && \
     if command -v mdir >/dev/null; then MTOOLS_SKIP_CHECK=1 mdir -i $OUT/sd_card.img@@32256 ::/SAMPLES | grep -q 70000; fi"
-# lib/fatfs's own changes on a volume in memory (f_expand round the volume's end)
+# lib/fatfs's own changes on a volume in memory (f_expand round the volume's end, f_unlink_entry)
 run fatfs sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT_HOST -DFF_USE_MKFS=1 -Ilib \
     -o $OUT/fatfs_test tests/fatfs_test.c && $OUT/fatfs_test"
 # an app's streams on the same model (plat_sd_read_open ... plat_sd_close): waits within their budget, the LCD between
