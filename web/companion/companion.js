@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (C) 2026 Henri David
-// Copyright (C) 2026 Charles Vestal (the commands' versions)
+// Copyright (C) 2026 Charles Vestal (the commands' versions, finding FM-1s by web/fm1ports.js)
 // The companion services' client (docs/COMPANION.md, device/companion.c): what any fm1-base firmware built with
 // companion = true is and has, its files and its parameters, over a MIDI port pair (Web MIDI's, or the browser
 // emulator's: web/emu/parts/port_client.js). tools/fm1_companion.py is the same in Python.
@@ -8,7 +8,9 @@
 //   await c.hello(); await c.files(); await c.read(i, onProgress); await c.write(i, bytes, onProgress);
 //   await c.params(); await c.get(ids); await c.set(id, v); await c.watch(true); c.onchange = (id, v) => ...
 // One request at a time (the device keeps one frame): calls queue. A request not answered in `timeout` ms is sent
-// again, `tries` times in all.
+// again, `tries` times in all. findCompanions asks only FM-1s (web/fm1ports.js: ports with an FM-1's usual names, the
+// emulator's, and the ones that answer the screen reader's HELLO), never other gear.
+import { usualName, pairs, askAll } from "../fm1ports.js";
 
 export const HELLO = 0x60, FILES = 0x61, PARAMS = 0x62;
 export const SERVICES = ["capability query", "files", "parameters", "backup", "mirror", "screen reader",
@@ -284,21 +286,32 @@ export class Companion {
 }
 
 // the ports of an access (Web MIDI's, the emulator's) that answer the capability query -> [{ name, input, output,
-// hello }], each probed in turn (wait ms for an answer)
+// hello }], each probed in turn (wait ms for an answer). Only FM-1s are asked: ports with an FM-1's usual names
+// (fm1ports.js) and the emulator's first, then the others that answer the screen reader's HELLO (every fm1-base
+// firmware does; other gear ignores it). Never a Bluetooth port: an FM-1 paired over Bluetooth shows one beside its
+// USB port, and the companion answers over USB only
+const BLUETOOTH = /bluetooth/i;
+const isEmu = (p) => String(p.input.id || "").startsWith("fm1-emu-");
 export async function findCompanions(access, wait = 400) {
   const found = [];
-  for (const input of access.inputs.values()) {
-    const output = [...access.outputs.values()].find((o) => o.name === input.name) ||
-      [...access.outputs.values()].find((o) => o.name.replace(/\s+\d+$/, "") === input.name.replace(/\s+\d+$/, ""));
-    if (!output || /bluetooth/i.test(input.name)) continue;
-    const c = new Companion(input, output, { timeout: wait, tries: 1 });
+  const probe = async (p) => {
+    try { await p.input.open?.(); await p.output.open?.(); } catch (_) { return; }
+    const c = new Companion(p.input, p.output, { timeout: wait, tries: 1 });
     try {
-      found.push({ name: input.name, input, output, hello: await c.hello() });
+      found.push({ name: p.name, input: p.input, output: p.output, hello: await c.hello() });
     } catch (e) {
       // (not an fm1-base firmware with companion services: left out)
     } finally {
       c.close();
     }
+  };
+  const all = pairs(access).filter((p) => !BLUETOOTH.test(p.name));
+  const known = (p) => usualName(p.name) || isEmu(p);
+  for (const p of all.filter(known)) await probe(p);
+  if (!found.length) {
+    const heard = await askAll(access, { skip: (n) => BLUETOOTH.test(n) ||
+      all.some((p) => p.name === n && known(p)) });
+    for (const h of heard) await probe(h);
   }
   return found;
 }

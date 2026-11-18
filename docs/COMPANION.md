@@ -219,10 +219,20 @@ Measured on the FM-1's build (JieLi toolchain, AC79 reference SDK; tools/build.p
 | parameters (tests/companion_app: with its own table of six and its hooks) | +2,136 B | +64 B of .data / .bss; +4 B a parameter in the pool (APP_PARAM_MAX; 8 is +32 B), the app's labels its own |
 
 
-## Tools
+## The page and the tools
 
-- `tools/fm1_companion.py` (needs mido with python-rtmidi, as the installer): `info`, `ls`, `get NAME FILE`, `put FILE
-  NAME`, `rm NAME`, `params`, `get-param ID`, `set-param ID VALUE`; also on a host simulator (`NAME_host --serve`,
-  `--serve-cmd`).
-- `web/companion/` (the site's `companion/` page): the same against the FM-1 over Web MIDI, or the browser emulator
-  (its `port` part).
+Use the companion page (`web/companion/`, a site's `companion/` with `companion = true`) to keep an FM-1's files on a
+computer. It finds the FM-1 over Web MIDI as the other pages do (web/fm1ports.js: ports with an FM-1's name, then the
+ones that answer the screen reader's HELLO; never other gear, never a Bluetooth port), or the firmware's emulator in
+another tab (its `port` part). It lists the files by kind with their sizes, and downloads, replaces or deletes one.
+"Back up all" saves every readable file in one zip; "Restore from a backup" sends a zip's files back to the FM-1 by
+name, and with "Send only what changed" it first asks the FM-1 for each file's CRC-32 and skips the ones that are the
+same. Files can't be renamed: the app gives their names. The page shows the app's parameters too, when it has them.
+
+The zip is plain (web/companion/zip.js writes it stored, with nothing to load): `files/NAME` for each file, and
+`fm1-companion.json` with the firmware's identity, name and version and the list of files. Any zip tool opens it. The
+page reads a zip back stored or deflated, so a backup zipped again by another tool still restores.
+
+Use `tools/fm1_companion.py` (it needs mido with python-rtmidi, as the installer does) for the same from a script:
+`info`, `ls`, `get NAME FILE`, `put FILE NAME`, `rm NAME`, `params`, `get-param ID`, `set-param ID VALUE`; also on a host
+simulator (`NAME_host --serve`, `--serve-cmd`).

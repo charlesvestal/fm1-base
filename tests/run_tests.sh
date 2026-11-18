@@ -311,5 +311,11 @@ run host-dbgstats sh -c "mkdir -p $OUT/dbgstats && $H/template_host tests/dbgsta
     $PY tests/dbgstats_host_test.py $H/template_host $OUT/dbgstats"
 # the companion services (device/companion.c) in the host simulator, through tools/fm1_companion.py: tests/companion_app
 run companion "$PY" tests/companion_test.py $OUT/companion
+# the companion page's zip files (web/companion/zip.js: "Back up all" and its restore) under node, read by Python's zipfile too
+if command -v node >/dev/null 2>&1; then
+    run companion-zip sh -c "PY=$PY node tests/companion_zip_test.mjs $OUT/companion_zip"
+else
+    echo "  skip companion-zip (no node)"
+fi
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL

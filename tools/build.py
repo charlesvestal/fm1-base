@@ -128,7 +128,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              compiled in. resources_what (and
                              resources_what_ja): what it holds, in the installer's words ("the 909 cymbals")
   companion = true           the companion services over USB (FM1B_COMPANION: device/companion.c, docs/COMPANION.md;
-                             tools/fm1_companion.py): what the firmware is and has, for a generic page or tool
+                             tools/fm1_companion.py): what the firmware is and has, its files and its parameters, for
+                             the site's companion/ page or a tool; the browser emulator gets its part "port" with it
   cpu2 = true                the second core (FM1B_CPU2: device/cpu2.c, plat_cpu2_* in plat.h, on felucca-bsp's
                              chip/fm1_cpu1.*): a worker for a part of the render. A failure of it (a misread, a
                              fault, a late job) restarts the FM-1, the reason in the crash record (Melodee's releases)
@@ -1466,7 +1467,8 @@ def emu_parts():
     else:
         asked = list(CONF.get("emu", []))
         if emu_takes_parts():
-            asked = EMU_DEFAULT + asked
+            asked = EMU_DEFAULT + ["port"] * bool(CONF.get("companion")) + asked   # (the companion page reaches the
+                                                                                  # emulator through its port part)
         else:
             print(f"emu      not on: {' '.join(EMU_DEFAULT)} (the app's own page or worklet, APP_DIR/web/emu, takes no "
                   "parts: its page loads no app_worklet.js, or its worklet calls no fm1App)")
