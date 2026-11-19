@@ -397,7 +397,8 @@ def use_docker():
 
 
 # Both containers run as the user, not root, with no network, no capabilities, no privilege gain, a process limit, a
-# read-only root and a scratch /tmp.
+# read-only root and a scratch /tmp. Rootless podman applies the process limit only where systemd delegates the pids
+# controller to the user; with cgroupfs it leaves it unset, and says nothing.
 DOCKER_HARDEN = ["--platform", "linux/amd64", "--network", "none", "--cap-drop", "ALL",
                  "--security-opt", "no-new-privileges", "--read-only", "--tmpfs", "/tmp"]
 _BUILDER = None
@@ -430,6 +431,19 @@ def ctr():
         return _CTR
 
 
+@functools.cache
+def userns():
+    """--userns=keep-id under rootless podman. There the user is root in the container's user namespace, so --user's
+    uid is one of the user's subuids, which can't write the user's build directory; keep-id maps the user to their
+    own uid. Docker and rootful podman need nothing"""
+    if ctr() != "podman":
+        return []
+    r = subprocess.run(["podman", "info", "--format", "{{.Host.Security.Rootless}}"], capture_output=True, text=True)
+    if r.returncode:
+        raise SystemExit("build: podman info cannot say whether podman is rootless\n" + r.stderr)
+    return ["--userns=keep-id"] if r.stdout.strip() == "true" else []
+
+
 def builder():
     """one long-lived toolchain container per source tree (starting a container per tool call cost most of the build);
     it stops by itself after an hour without a build. Its name hashes how it is started, so a container started with
@@ -438,7 +452,7 @@ def builder():
     with _BUILDER_LOCK:            # the loader and the app build in parallel: start it once
         if _BUILDER:
             return _BUILDER
-        args = [*DOCKER_HARDEN, "--pids-limit", "512", "--user", f"{os.getuid()}:{os.getgid()}",
+        args = [*DOCKER_HARDEN, *userns(), "--pids-limit", "512", "--user", f"{os.getuid()}:{os.getgid()}",
                 "-v", f"{ROOT}:/work", "-v", f"{toolchain()}:/opt/jieli:ro", "-w", "/work",
                 "--entrypoint", "sh", DOCKER_IMAGE, "-c",
                 # the keep-alive, in the image's shell (busybox, in distroless's debug variant); each build touches it.
@@ -475,7 +489,7 @@ def tc(tool, *args, cwd=None):
     if not use_docker():
         cmd = [str(toolchain() / tool), *rel]
     elif isolated():
-        cmd = [ctr(), "run", "--rm", *DOCKER_HARDEN, "--pids-limit", "64",
+        cmd = [ctr(), "run", "--rm", *DOCKER_HARDEN, *userns(), "--pids-limit", "64",
                "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{ROOT}:/work:ro",
                "-v", f"{OUT}:/work/{OUT.relative_to(ROOT)}", "-v", f"{toolchain()}:/opt/jieli:ro",
                "-w", str(work), "--entrypoint", f"/opt/jieli/{tool}", DOCKER_IMAGE, *rel]
