@@ -214,3 +214,13 @@ reason = "glibc (iconv from UCS-4 to IBM1390 / IBM1399 over-read) in the distrol
 id = "DEBIAN-CVE-2026-125709"
 ignoreUntil = 2027-01-15
 reason = "libstdc++ (a file stream's buffer grows on failed writes) in the distroless build image: no fix in any Debian release yet (published 2026-11-10); the compiler's writes go to its own build directory; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-95690"
+ignoreUntil = 2027-01-15
+reason = "openssl (out-of-sequence DTLS handshake fragments each take a full-size reassembly buffer) in the distroless build image: no fix in any Debian release yet (published 2026-11-18); the compiler speaks no DTLS, or any network; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-84786"
+ignoreUntil = 2027-01-15
+reason = "openssl (a DANE TLS client's NULL dereference on unusual TLSA records) in the distroless build image: no fix in any Debian release yet (published 2026-11-18); the compiler makes no TLS connections, or any network; offline, unprivileged compile-only container"
