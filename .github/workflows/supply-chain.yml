@@ -1,15 +1,25 @@
-# The supply-chain checks on every push and pull request, and weekly, so a vulnerability published after a dependency
-# was locked still turns up: osv-scanner (pinned by SHA-256 in tools/toolchain.lock) over uv.lock, the Node line, the
-# pinned build image and eSpeak NG (the emulator page's voice); zizmor (pinned in uv.lock) over these workflows:
-# pinning, permissions, injection, impostor commits. After ESTAMPIE's supply-chain.yml (Drew Robinson), offered under
-# MPL-2.0.
+# The supply-chain checks on every pull request, weekly (so a vulnerability published after a dependency was locked
+# still turns up), and on a push that changes a pin, a scan or a workflow; not on every push, since new Debian findings
+# land most weeks and would turn unrelated pushes red: osv-scanner (pinned by SHA-256 in tools/toolchain.lock) over
+# uv.lock, the Node line, the pinned build image and eSpeak NG (the emulator page's voice); zizmor (pinned in uv.lock)
+# over these workflows: pinning, permissions, injection, impostor commits. After ESTAMPIE's supply-chain.yml (Drew
+# Robinson), offered under MPL-2.0.
 name: supply chain
 
 on:
   push:
+    paths:
+      - pyproject.toml
+      - uv.lock
+      - tools/toolchain.lock
+      - tools/setup_toolchain.sh
+      - tools/osv_scan.sh
+      - tools/osv-*
+      - .github/workflows/**
   pull_request:
   schedule:
     - cron: "17 3 * * 1"
+  workflow_dispatch:
 
 permissions: {}
 
