@@ -338,6 +338,7 @@ static void mr_put(const uint8_t *p, uint32_t n)
     mr_w = w + n;
 }
 static int mr_link(void) { return usb.config ? (int)(midi_links & 0x7FFFFFFFu) : -1; }
+static void mr_pump(void) { usb_mirror_pump(); }
 static int mr_busy(void) { return !usb.config || usb.suspended || backup_streaming(); }
 static int mr_ctl_send(const uint8_t *p, uint32_t n)
 {

@@ -64,6 +64,8 @@
  *   mr_busy()         nothing to send now (the bus suspended, a backup streaming): rects dropped (dirty), no input
  *   mr_ctl_send(p, n) one whole F0..F7 frame into the SysEx ring if it fits now: 0, else -1 (nothing sent)
  *   mr_redraw()       the app draws everything again at its next frame (APP_REDRAW)
+ *   mr_pump()         the frame ring's next packet to the host now, if the last has gone (the 2 kHz poll sends two a
+ *                     millisecond at most; a full ring is drained at the host's own pace for up to MR_PUMP_MS)
  *   mr_test(on)       a test session on (1) / off (0): 1 done, 0 refused (APP_MIRROR_TEST)
  * and plat_ms, plat_buttons, plat_keys, plat_master (plat.h). The flag mirror_on is the includer's (lcd.c). */
 #define MR_REQ 0x50u
@@ -98,6 +100,10 @@ static int mr_link(void);
 static int mr_busy(void);
 static int mr_ctl_send(const uint8_t *p, uint32_t n);
 static void mr_redraw(void);
+static void mr_pump(void);
+#ifndef MR_PUMP_MS
+#define MR_PUMP_MS 4u                                 /* a frame waits this long at most for room (app.h may change it) */
+#endif
 static int mr_test(int on);
 
 static struct {
@@ -227,7 +233,13 @@ static void mr_rows_dirty(uint32_t y, uint32_t h)
 /* the frame in mr_wire (w bytes) to the ring: 1 sent, 0 no room */
 static int mr_send(uint32_t w)
 {
-    if (mr_busy() || mr_free() < w)
+    uint32_t t0;
+    if (mr_busy())
+        return 0;
+    for (t0 = plat_ms(); mr_free() < w && plat_ms() - t0 < MR_PUMP_MS;)
+        mr_pump();                                    /* (no room: the ring sent at the host's pace a moment, before
+                                                       * the frame is dropped) */
+    if (mr_free() < w)
         return 0;
     mr_put(mr_wire, w);
     mr.bytes += w;

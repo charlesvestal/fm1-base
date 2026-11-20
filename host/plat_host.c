@@ -1775,6 +1775,7 @@ static void mr_put(const uint8_t *p, uint32_t n)
     hmr_w += n;
 }
 static int mr_link(void) { return mr_out ? (int)mr_link_n : -1; }
+static void mr_pump(void) {}                           /* (the simulator's link goes at mr_rate) */
 static int mr_busy(void) { return !mr_out; }
 static int mr_ctl_send(const uint8_t *p, uint32_t n)
 {
