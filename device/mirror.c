@@ -289,12 +289,16 @@ static void mr_rows_dirty(uint32_t y, uint32_t h)
 /* the frame in mr_wire (w bytes) to the ring: 1 sent, 0 no room */
 static int mr_send(uint32_t w)
 {
-    uint32_t t0;
     if (mr_busy())
         return 0;
-    for (t0 = plat_ms(); mr_free() < w && plat_ms() - t0 < MR_PUMP_MS;)
-        mr_pump();                                    /* (no room: the ring sent at the host's pace a moment, before
+#if MR_PUMP_MS                                        /* (0: no pump, a frame finding the ring full is dropped at once) */
+    {
+        uint32_t t0;
+        for (t0 = plat_ms(); mr_free() < w && plat_ms() - t0 < MR_PUMP_MS;)
+            mr_pump();                                /* (no room: the ring sent at the host's pace a moment, before
                                                        * the frame is dropped) */
+    }
+#endif
     if (mr_free() < w)
         return 0;
     mr_put(mr_wire, w);
