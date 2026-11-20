@@ -70,6 +70,8 @@ static uint64_t lk_udiv(uint64_t n, uint32_t d, uint32_t *rem)   /* n / d, *rem 
 /* a 64-bit product in a function of its own: on the FM-1 a 32x32->64 multiply with a load in flight beside it now and
  * then leaves a register a bit off (felucca-bsp docs/CPU.md); a helper's multiply is clear of it */
 static __attribute__((noinline)) uint64_t lk_mul(uint64_t a, uint32_t b) { return a * b; }
+/* the same for the clock's signed products (drift_us, hist_slope) */
+static __attribute__((noinline)) int64_t lk_smul(int64_t a, int64_t b) { return a * b; }
 
 /* round(a * m / d) half away from zero, for |a| < 2^63, m and d < 2^32 (a split so a * m never overflows) */
 static int64_t lk_muldiv(int64_t a, uint32_t m, uint32_t d)
@@ -152,7 +154,7 @@ static int64_t sdiv64(int64_t a, int64_t b);
 
 /* Ghost time with the drift between the session's clock and ours (crystals differ by tens of ppm): measured
  * intercepts alone ramp away between measurements and step back at each (40 ppm: 1.2 ms over Link's 30 s) */
-static int64_t drift_us(const struct lk_node *k, int64_t host) { return rdiv((host - k->icpt_t) * k->drift_q30, 30u); }
+static int64_t drift_us(const struct lk_node *k, int64_t host) { return rdiv(lk_smul(host - k->icpt_t, k->drift_q30), 30u); }
 static int64_t ghost(const struct lk_node *k, int64_t host) { return host + k->icpt + drift_us(k, host); }
 static int64_t eff_icpt(const struct lk_node *k, int64_t host) { return k->icpt + drift_us(k, host); }
 
@@ -188,15 +190,15 @@ static int64_t hist_slope(const struct lk_node *k)
         tmax = k->hist_t[i] > tmax ? k->hist_t[i] : tmax;
         st += t;
         si += v;
-        stt += t * t;
-        sti += t * v;
+        stt += lk_smul(t, t);
+        sti += lk_smul(t, v);
     }
     if (n < 3 || tmax - tmin < LK_HIST_SPAN_US)
         return 0;
-    den = n * stt - st * st;
+    den = lk_smul(n, stt) - lk_smul(st, st);
     if (den <= 0)
         return 0;
-    return sdiv64((n * sti - st * si) * ((int64_t)1 << 20), den);  /* us per 1024 us, Q30: (x 2^30 / 2^10) */
+    return sdiv64((lk_smul(n, sti) - lk_smul(st, si)) * ((int64_t)1 << 20), den);  /* us per 1024 us, Q30: (x 2^30 / 2^10) */
 }
 
 /* a / b, b > 0, by shift and subtract (the FM-1's toolchain has no 64-bit division) */
@@ -230,6 +232,8 @@ static void clock_measured(struct lk_node *k, int64_t icpt, int64_t t_mid)
         k->drift_q30 = 0;
         k->settled = 0;
         k->icpt = icpt;
+        k->hist_n = 0;                             /* the points before the step are no part of the new clock's slope */
+        k->hist_at = 0;
     } else {
         if (k->settled < 255u)
             k->settled++;
@@ -508,7 +512,7 @@ static int64_t rdiv(int64_t a, uint32_t s)         /* round(a / 2^s) half away f
 
 /* Link takes the median of all its points (Median.hpp). Over Wi-Fi a point whose ping or pong waited in a queue is off by
  * half that wait, and queues are rarely the same both ways: the points with the fastest round trips are the clean ones.
- * The fastest quarter (at least LK_FAST_MIN) keeps their d2 at the front of v, then their median */
+ * The fastest half (n / LK_FAST_DIV; at least LK_FAST_MIN) keeps their d2 at the front of v, then their median */
 static uint32_t fastest(int64_t *v, int16_t *rtt, uint32_t n)
 {
     uint32_t i, j, keep = n / LK_FAST_DIV;

@@ -468,6 +468,25 @@ int main(void)
     run_ms(6000);
     check(conflicts && u[0].ip.ip != u[1].ip.ip && all_one(2), "one address on two units: drawn again, one session");
 
+    /* the session clock's snap (a step of more than LK_SNAP_US, twice in a row): the drift AND the points it was learned
+     * from are forgotten, else the first measurement after the step is fitted to points from before it (a false drift,
+     * for LK_HIST measurements) */
+    {
+        static struct lk_node k;
+        int64_t t_us;
+        uint32_t i;
+        memset(&k, 0, sizeof k);
+        for (i = 0; i < 10u; i++) {                       /* 40 ppm, a measurement every 10 s */
+            t_us = (int64_t)i * 10000000;
+            clock_measured(&k, 1000 + t_us * 40 / 1000000, t_us);
+        }
+        check(k.drift_q30 > 40000 && k.drift_q30 < 46000, "the session clock learns 40 ppm");
+        t_us = 100000000;
+        clock_measured(&k, 1000 + t_us * 40 / 1000000 + 3000, t_us);              /* a step of 3 ms: set aside .. */
+        clock_measured(&k, 1000 + (t_us + 10000000) * 40 / 1000000 + 3000, t_us + 10000000);    /* .. and the next agrees */
+        check(k.drift_q30 == 0 && k.hist_n == 1u, "a snap forgets the drift and the points before the step");
+    }
+
     printf("%d failed\n", fails);
     return fails;
 }
