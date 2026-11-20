@@ -102,6 +102,7 @@
  *   run MS      MS milliseconds of the device; then what it sent meanwhile, a line "sx HEX" a message, and "ok NOW"
  *   shot FILE, fbdump FILE   the screen as a PNG, as raw pixels
  *   expect WHAT VALUE   as in a script: its line, "  ok ..." or "FAIL ..."
+ *   buttons MASK, key K VEL[,PRESS] (VEL 0: up), turn ROLE N, midi PKT (hex)   the player's hands, the computer's MIDI
  *   quit
  *   listen                       a screen reader starts listening (HELLO, again every 2 s): each SAY is printed
  *                                ("said: ..."; "said!:" cuts off what was being said)
@@ -492,6 +493,9 @@ int plat_midi_in(uint32_t *pkt, int *port)       /* the script's "midi" (BLE-DEV
     *pkt = q & ~0xF0u;
     if (p >= 0 && p < NPORTS)
         midi_counted(p, 0, *pkt);
+#if FM1B_MIRROR
+    mirror_midi_tap(*pkt);                        /* (the events mirror: the viewer's MIDI) */
+#endif
     return 1;
 }
 void plat_midi_send(uint32_t pkt, uint32_t to)
@@ -2567,9 +2571,30 @@ static int serve(const char *dir)
                 }
             }
             printf("ok\n");
-        } else if (!strcmp(cmd, "expect"))
+        } else if (!strcmp(cmd, "expect")) {
             expect(a, b);                            /* (its line: "  ok ..." or "FAIL ...", notes before it) */
-        else
+        } else if (!strcmp(cmd, "buttons")) {        /* the player's hands on the panel (tests of the events mirror) */
+            held_btn = (uint32_t)strtoul(a, 0, 0);
+            printf("ok\n");
+        } else if (!strcmp(cmd, "key")) {            /* key K VEL[,PRESS]: 0 up */
+            uint32_t k = (uint32_t)atoi(a), vel = (uint32_t)atoi(b), press = strchr(b, ',') ? (uint32_t)atoi(strchr(b, ',') + 1) : 0u;
+            if (k < NKEYS) {
+#ifdef APP_KEY_SENSE
+                app_host_key(k, vel, press);
+#endif
+                held_keys = vel ? held_keys | 1u << k : held_keys & ~(1u << k);
+            }
+            printf("ok\n");
+        } else if (!strcmp(cmd, "turn")) {           /* turn ROLE N */
+            int e = atoi(a);
+            if (e >= 0 && e < NE)
+                enc_acc[e] += atoi(b);
+            printf("ok\n");
+        } else if (!strcmp(cmd, "midi")) {           /* midi PKT: a USB-MIDI packet (hex, cable 0) from the computer */
+            min_q[mi_w % MQ] = (uint32_t)strtoul(a, 0, 16) & ~0xF0u;
+            min_port[mi_w++ % MQ] = PORT_USB;
+            printf("ok\n");
+        } else
             printf("fail ?\n");
     }
     return 0;

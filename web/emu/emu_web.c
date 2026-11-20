@@ -247,6 +247,27 @@ __attribute__((used, visibility("default"))) int web_backup_restore(uint32_t n)
 }
 #endif
 
+#ifdef APP_MIRROR_STATE
+/* the events mirror's viewer (web/emu/live.html): the state an FM-1 sent (device/mirror.c MR_STATE), written to
+ * web_state_buf and taken with web_state_set(n); web_state_sig is the signature the FM-1 sends of its own (MR_SIG) */
+static uint32_t wstate[8192u / 4u];
+__attribute__((used, visibility("default"))) uint8_t *web_state_buf(void) { return (uint8_t *)wstate; }
+__attribute__((used, visibility("default"))) uint32_t web_state_max(void) { return sizeof wstate; }
+__attribute__((used, visibility("default"))) void web_state_set(uint32_t n)
+{
+    if (n <= sizeof wstate)
+        app_state_set((const uint8_t *)wstate, n);
+}
+__attribute__((used, visibility("default"))) uint32_t web_state_sig(void)
+{
+    uint8_t *p = (uint8_t *)wstate;
+    uint32_t n = app_state_get(p, sizeof wstate), h = 2166136261u, i;
+    for (i = 0; i < n; i++)
+        h = (h ^ p[i]) * 16777619u;
+    return h;
+}
+#endif
+
 #ifdef APP_WEB
 #include "web.c"                        /* the app's own exports for its page (app.h APP_WEB) */
 #endif

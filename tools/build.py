@@ -1657,6 +1657,11 @@ def build_web():
     (emu / "index.html").write_text(page)
     shutil.copy(web["worklet.js"], emu / "worklet.js")
     emu_parts_out(emu, parts)
+    if re.search(r"^\s*#define\s+APP_MIRROR_STATE\b", (APP / "app.h").read_text(), re.M):
+        # the live mirror (device/mirror.c's events mode): this build of the app, fed by an FM-1's events
+        live = (SRC / "web" / "emu" / "live.html").read_text().replace("{{NAME}}", CONF.get("name", NAME))
+        (emu / "live.html").write_text(live)
+        shutil.copy(SRC / "web" / "fm1ports.js", emu / "fm1ports.js")
     # next to fm1-base, or next to the app's repository (fm1-base a submodule in it)
     found = [p / "fm1-reader" / "web" for base in (SRC.parent, APP.parent.parent) for p in (base, base / "fm1-parent")
              if (p / "fm1-reader" / "web").is_dir()]

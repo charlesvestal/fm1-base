@@ -389,6 +389,9 @@ int plat_midi_in(uint32_t *pkt, int *port)
     if (port)
         *port = from;
     midi_counted(from, 0, *pkt);
+#if FM1B_MIRROR
+    mirror_midi_tap(*pkt);                        /* (the events mirror: the viewer's MIDI) */
+#endif
     return 1;
 }
 void plat_midi_send(uint32_t pkt, uint32_t to)    /* the main loop's and the tick's rings are shared */

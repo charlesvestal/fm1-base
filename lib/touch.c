@@ -71,6 +71,9 @@ int touch_take(touch_ev_t *e)
         e->type = s.type == EV_ON ? TOUCH_PRESS : TOUCH_RELEASE;
         e->key = s.key;
         e->vel = s.vel ? s.vel : 1u;
+#if FM1B_MIRROR
+        mirror_touch_tap(e->key, e->vel, e->type == TOUCH_PRESS);   /* (the events mirror: the viewer's keys) */
+#endif
         return 1;
     }
     return 0;
