@@ -1,0 +1,10 @@
+# Known vulnerabilities accepted in eSpeak NG, the screen reader's voice on the emulator page (fm1-reader's web/espeak/,
+# built from the espeak-ng commit its README names; tools/build.py --web copies it), for tools/osv_scan.sh espeak. One
+# a line: the OSV id, the date the acceptance expires (after it the scan fails again), then the reason. All are
+# OSS-Fuzz crashes found by feeding eSpeak malformed text. Exposure: WebAssembly in a browser tab, speaking only the
+# emulator's own screen text (the firmware's words, never a visitor's input); nothing of it is in a firmware. Moving
+# fm1-reader to an eSpeak with the fixes is the way out.
+OSV-2021-1024  2027-01-15  global-buffer-overflow in GetSsmlAttribute (SSML); fixed upstream in f0fb11a; we never pass SSML, sandboxed wasm
+OSV-2021-1041  2027-01-15  global-buffer-overflow in SetUpPhonemeTable; no upstream fix; fixed voice and text, sandboxed wasm
+OSV-2023-467   2027-01-15  stack-buffer-overflow in SetPitchGradient; no upstream fix; fixed voice and text, sandboxed wasm
+OSV-2024-1203  2027-01-15  global-buffer-overflow in AnnouncePunctuation; fixed upstream in 688cb60; the firmware's own text, sandboxed wasm

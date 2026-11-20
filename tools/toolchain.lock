@@ -28,6 +28,7 @@ osv-scanner    linux-x64     2.7.0                          160c6253e2922e9e0a6a
 # beside this repository, or from this pinned one.
 fm1-reader     git           main                           2f49d91c142b1304fc5654496b35d40607d8511e                          https://github.com/charlesvestal/fm1-reader.git
 # The container the JieLi tools run in on macOS / non-x86 hosts (tools/build.py): distroless's cc image, which has what
-# the tools need (glibc, libstdc++, libgcc) and nothing else; sha256 is the image index digest (docker buildx
-# imagetools inspect). tools/osv_scan.sh build-image says when the tag has moved.
-build-image    linux-amd64   cc-debian13:nonroot            cc66d222f0a7ec996b78a99fe76a969bc80b539a5016ad866c14d1949bc6d0ab  gcr.io/distroless/cc-debian13:nonroot
+# the tools need (glibc, libstdc++, libgcc), in its debug variant for busybox's shell, the long-lived container's
+# keep-alive; no package manager. The same distroless build as cc-debian13:nonroot cc66d222. sha256 is the image index
+# digest (the registry's Docker-Content-Digest). tools/osv_scan.sh build-image says when the tag has moved.
+build-image    linux-amd64   cc-debian13:debug-nonroot      c69d16acb50ae6ee26adfb0645467b507753c0eb91c389afad87914cd2ecf6de  gcr.io/distroless/cc-debian13:debug-nonroot

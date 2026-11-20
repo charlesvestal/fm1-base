@@ -277,8 +277,11 @@ repository (APP_DIR named app) also has the repository's firmware.json written, 
 
 The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it, or tools/setup_toolchain.sh puts the pinned
 one in .toolchain/ (tools/toolchain.lock), where this looks when JIELI_TOOLCHAIN is unset; on macOS (or with
-JIELI_DOCKER=1) each tool runs in a linux/amd64 container. The package's three SDK files come from $AC79_SDK or
-from .toolchain/ac79-sdk (the same script).
+JIELI_DOCKER=1) the tools run in a linux/amd64 container (Docker or podman, the first that answers): the image
+pinned by digest in the lock (distroless's cc, JIELI_DOCKER_IMAGE overrides it), as the user, with no network and no
+capabilities. One long-lived container serves every build of the tree; FM1B_ISOLATE=1 gives each tool a run of its
+own instead, with the tree read-only (tc). The package's three SDK files come from $AC79_SDK or from
+.toolchain/ac79-sdk (the same script).
 """
 import argparse
 import functools
@@ -307,7 +310,22 @@ APP_XIP = 0x02000120                # app.bin offset 0 in the XIP map; the SPL j
 APP_SLOT = fm1pkg_make.APP_SLOT
 LOADER_LOAD = 0x01C0A800
 LOADER_NAME = b"usb_hid_ota.bin"    # the file name the SPL looks for
-DOCKER_IMAGE = os.environ.get("JIELI_DOCKER_IMAGE", "debian:bookworm-slim")
+def locked_image():
+    """the container the JieLi tools run in, pinned by digest in tools/toolchain.lock beside every other pin: distroless's
+    cc image, which has what the tools need (glibc, libstdc++, libgcc), busybox for the long-lived container's
+    keep-alive (its debug variant), and no package manager.
+    JIELI_DOCKER_IMAGE overrides it; a checkout without the lock line falls back to Debian's tag, as before"""
+    try:
+        for line in (SRC / "tools" / "toolchain.lock").read_text().splitlines():
+            f = line.split()
+            if f and f[0] == "build-image":
+                return f"{f[4]}@sha256:{f[3]}"
+    except OSError:
+        pass
+    return "debian:bookworm-slim"
+
+
+DOCKER_IMAGE = os.environ.get("JIELI_DOCKER_IMAGE") or locked_image()
 CFLAGS = ["-Os", "-ffunction-sections", "-fno-builtin", "-Wall", "-Wno-unused-function"]
 # the AC79's single-precision FPU (the SDK's own flags); no fused multiply-add, so the host
 # build (-ffp-contract=off) computes the same samples
@@ -381,48 +399,106 @@ def use_docker():
     return os.environ.get("JIELI_DOCKER", "0" if native else "1") == "1"
 
 
+# Both containers run as the user, not root, with no network, no capabilities, no privilege gain, a process limit, a
+# read-only root and a scratch /tmp. Rootless podman applies the process limit only where systemd delegates the pids
+# controller to the user; with cgroupfs it leaves it unset, and says nothing.
+DOCKER_HARDEN = ["--platform", "linux/amd64", "--network", "none", "--cap-drop", "ALL",
+                 "--security-opt", "no-new-privileges", "--read-only", "--tmpfs", "/tmp"]
 _BUILDER = None
 _BUILDER_LOCK = __import__("threading").Lock()
+_CTR = None
+_CTR_LOCK = __import__("threading").Lock()
+
+
+def ctr():
+    """the container tool: Docker or podman, the first whose info answers (asked once a build), so podman needs no
+    docker alias and a docker installed with no daemon running doesn't hide a working podman. With neither, the
+    build stops with what each said (no daemon, no permission on its socket)"""
+    global _CTR
+    with _CTR_LOCK:
+        if not _CTR:
+            said = []
+            for c in ("docker", "podman"):
+                try:
+                    r = subprocess.run([c, "info"], capture_output=True, text=True)
+                except OSError:             # not installed, which is expected of one of the two: try the other
+                    said.append(f"  {c}: not installed")
+                    continue
+                if not r.returncode:
+                    _CTR = c
+                    break
+                said.append(f"  {c} info: " + (r.stderr.strip().splitlines() or ["failed"])[-1])
+            else:
+                raise SystemExit("build: the JieLi tools need a container here, and neither Docker nor podman answers\n"
+                                 + "\n".join(said))
+        return _CTR
+
+
+@functools.cache
+def userns():
+    """--userns=keep-id under rootless podman. There the user is root in the container's user namespace, so --user's
+    uid is one of the user's subuids, which can't write the user's build directory; keep-id maps the user to their
+    own uid. Docker and rootful podman need nothing"""
+    if ctr() != "podman":
+        return []
+    r = subprocess.run(["podman", "info", "--format", "{{.Host.Security.Rootless}}"], capture_output=True, text=True)
+    if r.returncode:
+        raise SystemExit("build: podman info cannot say whether podman is rootless\n" + r.stderr)
+    return ["--userns=keep-id"] if r.stdout.strip() == "true" else []
 
 
 def builder():
-    """one long-lived toolchain container per source tree (starting a container per tool call cost
-    most of the build); it stops by itself after an hour without a build"""
+    """one long-lived toolchain container per source tree (starting a container per tool call cost most of the build);
+    it stops by itself after an hour without a build. Its name hashes how it is started, so a container started with
+    other flags, another image or another toolchain is never reused"""
     global _BUILDER
     with _BUILDER_LOCK:            # the loader and the app build in parallel: start it once
-        return _builder_start()
-
-
-def _builder_start():
-    global _BUILDER
-    if _BUILDER:
-        return _BUILDER
-    name = "jieli-" + hashlib.sha1(str(ROOT).encode()).hexdigest()[:10]
-    st = subprocess.run(["docker", "inspect", "-f", "{{.State.Running}}", name], capture_output=True, text=True)
-    if st.stdout.strip() != "true":
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-        r = subprocess.run(["docker", "run", "-d", "--rm", "--name", name, "--platform", "linux/amd64",
-                            "-v", f"{ROOT}:/work", "-v", f"{toolchain()}:/opt/jieli:ro", "-w", "/work",
-                            DOCKER_IMAGE, "sh", "-c", "sleep 3600"], capture_output=True, text=True)
+        if _BUILDER:
+            return _BUILDER
+        args = [*DOCKER_HARDEN, *userns(), "--pids-limit", "512", "--user", f"{os.getuid()}:{os.getgid()}",
+                "-v", f"{ROOT}:/work", "-v", f"{toolchain()}:/opt/jieli:ro", "-w", "/work",
+                "--entrypoint", "sh", DOCKER_IMAGE, "-c",
+                # the keep-alive, in the image's shell (busybox, in distroless's debug variant); each build touches it.
+                "touch /tmp/alive; while [ $(( $(date +%s) - $(stat -c %Y /tmp/alive) )) -lt 3600 ]; do sleep 30; done"]
+        name = "jieli-" + hashlib.sha1(repr(args).encode()).hexdigest()[:10]
+        st = subprocess.run([ctr(), "inspect", "-f", "{{.State.Running}}", name], capture_output=True, text=True)
+        if st.stdout.strip() == "true":
+            r = subprocess.run([ctr(), "exec", name, "touch", "/tmp/alive"], capture_output=True, text=True)
+        else:
+            subprocess.run([ctr(), "rm", "-f", name], capture_output=True)
+            r = subprocess.run([ctr(), "run", "-d", "--rm", "--name", name, *args], capture_output=True, text=True)
         if r.returncode:
             sys.stderr.write(r.stderr)
             raise SystemExit("build: cannot start the toolchain container")
-    else:                           # an hour from now again
-        subprocess.run(["docker", "exec", "-d", name, "sh", "-c", "sleep 3600 && kill 1"], capture_output=True)
-    _BUILDER = name
-    return name
+        _BUILDER = name
+        return name
 
 
-def tc(tool, *args):
-    """run a toolchain binary (pi32v2/bin/..., common/bin/...) with cwd ROOT; paths relative to ROOT"""
-    rel = [str(Path(a).resolve().relative_to(ROOT)) if isinstance(a, Path) else a for a in args]
+def isolated():
+    """FM1B_ISOLATE=1: a container of its own for each tool, with the tree read-only and only the build directory
+    writable, in place of the long-lived container (which takes the tree read-write). It costs a container start a
+    tool: about twice the build's time"""
+    return os.environ.get("FM1B_ISOLATE", "0") == "1"
+
+
+def tc(tool, *args, cwd=None):
+    """run a toolchain binary (pi32v2/bin/..., common/bin/...) with cwd ROOT (or cwd, under ROOT); paths relative to it.
+    In a container: the long-lived one (builder), or with FM1B_ISOLATE=1 a run of its own (isolated)"""
+    cwd = (cwd or ROOT).resolve()
+    rel = [os.path.relpath(Path(a).resolve(), cwd) if isinstance(a, Path) else a for a in args]   # (may go up: the trim's archive)
     if tool == "cc":                # the toolchain's cc wrapper needs python3; call clang directly
         tool, rel = "pi32v2/bin/clang", ["-target", "pi32v2", *rel]
-    if use_docker():
-        cmd = ["docker", "exec", "-w", "/work", builder(), f"/opt/jieli/{tool}", *rel]
-    else:
+    work = Path("/work") / cwd.relative_to(ROOT)
+    if not use_docker():
         cmd = [str(toolchain() / tool), *rel]
-    r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+    elif isolated():
+        cmd = [ctr(), "run", "--rm", *DOCKER_HARDEN, *userns(), "--pids-limit", "64",
+               "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{ROOT}:/work:ro",
+               "-v", f"{OUT}:/work/{OUT.relative_to(ROOT)}", "-v", f"{toolchain()}:/opt/jieli:ro",
+               "-w", str(work), "--entrypoint", f"/opt/jieli/{tool}", DOCKER_IMAGE, *rel]
+    else:
+        cmd = [ctr(), "exec", "-w", str(work), builder(), f"/opt/jieli/{tool}", *rel]
+    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if r.returncode:
         sys.stderr.write(r.stdout + r.stderr)
         raise SystemExit(f"build: {tool} failed")
@@ -446,6 +522,9 @@ def generate():
         env = {**os.environ, "FM1_FONT_FULL": " ".join(CONF.get("font_full", [])),
                "FM1_FONT_TRIM": "1" if CONF.get("font_trim") else "",
                "FM1_FONT_PACK": "1" if CONF.get("font_pack") else ""}
+        if platform.system() == "Darwin":         # Pillow's raqm loads FriBiDi at run time, and uv's own Pythons
+            env["DYLD_FALLBACK_LIBRARY_PATH"] = ":".join(   # don't look in Homebrew's lib (Homebrew's Python does)
+                filter(None, [env.get("DYLD_FALLBACK_LIBRARY_PATH"), "/opt/homebrew/lib", "/usr/local/lib", "/usr/lib"]))
         r = subprocess.run([sys.executable, *map(str, c)], capture_output=True, text=True, env=env)
         sys.stdout.write(r.stdout)
         if r.returncode:
@@ -666,8 +745,7 @@ def ble_trim(dst):
         w = trim / member.replace(".c.o", "")
         w.mkdir()
         (w / "stub.c").write_text(src + "\n")
-        tc("common/bin/llvm-ar", "x", trim / lib, member)         # (into ROOT, the tools' cwd: moved below)
-        shutil.move(ROOT / member, w / member)
+        tc("common/bin/llvm-ar", "x", trim / lib, member, cwd=w)   # (into w: the tree is read-only in the container)
         tc("cc", "-mcpu=r3", "-mfprev1", "-Oz", "-flto", "-c", w / "stub.c", "-o", w / "stub.bc")
         tc("common/bin/llvm-link", w / member, f"-override={(w / 'stub.bc').resolve().relative_to(ROOT)}",
            "-o", w / "out.bc")
