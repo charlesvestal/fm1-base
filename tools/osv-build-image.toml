@@ -224,3 +224,8 @@ reason = "openssl (out-of-sequence DTLS handshake fragments each take a full-siz
 id = "DEBIAN-CVE-2026-84786"
 ignoreUntil = 2027-01-15
 reason = "openssl (a DANE TLS client's NULL dereference on unusual TLSA records) in the distroless build image: no fix in any Debian release yet (published 2026-11-18); the compiler makes no TLS connections, or any network; offline, unprivileged compile-only container"
+
+[[IgnoredVulns]]
+id = "DEBIAN-CVE-2026-126765"
+ignoreUntil = 2027-01-15
+reason = "glibc (glob frees a name twice when an allocation fails as it prepends the directory) in the distroless build image: no fix in any Debian release yet (published 2026-11-19); the build's globbing is Python's, not glibc's, and runs far from any memory limit; offline, unprivileged compile-only container"
