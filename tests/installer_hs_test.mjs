@@ -59,6 +59,26 @@ for (const [what, answer, want, asksFull, jedec] of cases) {
   check("felucca-bsp#29's bytes after the text: the text up to its first zero", dev && dev.id.text === "FM-1_6010000" &&
         dev.id.model === "FM-1" && dev.id.version === 6010000);
 }
+// back from an update, a first boot slow to answer 01 (a store set up after another firmware's): FM-1_690 at first,
+// then its whole identity once it answers; settle asks again till it does
+{
+  let fulls = 0;
+  const late = (q) => same(q, HS_QUERY) ? "FM-1_690" : same(q, HS_FULL) && ++fulls > 2 ? "FM-1_69000902" : null;
+  const a = access(late, true);
+  const u = new Updater(a);
+  const dev = await u.find();
+  check("a slow first boot: FM-1_690 at first", dev && dev.id.text === "FM-1_690");
+  await u.settle(dev, "FM-1_69000902", 8000);
+  check("  settle: its whole identity, FM-1_69000902", dev.id.text === "FM-1_69000902");
+}
+{
+  const a = access(before("FM-1_6900"), false);
+  const u = new Updater(a);
+  const dev = await u.find();
+  const t0 = Date.now();
+  await u.settle(dev, "FM-1_6900", 3000);
+  check("settle: an identity already whole, not asked again", dev.id.text === "FM-1_6900" && Date.now() - t0 < 100);
+}
 // the bytes of the query with 01, as chip/ota.c checks them (ota_take: header, length, checksum)
 check("HS_FULL is 00 59 11, length 1, body 01, checksum FE",
       same(HS_FULL, [0xF0, ...pack7([0, 0x59, 0x11, 1, 0, 0, 1, 0xFE]), 0xF7]) &&

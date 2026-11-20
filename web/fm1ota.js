@@ -182,6 +182,10 @@ async function ask(link, query, ms) {
 
 // the identity: HS_QUERY, then HS_FULL when the answer is NAME_ and three digits (a firmware on chip/ota.c tells its
 // whole identity so); the plain answer when nothing answers HS_FULL (M-VAVE's, an older build)
+// the identity a device answered is the package's: the whole of it, or NAME_ and three digits that start it (a firmware
+// that never answered HS_FULL; fm1_install.py's check, the same)
+const sameId = (text, product) => text === product || (/^[^_]+_\d{3}$/.test(text) && product.startsWith(text));
+
 async function handshake(link, tries = 3) {
   link.drain();
   for (let t = 0; t < tries; t++) {
@@ -345,6 +349,21 @@ export class Updater {
     return null;
   }
 
+  // a device back from an update that answered only NAME_ and three digits, the start of the identity it should have
+  // (product): asked again for its whole identity, for up to ms. Its first boot can be slow to answer HS_FULL (a
+  // firmware setting up its store after another firmware's: flash erased with the interrupts off), and handshake waits
+  // only 600 ms for it. The link closed after.
+  async settle(back, product, ms = 10000) {
+    const end = Date.now() + ms;
+    while (back.id.text !== product && product.startsWith(back.id.text) && Date.now() < end) {
+      await sleep(500);
+      const full = await ask(back.link, HS_FULL, 1500);
+      if (full === false) break;
+      if (full && full.model === back.id.model && full.text.startsWith(back.id.text)) back.id = full;
+    }
+    back.link.close();
+  }
+
   async waitFor(filter, ms) {
     const end = Date.now() + ms;
     while (Date.now() < end) {
@@ -431,8 +450,8 @@ export class Updater {
     await sleep(3000);
     const back = await this.waitFor((id) => !IS_OTA(id), 40000);
     if (!back) throw fail("noreturn", "the device did not come back: power-cycle it");
-    back.link.close();
-    if (back.id.text !== product) throw fail("mismatch", `installed, but the device reports ${back.id.text}`, back.id.text);
+    await this.settle(back, product);
+    if (!sameId(back.id.text, product)) throw fail("mismatch", `installed, but the device reports ${back.id.text}`, back.id.text);
     step("done", back.id.text);
     return back.id.text;
   }
@@ -559,8 +578,8 @@ export class Updater {
         await sleep(3000);
         const back = await this.waitFor((id) => !IS_OTA(id), 40000);
         if (!back) throw fail("noreturn", "the device did not come back: power-cycle it");
-        back.link.close();
-        if (back.id.text !== product) throw fail("mismatch", `written, but the device reports ${back.id.text}`, back.id.text);
+        await this.settle(back, product);
+        if (!sameId(back.id.text, product)) throw fail("mismatch", `written, but the device reports ${back.id.text}`, back.id.text);
         step("done", back.id.text);
       }
       return true;
