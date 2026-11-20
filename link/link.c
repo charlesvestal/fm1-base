@@ -210,20 +210,38 @@ static void send_ping(struct lk_node *k, uint32_t ip, uint16_t port, int64_t ht,
         k->cfg.send(k->cfg.ctx, ip, port, b, w.n);
 }
 
-static struct lk_peer *session_peer(struct lk_node *k, const uint8_t *sess)   /* the founder first */
+/* The member to measure with: the one heard last, among those a measurement has not failed with. Link's library takes
+ * the session's first peer, which on a LAN is as good as any; on the air (MODE JANK) a unit at the edge of range is
+ * heard now and then (one ALIVE in several lands) while its pings and pongs do not, so the one heard last is the one
+ * most likely to answer. Any member answers for the session's ghost time, so the choice changes nothing on the wire. */
+static struct lk_peer *session_peer(struct lk_node *k, const uint8_t *sess)
 {
     struct lk_peer *f = 0;
     uint32_t i;
     for (i = 0; i < LK_PEERS; i++) {
         struct lk_peer *p = &k->peer[i];
-        if (!p->used || !id_eq(p->sess, sess) || !p->mip)
+        if (!p->used || !id_eq(p->sess, sess) || !p->mip || p->noping)
             continue;
-        if (id_eq(p->id, sess))
-            return p;
-        if (!f)
+        if (!f || p->dead > f->dead)
             f = p;
     }
     return f;
+}
+
+static void meas_failed_with(struct lk_node *k)   /* the member just measured with answers no more: the others first */
+{
+    uint32_t i;
+    for (i = 0; i < LK_PEERS; i++)
+        if (k->peer[i].used && k->peer[i].mip == k->meas.ip && k->peer[i].mport == k->meas.port)
+            k->peer[i].noping = 1;
+}
+
+static void session_retry_all(struct lk_node *k, const uint8_t *sess)   /* every member failed: all of them again next time */
+{
+    uint32_t i;
+    for (i = 0; i < LK_PEERS; i++)
+        if (k->peer[i].used && id_eq(k->peer[i].sess, sess))
+            k->peer[i].noping = 0;
 }
 
 static int meas_start(struct lk_node *k, const uint8_t *sess, int64_t now)
@@ -286,11 +304,19 @@ static void meas_done(struct lk_node *k, int ok, int64_t icpt, int64_t now)
 {
     struct lk_other *o;
     k->meas.on = 0;
+    if (!ok)
+        meas_failed_with(k);
     if (id_eq(k->meas.sess, k->sess)) {
         if (ok && icpt != k->icpt) {
             k->icpt = icpt;
             changed(k, now);
         }
+        if (!ok && session_peer(k, k->sess)) {
+            k->remeasure = now;                    /* another member of our session, right away */
+            return;
+        }
+        if (!ok)
+            session_retry_all(k, k->sess);
         k->remeasure = now + LK_REMEASURE_US;
         return;
     }
@@ -298,6 +324,10 @@ static void meas_done(struct lk_node *k, int ok, int64_t icpt, int64_t now)
     if (!o)
         return;
     if (!ok) {
+        if (session_peer(k, k->meas.sess)) {
+            o->measured = 0;                       /* another member of that session (lk_poll starts it) */
+            return;
+        }
         o->used = 0;
         forget_session(k, k->meas.sess);
         return;
@@ -493,6 +523,7 @@ static void peer_state(struct lk_node *k, const uint8_t *id, uint32_t ttl, const
     s = peer_slot(k, id);
     if (!s)
         return;
+    np.noping = s->used && id_eq(s->id, id) && id_eq(s->sess, np.sess) ? s->noping : 0;   /* (kept while it is heard: a new session of its own starts afresh) */
     *s = np;
     saw_session(k, s, now);
 }
