@@ -12,19 +12,20 @@
 #include <stdint.h>
 
 #define WN_SLOTS 4u
+#define WN_GROUPS 9u                     /* JANK groups 1..WN_GROUPS */
 #define WN_SSID_MAX 32u
 #define WN_MARK 0xA7u                    /* a valid store */
 #define WN_VER 2u                        /* 1: the saved networks only (a record of 268 octets, read as the first part of this) */
-#define WN_STORE_SIZE 336u
-#define WN_AP_GEN_LEN 12u                /* the password made for an FM-1 (wifi_own_ap.c wa_gen_pass): 12 of 31 characters */               /* header 4 + 4 entries x 66 + the access point's 68 */
-enum { WN_MODE_OFF = 0, WN_MODE_AUTO = 1, WN_MODE_MAN = 2, WN_MODE_AP = 3, WN_MODE_AP_MAN = 4, WN_MODE_JAM = 5, WN_MODE_JAM_HOST = 6 };   /* JAM_HOST: AP AUTO under the automatic name FM1-xxxx and its default password only (never a typed one: so JAM finds and joins it), Link kept on (the user, 2026-11-03) */   /* as the Bluetooth pages: OFF the radio stays off;
+#define WN_STORE_SIZE 336u               /* header 4 + 4 entries x 66 + the access point's 68 */
+#define WN_AP_GEN_LEN 12u                /* the password made for an FM-1 (wifi_own_ap.c wa_gen_pass): 12 of 31 characters */
+enum { WN_MODE_OFF = 0, WN_MODE_AUTO = 1, WN_MODE_MAN = 2, WN_MODE_AP = 3, WN_MODE_AP_MAN = 4, WN_MODE_JANK = 5, WN_MODE_JANK_HOST = 6, WN_MODE_JANK_AUTO = 7 };   /* JANK_AUTO: MODE JANK on the air (wifi_jank.h), the stored mode; JANK and JANK_HOST (records from before 2026-11-04) read as it */   /* as the Bluetooth pages: OFF the radio stays off;
                                                                   * MAN it joins when told (the page's SAVE); AUTO the best saved network
                                                                   * heard, at start-up and when none is joined; AP the FM-1 is the
                                                                   * access point (wifi/wifi_apd.c), at power-on and
                                                                   * kept up ("AP AUTO"); AP_MAN the same, but only started
                                                                   * by SAVE on the page (or the web editor) and off at power-on;
-                                                                  * JAM is AUTO that also joins an Optimist access point (its name FM1-xxxx, its
-                                                                  * password wifi_ap_default_key's) when no saved network is heard, and keeps Link on */
+                                                                  * JANK_AUTO the FM-1s of a group on one channel, no access point
+                                                                  * (wifi_jank.h) */
 
 struct wn_net {                          /* 66 octets */
     uint8_t used, ssid_len;
@@ -37,7 +38,7 @@ struct wn_apcfg {                        /* MODE AP's network: the name, the cha
                                           * is made at each start); 0: neither (one is made when it is needed) */
     uint8_t ch;                          /* 1..13; 0: the default (6) */
     uint8_t ssid_len;                    /* 0: the automatic name (FM1- and the last four digits of the radio's address) */
-    uint8_t rsv;
+    uint8_t grp;                         /* the JANK group, 1..9 (0: 1): its channel and BSSID (wifi_jank.h) */
     uint8_t ssid[WN_SSID_MAX];
     uint8_t pmk[32];
 };

@@ -985,6 +985,21 @@ static int wifi_frame(const uint8_t *p, uint32_t n)
         wifi_cat(q, plat_wifi_why(), e);
         wifi_line(b);
 #if FM1B_WIFI_OWN
+#if FM1B_WIFI_JANK
+        {   /* MODE JANK: its air, then each unit heard: frames received from it, its signal, how long ago */
+            static const char *const JW[2][4] = {{"jank ch ", " tx ", " err ", " kept "}, {"peer ", " data ", " -dbm ", " ago "}};
+            uint32_t v[4];
+            int k;
+            for (k = 0; plat_wifi_jank_stat(k, v); k++) {
+                q = b;
+                for (i = 0; i < 4; i++) {
+                    q = wifi_cat(q, JW[k != 0][i], e);
+                    q = wifi_num(q, (int32_t)v[i], e);
+                }
+                wifi_line(b);
+            }
+        }
+#endif
         {   /* joined: how well the link works (plat_wifi_quality), a second line: the first ask starts the measuring, so
              * a status 10 s later has the whole window ("10s") */
             struct plat_wifi_quality wq;

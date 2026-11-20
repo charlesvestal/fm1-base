@@ -47,13 +47,14 @@ int wn_load(struct wn_store *s, const uint8_t raw[WN_STORE_SIZE])
     if (t.mark != WN_MARK || t.ver < 1u || t.ver > WN_VER)
         return 0;
     s->rsv = t.rsv & 0x80u ? t.rsv : 0u;               /* (the spare byte: the Wi-Fi tuning's switches, wifi_tune.h WT_KEPT) */
-    s->mode = t.mode <= WN_MODE_MAN || ((t.mode == WN_MODE_AP || t.mode == WN_MODE_AP_MAN || t.mode == WN_MODE_JAM || t.mode == WN_MODE_JAM_HOST) && t.ver >= 2u) ? t.mode : WN_MODE_OFF;
+    s->mode = t.mode <= WN_MODE_MAN || ((t.mode == WN_MODE_AP || t.mode == WN_MODE_AP_MAN || t.mode == WN_MODE_JANK || t.mode == WN_MODE_JANK_HOST || t.mode == WN_MODE_JANK_AUTO) && t.ver >= 2u) ? t.mode : WN_MODE_OFF;
+    if (s->mode == WN_MODE_JANK || s->mode == WN_MODE_JANK_HOST)
+        s->mode = WN_MODE_JANK_AUTO;                     /* (one JANK mode now: the two it came from, JOIN and HOST, are what it does by itself) */
     for (i = 0; i < WN_SLOTS; i++)
         if (wn_entry_ok(&t.n[i]))
             s->n[j++] = t.n[i];                         /* (damaged ones dropped, the rest closed up in order) */
     if (t.ver >= 2u && (t.ap.set == 1u || (t.ap.set == 2u && wn_gen_ok(t.ap.pmk))) && t.ap.ssid_len <= WN_SSID_MAX) {
         s->ap = t.ap;                                   /* (a name longer than 32 or a flag that is not 1 or 2: no key kept) */
-        s->ap.rsv = 0;
         if (s->ap.ch > 13u)
             s->ap.ch = 0;
     } else if (t.ver >= 2u && t.ap.ch >= 1u && t.ap.ch <= 13u && t.ap.ssid_len <= WN_SSID_MAX) {
@@ -61,6 +62,7 @@ int wn_load(struct wn_store *s, const uint8_t raw[WN_STORE_SIZE])
         s->ap.ssid_len = t.ap.ssid_len;
         memcpy(s->ap.ssid, t.ap.ssid, t.ap.ssid_len);
     }
+    s->ap.grp = t.ver >= 2u && t.ap.grp >= 1u && t.ap.grp <= WN_GROUPS ? t.ap.grp : 0u;                         /* (the JANK group, kept whatever else the access point's record holds) */
     return 1;
 }
 
@@ -140,6 +142,7 @@ int wn_ap_put(struct wn_store *s, const uint8_t *ssid, uint32_t len, uint32_t ch
     if (len)
         memcpy(t.ssid, ssid, len);
     memcpy(t.pmk, pmk, 32);
+    t.grp = s->ap.grp;
     s->ap = t;
     return 0;
 }

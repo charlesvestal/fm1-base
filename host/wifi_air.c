@@ -13,13 +13,15 @@
  * PASS"): it waits for the FM-1's beacon, authenticates, associates, does the 4-way handshake as the station
  * (wifi/wifi_sta.c), asks for an address (DHCP, wifi_ip.c as a station) and, with Link, is a Link peer on that address
  * ("client_peer BPM"); deauthenticated (an access point restarted), it joins again at the next beacon.
+ * In MODE JANK another FM-1 of a group instead ("jank_peer BPM [GROUP]": on that group's channel, ad-hoc frames, its own
+ * 169.254 address, a Link peer on it; "jank_peer off"; "wifi group N" the FM-1's own GROUP).
  * The FM-1 hears the network only on its channel. Nothing is encrypted (the MAC's CCMP is the hardware's): a frame with
  * the Protected bit goes by in the clear. Part of host/plat_host.c, after device/wifi_own.c. */
 #define AIR_Q 32u
 #define AIR_FRAME 640u
 #define AIR_IP 0xC0A83201u                       /* 192.168.50.1: the access point, its DHCP server, the Link peer */
 static struct {
-    uint8_t on, ch, keyed;
+    uint8_t on, ch, keyed, jank;                  /* jank: the other FM-1 of a group, no access point */
     uint8_t name[WIFI_STA_SSID_MAX], name_len;
     uint8_t bssid[6];
     struct wifi_ap ap, hs;                        /* the network; the FM-1's handshake */
@@ -85,13 +87,13 @@ static void air_lk_rx(void *ctx, int64_t now, uint32_t src_ip, uint16_t src_port
 static void air_peer(int32_t mpb)                /* the peer on: a session of its own at that tempo */
 {
     struct lk_cfg c;
-    c.ip = AIR_IP;
+    c.ip = air.ip.ip;
     c.port = LK_MCAST_PORT;
     c.send = air_lk_send;
     c.ctx = 0;
     lk_init(&air_lk, &c, 0xA17u, mpb);
     lk_enable(&air_lk, 1, own_us());
-    lk_set_addr(&air_lk, AIR_IP, LK_MCAST_PORT);
+    lk_set_addr(&air_lk, air.ip.ip, LK_MCAST_PORT);
     air_lk_on = 1;
 }
 #endif
@@ -126,14 +128,7 @@ static void air_net(const char *name, const char *pass, uint32_t ch)   /* the ac
     air.name_len = (uint8_t)n;
     air.ch = (uint8_t)(ch >= 1u && ch <= 13u ? ch : 6u);
     memcpy(air.bssid, BSSID, 6);
-#if FM1B_WIFI_JAM
-    if (!strcmp(pass, "default")) {               /* an Optimist access point: its default password (wifi_ap_default_key) */
-        char k[WIFI_AP_KEY_LEN + 1u];
-        wifi_ap_default_key(air.name, n, k);
-        wc_pmk(k, air.name, n, pmk);
-    } else
-#endif
-        wc_pmk(pass, air.name, n, pmk);
+    wc_pmk(pass, air.name, n, pmk);
     wifi_ap_init(&air.ap, air.bssid, pmk, own_rand);
     wifi_ap_set_net(&air.ap, air.name, n, air.ch);
     wifi_ap_dhcp_init(&air.dhcp, SRV);
@@ -144,6 +139,22 @@ static void air_net(const char *name, const char *pass, uint32_t ch)   /* the ac
     (void)wifi_ip_bind(&air.ip, LK_MCAST_PORT);
 #endif
     air.on = 1;
+}
+static void air_jank(uint32_t group)              /* another FM-1 of that group on the air */
+{
+    static const uint8_t MAC[6] = {0x02, 0xA1, 0x52, 0x00, 0x00, 0x02};
+    static struct jn_net j;
+    memset(&air, 0, sizeof air);
+    jn_init(&j, MAC, group);
+    air.ch = j.ch;
+    memcpy(air.bssid, j.bssid, 6);
+    wifi_ip_ibss_init(&air.ip, MAC, j.bssid, 0xA9FE3201u, own_rand);
+#if FM1B_LINK
+    air.ip.udp_rx = air_lk_rx;
+    (void)wifi_ip_bind(&air.ip, LK_MCAST_PORT);
+    wifi_ip_join(&air.ip, LK_MCAST_IP);
+#endif
+    air.jank = air.on = 1;
 }
 #if FM1B_WIFI_AP
 #include "wifi_air_client.c"                     /* MODE AP: a client of the FM-1's access point */
@@ -159,6 +170,16 @@ static int air_tx(const uint8_t *f, uint32_t len, uint32_t wcid, uint32_t ack)  
     if (!air.on || fm1_fake_ch != air.ch || len < 24u)
         return 0;                                 /* (sent, nobody heard it) */
     air.frames_in++;
+    if (air.jank) {                                /* an ad-hoc frame of the group, as jn_rx takes it */
+        if ((f[0] & 0x0Cu) == 0x08u && !(f[1] & 0x03u) && !memcmp(f + 16, air.bssid, 6)) {
+            uint32_t ip = jn_sender_ip(f, len);
+            if (ip)
+                wifi_ip_arp_learn(&air.ip, ip, f + 10);
+            if (wifi_ip_early_filter(&air.ip, f, len) && wifi_ip_rx_frame(&air.ip, f, len, own_us(), air.txb, &tl) == 1)
+                air_queue(air.txb, tl);
+        }
+        return 0;
+    }
     if ((f[0] & 0x0Cu) == 0u) {                   /* management */
         uint8_t sub = f[0] & 0xFCu;
         if (sub == 0xC0u || sub == 0xA0u) {
@@ -206,7 +227,7 @@ static void air_tick(void)                        /* every simulated millisecond
     uint32_t now = plat_ms();
     fm1_fake_tx = air_tx;
     fm1_fake_rx = air_rx;
-    if (air.on && now - air.t_beacon >= 100u) {
+    if (air.on && !air.jank && now - air.t_beacon >= 100u) {
         air.t_beacon = now;
         air_queue(air.txb, wifi_ap_build_beacon(&air.ap, (uint64_t)now * 1000u, air.txb));
     }
@@ -225,6 +246,7 @@ static void wifi_own_forget(void)
     memset(&wc, 0, sizeof wc);
     memset(&wc_req, 0, sizeof wc_req);
     memset(&wl, 0, sizeof wl);
+    memset(&jnk, 0, sizeof jnk);
     memset(own_sock, 0, sizeof own_sock);
     wn_scan_clear(&wc_tab);
     own_group = 0;
@@ -253,6 +275,22 @@ static int air_cmd(const char *cmd, const char *a, const char *b, const char *c)
             air_net(a, b, c[0] ? (uint32_t)atoi(c) : 6u);
         return 1;
     }
+    if (!strcmp(cmd, "jank_peer")) {               /* jank_peer BPM [GROUP] | jank_peer off */
+#if FM1B_LINK
+        if (air_lk_on)
+            lk_enable(&air_lk, 0, own_us());
+        air_lk_on = 0;
+#endif
+        if (!strcmp(a, "off")) {
+            air_net(0, 0, 0);
+        } else {
+            air_jank(b[0] ? (uint32_t)atoi(b) : 1u);
+#if FM1B_LINK
+            air_peer((int32_t)(60000000.0 / atof(a)));
+#endif
+        }
+        return 1;
+    }
     if (!strcmp(cmd, "wifi_air")) {               /* wifi_air rssi DBM | wifi_air lost PCT | wifi_air retry PCT: the air's
                                                    * quality (the FM-1's frames never / only after a retry acknowledged) */
         if (!strcmp(a, "rssi"))
@@ -276,14 +314,16 @@ static int air_cmd(const char *cmd, const char *a, const char *b, const char *c)
             for (i = 0; i < (FM1B_WIFI_AP ? 5 : 3); i++)
                 if (!strcmp(b, M[i]))
                     plat_wifi_mode(i);
-            if (!strcmp(b, "JAM"))
-                plat_wifi_mode(WIFI_MODE_JAM);
+            if (!strcmp(b, "JANK"))
+                plat_wifi_mode(WIFI_MODE_JANK);
         } else if (!strcmp(a, "join")) {
             printf("  wifi join %s: %d\n", b, plat_wifi_join(b, c[0] ? c : 0));
         } else if (!strcmp(a, "leave")) {
             plat_wifi_leave();
         } else if (!strcmp(a, "scan")) {
             plat_wifi_scan();
+        } else if (!strcmp(a, "group")) {
+            plat_wifi_set_group(atoi(b));
         }
 #if FM1B_WIFI_AP
         else
@@ -334,12 +374,16 @@ static int air_expect(const char *what, int *got)
         *got = plat_wifi_fail();
     else if (!strcmp(what, "wifi_ip_last"))       /* the address's last byte (192.168.50.N) */
         *got = (int)(plat_wifi_addr() & 255u);
+    else if (!strcmp(what, "wifi_ip_first"))      /* its first (169: MODE JANK's own) */
+        *got = (int)(plat_wifi_addr() >> 24);
     else if (!strcmp(what, "wifi_found"))         /* networks in the scan's table */
         *got = (int)wc_tab.n;
     else if (!strcmp(what, "wifi_saved"))
         *got = (int)wn_count(&wn_st);
-    else if (!strcmp(what, "wifi_jam"))         /* plat_wifi_jam: 1 joined / joining an Optimist AP, 2 refused */
-        *got = plat_wifi_jam();
+    else if (!strcmp(what, "wifi_jank"))         /* plat_wifi_jank: the FM-1s heard, -1 not on the air */
+        *got = plat_wifi_jank();
+    else if (!strcmp(what, "wifi_ch"))            /* the channel the radio is on */
+        *got = (int)fm1_fake_ch;
     else if (!strcmp(what, "wifi_mode"))
         *got = plat_wifi_get_mode();
     else if (!strcmp(what, "air_dhcp_acks"))

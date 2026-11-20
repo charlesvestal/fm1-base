@@ -45,13 +45,14 @@ t wifi_wlc wifi_wlc_test.c -Idevice   # the coexistence table (device/fm1_wifi_w
 t wifi_tune wifi_tune_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_WIFI_AP=1 -DFM1B_BLE=1   # the tuning: (a) the stored calibration, (b) the RX filter, (c) the AGC, (f) the rate
 t wifi_apd wifi_apd_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_WIFI_AP=1 -DFM1B_BLE=1   # MODE AP (device/wifi_own_ap.c)
 t wifi_apd_mem wifi_apd_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_WIFI_AP=1 -DFM1B_BLE=1 -DFM1B_WIFI_MEM=1   # .. its state lent by the app (wifi_mem = "app")
-t wifi_apd_jam wifi_apd_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_WIFI_AP=1 -DFM1B_BLE=1 -DFM1B_WIFI_JAM=1   # .. with MODE JAM (wifi_jam = true)
+t wifi_apd_jank wifi_apd_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_WIFI_AP=1 -DFM1B_BLE=1 -DFM1B_WIFI_JANK=1   # .. with MODE JANK (wifi_jank = true)
 if "$PY" tests/wifi/remote_tune_test.py > "$OUT/remote_tune.log" 2>&1; then   # fm1_remote.py's 'wifi tune' letters
     echo "  ok   wifi/remote_tune"
 else
     echo "  FAIL wifi/remote_tune (see $OUT/remote_tune.log)"
     FAIL=1
 fi
+t jank_air jank_air_test.c -Ilink         # MODE JANK on a model of the air: 2, 3, 4 units, joins, leaves, loss, two groups, the phase
 t link link_test.c                    # Ableton Link (link/, GPL-3.0-only): wire format, join, tempo, phase, start / stop
 t link_mem link_mem_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_LINK=1 -DFM1B_BLE=1 -DFM1B_WIFI_MEM=1 -Ilink   # Link's node lent by the app
 # the Link example on its simulated network: join, DHCP, the session's tempo and phase, both ways, start / stop, the

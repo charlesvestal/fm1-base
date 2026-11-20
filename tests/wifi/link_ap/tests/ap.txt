@@ -80,6 +80,11 @@ wifi ap_forget
 wait 200
 expect ap_key 0
 expect ap_key_default 1
+expect ap_key_len 12                  # (the password made at random for this FM-1)
+expect ap_key_same 1
+wifi ap_forget                        # forgotten again: a new one
+wait 200
+expect ap_key_same 0
 wifi ap_run 1
 wait 3000
 expect ap_state 3
