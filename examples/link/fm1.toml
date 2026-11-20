@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # The Link example's build settings (tools/build.py): Wi-Fi on the own stack and Ableton Link
 name = "LINK"
-id_prefix = "FM-1_13"          # package identity: dev FM-1_1300
+id_prefix = "FM-1_40"          # package identity (its own: FM-1_13 is Radio's): dev FM-1_4000
 usb_manufacturer = "fm1-base"
 usb_product = "LINK FM-1"
 ble = true                     # the radio: the own Bluetooth stack starts it (Bluetooth MIDI comes with it)
