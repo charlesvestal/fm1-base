@@ -55,6 +55,7 @@ uint32_t plat_keys(void) { return keys; }
 uint32_t plat_master(void) { return master; }
 
 #define MRQ 4096u
+#define MR_PUMP_MS 0u                                 /* (no pump here: a frame finding the ring full is dropped at once) */
 #include "../device/mirror.c"
 
 /* the ring (its room set by the test), the stream as the host receives it */
@@ -62,6 +63,7 @@ static uint32_t ring_used, ring_cap = MRQ, link_id = 1, redraws, busy;
 static uint8_t ring[1 << 20], stream[1 << 22];
 static uint32_t ring_n, stream_n;
 static uint32_t mr_free(void) { return ring_cap > ring_used ? ring_cap - ring_used : 0; }
+static void mr_pump(void) {}                          /* (the test's ring: its room set by the test, no pump) */
 static void mr_put(const uint8_t *p, uint32_t n)
 {
     memcpy(ring + ring_n, p, n);
