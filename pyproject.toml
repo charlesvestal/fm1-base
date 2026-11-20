@@ -21,7 +21,7 @@ device = [
 # tools/fit_fastmath.py (numpy) and the firmware.json test's schema check (jsonschema).
 extras = [
     "numpy==2.3.4",
-    "jsonschema==4.25.1",
+    "jsonschema==4.26.0",
 ]
 # The workflow audit (.github/workflows): uv run --only-group audit zizmor .github/workflows
 audit = [
