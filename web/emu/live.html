@@ -99,7 +99,7 @@ function paint() {
     lastBlits = b;
     const fb = new Uint16Array(mem.buffer, ex.web_fb(), 240 * 240);
     for (let i = 0; i < fb.length; i++) {
-      const c = fb[i], r = (c >> 11) & 31, g = (c >> 5) & 63, bl = c & 31;
+      const v = fb[i], c = ((v >> 8) | (v << 8)) & 0xFFFF, r = (c >> 11) & 31, g = (c >> 5) & 63, bl = c & 31;   // (the LCD's byte order)
       px[i] = 0xFF000000 | ((bl << 3 | bl >> 2) << 16) | ((g << 2 | g >> 4) << 8) | (r << 3 | r >> 2);
     }
     sctx.putImageData(img, 0, 0);
