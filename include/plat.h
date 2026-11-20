@@ -149,7 +149,10 @@ uint32_t plat_midi_ago(int port, int out);     /* ms since the last one (0xFFFFF
 #define FM1B_BLE 0
 #endif
 enum { BLE_OFF, BLE_STARTING, BLE_READY, BLE_FAILED };
-int plat_ble_state(void);
+int plat_ble_state(void);              /* BLE_OFF while the player has Bluetooth switched off (plat_ble_enable(0)) */
+int plat_ble_radio(void);              /* the radio's own state (BLE_*), switched off or not: plat_ble_enable(0) leaves
+                                        * a started radio up and quiet, and WiFi (which runs on it) reads this, not
+                                        * plat_ble_state */
 int plat_ble_connected(void);          /* a central is connected and listening */
 int plat_ble_linked(void);             /* a central is connected, listening or not yet (a Mac whose MIDI driver
                                         * never subscribed holds the link, and the FM-1 stops advertising) */

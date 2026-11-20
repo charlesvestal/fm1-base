@@ -46,6 +46,8 @@ t wifi_tune wifi_tune_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_
 t wifi_apd wifi_apd_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_WIFI_AP=1 -DFM1B_BLE=1   # MODE AP (device/wifi_own_ap.c)
 t wifi_apd_mem wifi_apd_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_WIFI_AP=1 -DFM1B_BLE=1 -DFM1B_WIFI_MEM=1   # .. its state lent by the app (wifi_mem = "app")
 t wifi_apd_jank wifi_apd_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_WIFI_AP=1 -DFM1B_BLE=1 -DFM1B_WIFI_JANK=1   # .. with MODE JANK (wifi_jank = true)
+t wifi_start wifi_start_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_BLE=1   # the start on the radio Bluetooth shares: Bluetooth switched off, never started, failed
+t wifi_start_ap wifi_start_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_WIFI_AP=1 -DFM1B_BLE=1   # .. and MODE AP
 if "$PY" tests/wifi/remote_tune_test.py > "$OUT/remote_tune.log" 2>&1; then   # fm1_remote.py's 'wifi tune' letters
     echo "  ok   wifi/remote_tune"
 else

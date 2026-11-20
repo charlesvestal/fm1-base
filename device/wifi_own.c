@@ -153,10 +153,13 @@ static int own_radio_up(void)
     if (own_radio_started())
         return 1;
 #if FM1B_BLE
-    if (plat_ble_state() == BLE_OFF)
+    /* the radio's own state, not plat_ble_state: Bluetooth switched off by the player (plat_ble_enable(0): BT MIDI
+     * OFF, or BT AUDIO with BT MIDI OFF) reads BLE_OFF there while the radio stays up, and plat_ble_start then does
+     * nothing, so a WiFi started after that waited in WC_RADIO for ever (STARTING; seen 2026-10-31 on an FM-1) */
+    if (plat_ble_radio() == BLE_OFF)
         plat_ble_start();                         /* the radio comes with Bluetooth's start (its advertising as the app has it) */
-    if (plat_ble_state() != BLE_READY)
-        return plat_ble_state() == BLE_FAILED ? -1 : 0;
+    if (plat_ble_radio() != BLE_READY)
+        return plat_ble_radio() == BLE_FAILED ? -1 : 0;
 #endif
 #ifdef PLAT_HOST
     fm1_wifi_up(0, 0, 0u);                        /* the stand-in radio takes no set-up words */

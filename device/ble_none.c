@@ -11,6 +11,7 @@ static uint32_t ble_midi_out_room(uint32_t to) { (void)to; return 0; }
 
 /* ---- plat.h */
 int plat_ble_state(void) { return BLE_OFF; }
+int plat_ble_radio(void) { return BLE_OFF; }
 int plat_ble_connected(void) { return 0; }
 int plat_ble_rssi(int link) { (void)link; return 0; }
 int plat_ble_linked(void) { return 0; }
