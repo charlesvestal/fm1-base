@@ -256,6 +256,9 @@ run battery-app sh -c "$PY tools/build.py tests/battery_app --host && \
 # an app with APP_CPU_KHZ (plat_cpu_khz) in the host simulator: tests/cpukhz_app
 run cpukhz-app sh -c "$PY tools/build.py tests/cpukhz_app --host && \
     tests/cpukhz_app/build/host/khztest_host tests/cpukhz_app/tests/cpukhz.txt tests/cpukhz_app/build/host"
+# an app with APP_TICK_FAST (app_tick_fast, plat_midi_rt) in the host simulator: tests/midirt_app
+run midirt-app sh -c "$PY tools/build.py tests/midirt_app --host && \
+    tests/midirt_app/build/host/rttest_host tests/midirt_app/tests/midirt.txt tests/midirt_app/build/host"
 # plat_core on both cores (cpu2 = true) in the host simulator: tests/core_app
 run core-app sh -c "$PY tools/build.py tests/core_app --host && \
     tests/core_app/build/host/coretest_host tests/core_app/tests/core.txt tests/core_app/build/host"

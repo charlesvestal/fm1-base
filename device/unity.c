@@ -194,6 +194,9 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
                                    * plat_midi_in_t24); 0: when the app read it */
 #endif
 #define FELUCCA_MIDI_STAMP FM1B_MIDI_STAMP
+#ifdef APP_TICK_FAST              /* the app's 10 kHz tick sends its clock by plat_midi_rt: felucca-bsp's usb_midi_rt (off without it) */
+#define FELUCCA_MIDI_RT 1
+#endif
 #ifndef FM1B_CRASHLOG
 #define FM1B_CRASHLOG 0           /* 1: the crash history in flash, 0xE2000..0xE3FFF, and the stacks' room at a crash
                                    * (fm1.toml crash_history = true: crashlog.c, stacks.c) */

@@ -1,0 +1,8 @@
+# The real-time MIDI test app in the host simulator (tests/run_tests.sh): tools/build.py tests/midirt_app --host, then
+#   tests/midirt_app/build/host/rttest_host tests/midirt_app/tests/midirt.txt tests/midirt_app/build/host
+wait 300
+# app_tick_fast runs ten times a host tick (10 kHz against the 1 kHz tick); the app sends a clock every tenth, by plat_midi_rt
+expect app_fast_ticks >2500
+expect app_rt_sent >250
+# every one the app sent reached the USB out (the host's plat_midi_rt is plat_midi_send to TO_USB)
+expect clocks_out >250
