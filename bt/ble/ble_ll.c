@@ -415,7 +415,7 @@ static int ll_data_ready(void)
     return bll.rd != bll.wr;
 }
 
-BLE_API uint8_t ble_ll_hw_tx(uint8_t *pdu)
+BLE_API uint16_t ble_ll_hw_tx(uint8_t *pdu)
 {
     uint32_t n, i, room = bll.max_tx;               /* (the data length counts the payload without the MIC) */
     if (bll.state != LL_CONN)
@@ -456,7 +456,7 @@ BLE_API uint8_t ble_ll_hw_tx(uint8_t *pdu)
     }
 #endif
     bll.handed++;
-    return (uint8_t)(2u + pdu[1]);
+    return (uint16_t)(2u + pdu[1]);
 }
 
 BLE_API int ble_ll_hw_tx_pending(void)
@@ -721,7 +721,7 @@ static void ll_rx_ctrl(const uint8_t *p, uint8_t n)
     }
 }
 
-BLE_API void ble_ll_hw_rx(const uint8_t *pdu, uint8_t len)
+BLE_API void ble_ll_hw_rx(const uint8_t *pdu, uint16_t len)
 {
     uint8_t n, llid;
     const uint8_t *p = pdu + 2;

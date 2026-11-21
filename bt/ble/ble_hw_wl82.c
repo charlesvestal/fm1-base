@@ -644,7 +644,8 @@ static uint32_t hw_tx_read(void)
  * 0: the link went with the acknowledgement (our LL_TERMINATE_IND) */
 static int hw_tx_empty(uint32_t b, uint32_t s)
 {
-    uint8_t g = drv.gen, n, md, *pdu;
+    uint8_t g = drv.gen, md, *pdu;
+    uint16_t n;
     if (drv.tx_rec[b]) {
         drv.tx_rec[b] = 0;
 #if BLE_DIAG
@@ -983,7 +984,7 @@ static void hw_rx_service(void)
             pdu[0] = (uint8_t)(dh & 0x1Fu);
             pdu[1] = (uint8_t)(dh >> 8);
             if (pdu[1] || (pdu[0] & 3u) != 1u)            /* empty PDUs are not passed on */
-                ble_ll_hw_rx(pdu, (uint8_t)(pdu[1] + 2u));
+                ble_ll_hw_rx(pdu, (uint16_t)(pdu[1] + 2u));
             if (drv.gen != g)
                 return;
         }

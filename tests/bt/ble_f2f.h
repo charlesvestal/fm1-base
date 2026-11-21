@@ -17,9 +17,9 @@
     int u##_take_cind(const uint8_t *cind);                                                                         \
     void u##_master_start(void);                                                                                    \
     int u##_conn_on(void);                                                                                          \
-    uint8_t u##_tx(uint8_t *pdu);                                                                                   \
+    uint16_t u##_tx(uint8_t *pdu);                                                                                  \
     void u##_acked(void);                                                                                           \
-    void u##_rx(const uint8_t *pdu, uint8_t n);                                                                     \
+    void u##_rx(const uint8_t *pdu, uint16_t n);                                                                    \
     void u##_event_end(uint16_t counter);                                                                           \
     int u##_central_state(void);                                                                                    \
     int u##_central_fail(void);                                                                                     \

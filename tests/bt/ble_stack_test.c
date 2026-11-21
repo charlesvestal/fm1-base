@@ -304,10 +304,10 @@ static int c_event(void)
         return 0;
     if (C.alive)
         for (i = 0; i < C.qn; i++)
-            ble_ll_hw_rx(C.q[i], (uint8_t)(2 + C.q[i][1]));
+            ble_ll_hw_rx(C.q[i], (uint16_t)(2 + C.q[i][1]));
     C.qn = 0;
     while (C.alive && hw.conn_on && sent < 32) {
-        uint8_t n = ble_ll_hw_tx(pdu);
+        uint16_t n = ble_ll_hw_tx(pdu);
         if (!n)
             break;
         c_take(pdu, n);

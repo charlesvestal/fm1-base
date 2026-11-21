@@ -21,12 +21,15 @@
  *                 Connections (AUTH, no loop), the 30 s SMP timeout while nobody types, a Security Request asking MITM
  *   RPA           ah() with the Core spec's sample (Vol 3 Part H D.7)
  *   endings       no packet from the peripheral (0x3E), its terminate, ours
+ *   malformed     a Read By Group Type Response with element length 0; a response to nothing of ours during the MTU
+ *                 exchange (the 30 s timeout still runs); encrypted 250- and 251-octet PDUs (payload + MIC past 255)
  * Built at each level of BLE_CENTRAL (ble_cfg.h; tests/run_tests.sh): 1 all of the above; 3 (no pairing) a peer that asks for nothing ready as at every level, one
  * that asks for security (Insufficient Authentication, a Security Request) left with NEED_PAIR, nothing of SMP sent but
  * the Pairing Failed that answers a Security Request; with BLE_BOND=1 too (the responder kept beside it). */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 #ifndef BLE_CENTRAL
 #define BLE_CENTRAL 1
 #endif
@@ -181,6 +184,9 @@ static struct {
     /* a Roland FP-30X (fm1-base#44): the CCCD only on an encrypted link, Insufficient Encryption (0x0F) when not, and
      * still for a while after the link is (its side counts it encrypted only later) */
     int need_enc, enc_late, enc_evt;           /* that; events after the encryption it still refuses (-1: always); when */
+    int grp_el0, stray_rsp;                    /* its Read By Group Type Response with element length 0; a Read By
+                                                * Type Response to nothing on our MTU request, which it never answers */
+    int mtu, frag;                             /* its ATT MTU (0: 185); its L2CAP fragments (0: 27 octets) */
 } P;
 
 static void p_reset(void)
@@ -219,7 +225,7 @@ static void p_l2(uint16_t cid, const uint8_t *d, int n)
     f[0] = (uint8_t)n, f[1] = (uint8_t)(n >> 8), f[2] = (uint8_t)cid, f[3] = (uint8_t)(cid >> 8);
     memcpy(f + 4, d, n);
     while (off < n + 4) {
-        int k = n + 4 - off < 27 ? n + 4 - off : 27;
+        int room = P.frag ? P.frag : 27, k = n + 4 - off < room ? n + 4 - off : room;
         p_pdu(off ? 1 : 2, f + off, k);
         off += k;
     }
@@ -466,7 +472,12 @@ static void p_att_rx(const uint8_t *p, int n)
     P.att_ops[P.att_n++ % 64] = p[0];
     switch (p[0]) {
     case 0x02:
-        r[0] = 0x03, r[1] = 185, r[2] = 0;
+        if (P.stray_rsp) {
+            r[0] = 0x09;
+            p_att(r, 1);
+            return;
+        }
+        r[0] = 0x03, r[1] = (uint8_t)(P.mtu ? P.mtu : 185), r[2] = 0;
         p_att(r, 3);
         return;
     case 0x06:                                 /* Find By Type Value: primary service, the MIDI UUID */
@@ -483,7 +494,10 @@ static void p_att_rx(const uint8_t *p, int n)
         return;
     case 0x10:                                 /* Read By Group Type (primary services) */
         s = (uint16_t)(p[1] | p[2] << 8);
-        if (s <= PH_GAP) {
+        if (P.grp_el0) {
+            r[0] = 0x11, r[1] = 0, r[2] = PH_GAP, r[3] = 0, r[4] = PH_NAME, r[5] = 0;
+            p_att(r, 6);
+        } else if (s <= PH_GAP) {
             r[0] = 0x11, r[1] = 6, r[2] = PH_GAP, r[3] = 0, r[4] = PH_NAME, r[5] = 0, r[6] = 0x00, r[7] = 0x18;
             r[8] = PH_BAT, r[9] = 0, r[10] = PH_BAT_V, r[11] = 0, r[12] = 0x0F, r[13] = 0x18;
             p_att(r, 14);
@@ -594,7 +608,7 @@ static void p_event(void)
     if (!hw.conn_on)
         return;
     for (k = 0; k < 32 && hw.conn_on; k++) {
-        uint8_t n = ble_ll_hw_tx(pdu);
+        uint16_t n = ble_ll_hw_tx(pdu);
         if (!n)
             break;
         if (P.alive) {
@@ -610,7 +624,7 @@ static void p_event(void)
         p_keys();                              /* (phase 3: once encrypted with the STK, not an older key) */
     if (P.alive)
         for (i = 0; i < P.qn && hw.conn_on; i++)
-            ble_ll_hw_rx(P.q[i], (uint8_t)(2 + P.q[i][1]));
+            ble_ll_hw_rx(P.q[i], (uint16_t)(2 + P.q[i][1]));
     P.qn = 0;
     if (!hw.conn_on)
         return;
@@ -1141,7 +1155,58 @@ static void test_endings(void)
           ble_central_code() == 0x13);
 }
 
+/* a server that misbehaves during discovery */
+static void test_gatt_malformed(void)
+{
+    connect(0);
+    P.no_fbtv = 1;
+    P.grp_el0 = 1;
+    alarm(5);                                  /* (the loop over its elements hung the radio interrupt: ends the test) */
+    p_events(20);
+    alarm(0);
+    check("a Read By Group Type Response with element length 0: discovery failed (GATT), the link left",
+          !ble_connected() && ble_central_fail() == BLE_CF_GATT);
+    connect(0);
+    P.stray_rsp = 1;
+    p_events((int)(BLE_GATTC_TIMEOUT_US / (9u * 1250u)) + 20);
+    check("a response to nothing of ours during the MTU exchange, the answer never coming: the 30 s timeout still "
+          "fires (GATT), the link left",
+          !ble_connected() && ble_central_fail() == BLE_CF_GATT && ble_dgc.gc_timeouts >= 1);
+    leave();                                   /* (a setup still stuck) */
+}
+
 #if BLE_CEN_PAIR
+/* an encrypted link at the data length 251 and MTU 247: PDUs whose payload and MIC pass 253 octets (2 + length > 255) */
+static void test_enc_long(void)
+{
+    static const uint8_t ping = LL_PING_REQ;
+    uint8_t w[3 + 243], ntf[3 + 244];
+    int writes;
+    connect(0);
+    P.need_auth = 1;
+    P.mtu = 247;
+    P.frag = 251;
+    p_events(80);
+    check("long encrypted PDUs: paired, encrypted, the data length 251, MTU 247, ready",
+          ble_central_state() == BLE_CS_READY && ble_ll_encrypted() && ble_ll_tx_octets() == 251 &&
+              ble_att_mtu() == 247);
+    memset(w, 0, sizeof w);
+    w[0] = 0x52, w[1] = PH_MIDI_V;             /* a Write Command: 4 + 246 = one 250-octet PDU, 254 with the MIC */
+    writes = P.writes;
+    ble_ll_send(L2CAP_CID_ATT, w, sizeof w);
+    p_events(3);
+    check("our encrypted 250-octet PDU: sent (not dropped with the counter stepped on), the link kept",
+          P.writes == writes + 1 && ble_connected() && ble_ll_encrypted());
+    memset(ntf, 0, sizeof ntf);
+    ntf[0] = 0x1B, ntf[1] = PH_BAT_V;          /* a notification: 4 + 247 = one 251-octet PDU, 255 with the MIC */
+    p_att(ntf, sizeof ntf);
+    p_ctrl(&ping, 1);                          /* (its next PDU: the MIC fails if ours missed the one before) */
+    p_events(3);
+    check("its encrypted 251-octet PDU: taken, its next PDU's MIC right, the link kept",
+          ble_connected() && ble_ll_encrypted());
+    leave();
+}
+
 /* ah(): the Core spec's sample (Vol 3 Part H D.7): IRK ec0234a357c8ad05341010a60a397d9b, prand 708194 -> 0dfbaa */
 static void test_rpa(void)
 {
@@ -1193,7 +1258,9 @@ int main(void)
 #endif
     test_gatt_variants();
     test_endings();
+    test_gatt_malformed();
 #if BLE_CEN_PAIR
+    test_enc_long();
     test_rpa();
 #endif
     test_blell();

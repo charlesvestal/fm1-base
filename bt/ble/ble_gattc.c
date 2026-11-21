@@ -179,6 +179,10 @@ static void gc_descs_rsp(const uint8_t *p, uint16_t n)
 static void gc_groups_rsp(const uint8_t *p, uint16_t n)
 {
     uint16_t i, el = p[1], last = 0;
+    if (el < 6u) {
+        gc_fail(BLE_CF_GATT, 0);
+        return;
+    }
     for (i = 2; i + el <= n; i = (uint16_t)(i + el)) {
         last = ble_rd16(p + i + 2);
         if (el == 20u && ble_eq(p + i + 4, BLE_UUID_MIDI_SVC, 16)) {
@@ -292,14 +296,16 @@ BLE_API int ble_gattc_rx(const uint8_t *p, uint16_t n)
         return 0;                              /* requests and commands: the server's */
     if (bgc.st == G_IDLE || bgc.st == G_READY || bgc.st == G_FAIL || bgc.wait_sec || bgc.late_at)
         return 1;                              /* (nothing of ours outstanding) */
-    bgc.t_req = 0;
     if (op == 0x01u) {
-        if (n == 5u && p[1] == bgc.req[0])
+        if (n == 5u && p[1] == bgc.req[0]) {
+            bgc.t_req = 0;
             gc_error(p);
+        }
         return 1;
     }
     if (op != (uint8_t)(bgc.req[0] + 1u))
         return 1;                              /* (not the answer to ours) */
+    bgc.t_req = 0;
     switch (bgc.st) {
     case G_MTU:
         if (n == 3u) {

@@ -142,13 +142,13 @@ BLE_API void ble_hw_rand(uint8_t *out, uint8_t n);
 BLE_API int ble_ll_hw_connect_ind(const uint8_t *pdu, uint8_t len);
 /* a new data-channel PDU received in the current event: CRC good, not a retransmission (the engine's SN
  * check), empty PDUs may be left out. pdu[0] carries LLID, NESN, SN, MD as received. */
-BLE_API void ble_ll_hw_rx(const uint8_t *pdu, uint8_t len);
+BLE_API void ble_ll_hw_rx(const uint8_t *pdu, uint16_t len);
 /* a TX buffer is free: the link layer writes the next PDU into pdu (room for 2 + 255 octets:
  * 251 and an encrypted PDU's MIC) and returns its
  * length (2 + payload), or 0 when there is nothing to send (the engine sends an empty PDU). The link layer
  * sets LLID and MD (more queued); the engine sets NESN and SN. The PDU is final: the engine retransmits it as
  * it is until it is acknowledged. */
-BLE_API uint8_t ble_ll_hw_tx(uint8_t *pdu);
+BLE_API uint16_t ble_ll_hw_tx(uint8_t *pdu);
 /* 1 when ble_ll_hw_tx() would return a PDU now (control or data queued); nothing is taken */
 BLE_API int ble_ll_hw_tx_pending(void);
 /* the oldest PDU returned by ble_ll_hw_tx() and not yet reported was acknowledged by the central */

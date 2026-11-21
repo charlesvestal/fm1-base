@@ -31,9 +31,9 @@ static void check(const char *what, int ok)
 
 /* the air between the central unit a and a peripheral unit (b or c) */
 struct unit {
-    uint8_t (*tx)(uint8_t *);
+    uint16_t (*tx)(uint8_t *);
     void (*acked)(void);
-    void (*rx)(const uint8_t *, uint8_t);
+    void (*rx)(const uint8_t *, uint16_t);
     void (*event_end)(uint16_t);
     int (*conn_on)(void);
 };
@@ -44,7 +44,7 @@ static uint16_t evt;
 static uint32_t smp_pdus, enc_reqs, passkeys;
 
 /* what crossed the air in the clear: SMP (L2CAP CID 6, a start fragment) and LL_ENC_REQ */
-static void sniff(const uint8_t *pdu, uint8_t n, int encrypted)
+static void sniff(const uint8_t *pdu, uint16_t n, int encrypted)
 {
     if (encrypted || n < 3u)
         return;
@@ -56,7 +56,8 @@ static void sniff(const uint8_t *pdu, uint8_t n, int encrypted)
 
 static void event(const struct unit *p, int (*enc)(void))
 {
-    uint8_t pdu[2 + 255], n;
+    uint8_t pdu[2 + 255];
+    uint16_t n;
     int k;
     for (k = 0; k < 32 && A.conn_on() && p->conn_on() && (n = A.tx(pdu)) != 0; k++) {
         sniff(pdu, n, enc());
