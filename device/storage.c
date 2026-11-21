@@ -44,6 +44,33 @@ static int st_read(uint32_t off, void *dst, uint32_t n);
 static int st_erase(uint32_t off);
 static int st_prog(uint32_t off, const void *src, uint32_t n);
 
+/* app.h APP_STORE_BOUNCE 1: the store's RAM is one 256-byte page for the driver instead of a whole payload (3,584 B
+ * less: an app whose objects are small, or whose RAM is short). The same flash and the same results: a load checks the
+ * payload's CRC page by page, then reads it again straight into the caller's buffer; a save copies each page into the
+ * page before programming it, and its CRC is the written pages'. Not with backup.c (it keeps a payload in st_buf).
+ * Without it this file builds as before, byte for byte */
+#if defined APP_STORE_BOUNCE && APP_STORE_BOUNCE
+#define ST_BOUNCED 1
+#if FM1B_BACKUP
+#error "storage.c: APP_STORE_BOUNCE leaves backup.c no payload buffer (fm1.toml backup = true)"
+#endif
+static uint32_t st_crc_add(uint32_t c, const void *p, uint32_t n)   /* zlib CRC-32's steps from c (not inverted) */
+{
+    static const uint32_t T[16] = {
+        0x00000000u, 0x1DB71064u, 0x3B6E20C8u, 0x26D930ACu, 0x76DC4190u, 0x6B6B51F4u, 0x4DB26158u, 0x5005713Cu,
+        0xEDB88320u, 0xF00F9344u, 0xD6D6A3E8u, 0xCB61B38Cu, 0x9B64C2B0u, 0x86D3D2D4u, 0xA00AE278u, 0xBDBDF21Cu};
+    const uint8_t *b = p;
+    while (n--) {
+        c ^= *b++;
+        c = (c >> 4) ^ T[c & 15u];
+        c = (c >> 4) ^ T[c & 15u];
+    }
+    return c;
+}
+
+static uint32_t st_crc32(const void *p, uint32_t n) { return ~st_crc_add(0xFFFFFFFFu, p, n); }   /* zlib CRC-32 */
+#else
+#define ST_BOUNCED 0
 static uint32_t st_crc32(const void *p, uint32_t n)   /* zlib CRC-32, 4 bits per step */
 {
     static const uint32_t T[16] = {
@@ -58,6 +85,7 @@ static uint32_t st_crc32(const void *p, uint32_t n)   /* zlib CRC-32, 4 bits per
     }
     return ~c;
 }
+#endif
 
 #ifdef APP_STORE_POOL
 #define ST_POOL_LAST (APP_STORE_POOL_OBJ0 + APP_STORE_POOL_OBJN)
@@ -76,7 +104,12 @@ static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy 
     return map[obj] + copy * ST_SECTOR;
 }
 
+#if ST_BOUNCED
+#define ST_BOUNCE 256u
+static uint8_t st_buf[ST_BOUNCE] __attribute__((aligned(4)));
+#else
 static uint8_t st_buf[ST_PAYLOAD_MAX] __attribute__((aligned(4)));
+#endif
 
 static int st_head(uint32_t obj, uint32_t copy, st_hdr_t *h)   /* commit record valid: 0 */
 {
@@ -88,12 +121,26 @@ static int st_head(uint32_t obj, uint32_t copy, st_hdr_t *h)   /* commit record 
     return 0;
 }
 
+#if ST_BOUNCED
+static int st_body(uint32_t obj, uint32_t copy, const st_hdr_t *h)   /* the payload's CRC, page by page: ok 0 */
+{
+    uint32_t off, n, c = 0xFFFFFFFFu, base = st_sector(obj, copy) + ST_PAYLOAD_OFF;
+    for (off = 0; off < h->len; off += n) {
+        n = h->len - off > ST_BOUNCE ? ST_BOUNCE : h->len - off;
+        if (st_read(base + off, st_buf, n))
+            return -1;
+        c = st_crc_add(c, st_buf, n);
+    }
+    return ~c == h->crc ? 0 : -1;
+}
+#else
 static int st_body(uint32_t obj, uint32_t copy, const st_hdr_t *h)   /* payload -> st_buf, CRC ok: 0 */
 {
     if (st_read(st_sector(obj, copy) + ST_PAYLOAD_OFF, st_buf, h->len) || st_crc32(st_buf, h->len) != h->crc)
         return -1;
     return 0;
 }
+#endif
 
 /* the current copy: the valid one with the highest seq (A on a tie), -1 when
  * neither is valid. Headers first, so only the winner's payload is read (it
@@ -145,6 +192,35 @@ static int st_current(uint32_t obj, st_hdr_t *h)
     return -1;
 }
 
+#if ST_BOUNCED
+/* the first n bytes of copy (the one st_current found and checked) into dst, page
+ * by page through st_buf: 0, or -1 (a read failed) */
+static int st_copy_out(uint32_t obj, uint32_t copy, void *dst, uint32_t n)
+{
+    uint32_t off, k, m, base = st_sector(obj, copy) + ST_PAYLOAD_OFF;
+    for (off = 0; off < n; off += m) {
+        m = n - off > ST_BOUNCE ? ST_BOUNCE : n - off;
+        if (st_read(base + off, st_buf, m))
+            return -1;
+        for (k = 0; k < m; k++)
+            ((uint8_t *)dst)[off + k] = st_buf[k];
+    }
+    return 0;
+}
+
+static int st_load(uint32_t obj, void *dst, uint32_t max)   /* as below, through the page */
+{
+    st_hdr_t h;
+    int cur = st_current(obj, &h);
+    if (cur < 0 || !h.len)
+        return -1;
+    if (h.len > max)
+        h.len = max;
+    if (st_copy_out(obj, (uint32_t)cur, dst, h.len))
+        return -1;
+    return (int)h.len;
+}
+#else
 /* load object into dst (up to max bytes); returns the length, or -1 (none; an empty object is none too: a restore
  * writes one for an object the backup did not have, backup.c) */
 static int st_load(uint32_t obj, void *dst, uint32_t max)
@@ -159,6 +235,7 @@ static int st_load(uint32_t obj, void *dst, uint32_t max)
         ((uint8_t *)dst)[i] = st_buf[i];
     return (int)h.len;
 }
+#endif
 
 /* the object's length, or -1 (none) */
 static int st_size(uint32_t obj)
@@ -169,6 +246,18 @@ static int st_size(uint32_t obj)
     return (int)h.len;
 }
 
+#if ST_BOUNCED
+static int st_load_head(uint32_t obj, void *dst, uint32_t n)   /* as below, through the page */
+{
+    st_hdr_t h;
+    int cur = st_current(obj, &h);
+    if (cur < 0 || !h.len || h.len < n)
+        return -1;
+    if (st_copy_out(obj, (uint32_t)cur, dst, n))
+        return -1;
+    return (int)n;
+}
+#else
 /* the object's first n bytes (a header, without a buffer for the whole): n, or -1 (none, or shorter than n) */
 static int st_load_head(uint32_t obj, void *dst, uint32_t n)
 {
@@ -180,6 +269,7 @@ static int st_load_head(uint32_t obj, void *dst, uint32_t n)
         ((uint8_t *)dst)[i] = st_buf[i];
     return (int)n;
 }
+#endif
 
 #ifdef APP_STORE_POOL
 /* the pool's sectors as their headers say: a pooled object's copy (its type, seq), an erased sector, anything else
@@ -304,6 +394,19 @@ static int st_save(uint32_t obj, const void *src, uint32_t len)
         seq = cur < 0 ? 0u : h.seq;
     }
     base = st_sector(obj, cur <= -2 ? (uint32_t)(-cur - 2) : cur == 0 ? 1u : 0u);   /* write the other copy */
+#if ST_BOUNCED
+    uint32_t crc = 0xFFFFFFFFu;
+    if ((rc = st_erase(base)) != 0)
+        return rc;
+    for (off = 0; off < len; off += 256u) {           /* each page through st_buf: the driver wants RAM sources */
+        uint32_t k, n = len - off > 256u ? 256u : len - off;
+        for (k = 0; k < n; k++)
+            st_buf[k] = ((const uint8_t *)src)[off + k];
+        crc = st_crc_add(crc, st_buf, n);
+        if ((rc = st_prog(base + ST_PAYLOAD_OFF + off, st_buf, n)) != 0)
+            return rc;
+    }
+#else
     for (off = 0; off < len; off++)
         st_buf[off] = ((const uint8_t *)src)[off];    /* the driver wants RAM sources */
     if ((rc = st_erase(base)) != 0)
@@ -313,12 +416,17 @@ static int st_save(uint32_t obj, const void *src, uint32_t len)
         if ((rc = st_prog(base + ST_PAYLOAD_OFF + off, st_buf + off, n)) != 0)
             return rc;
     }
+#endif
     h.magic = ST_MAGIC;
     h.type = (uint16_t)obj;
     h.slot = (uint16_t)(cur <= -2 ? -cur - 2 : cur == 0 ? 1 : 0);
     h.seq = seq + 1u;
     h.len = len;
+#if ST_BOUNCED
+    h.crc = ~crc;
+#else
     h.crc = st_crc32(st_buf, len);
+#endif
     h.rsv[0] = h.rsv[1] = 0xFFFFFFFFu;
     h.hcrc = st_crc32(&h, sizeof h - 4u);
     if ((rc = st_prog(base, &h, sizeof h)) != 0)       /* the commit record, last */

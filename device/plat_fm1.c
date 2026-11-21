@@ -274,8 +274,9 @@ int plat_sysex_send(const uint8_t *frame, uint32_t n) { return ota_wire_send(fra
 #endif
 
 /* the data area and its two more windows (plat.h): read through the unencrypted XIP window (main_fm1.c
- * fl_plain_window_init, from 0x93000 up); erased and written by felucca-bsp's RAM driver (FL_RANGE_OK: the store, its
- * FL_XDATA windows) */
+ * fl_plain_window_init, from the app area's end up: 0x93000, or a bigger slot's); erased and written by felucca-bsp's
+ * RAM driver (FL_RANGE_OK: the store, its FL_XDATA windows) */
+_Static_assert(FL_APP_END == FM1B_APP_END && FL_DATA_LO == PLAT_DATA_LO, "plat.h's app area end is felucca-bsp's");
 _Static_assert(FL_XDATA0_LO == PLAT_XDATA0_LO && FL_XDATA0_HI == PLAT_XDATA0_HI && FL_XDATA1_HI == PLAT_XDATA1_HI &&
                FL_AUTO_LO == PLAT_XDATA1_LO && FL_AUTO_HI == FL_XDATA1_LO, "plat.h's windows are felucca-bsp's");
 #if FM1B_XDATA2                                   /* the fourth window: felucca-bsp's FL_GLOB (in its FL_STORE_OK), the
@@ -296,13 +297,20 @@ int plat_boot_read(uint32_t off, void *dst, uint32_t n)   /* (unity.c st_read: t
 }
 int plat_data_erase(uint32_t off)
 {
+#if !FM1B_ERASE_SLICED
     uint32_t took;
+#endif
     if (!flash_ok || (off & 0xFFFu) || !PLAT_DATA_OK(off, 0x1000u) || DATA_STORE_HIT(off, 0x1000u))
         return -1;
     fm1_wdt_feed();                               /* (a run of erases: tens of ms each) */
+#if FM1B_ERASE_SLICED
+    return data_erase(off);
+#else
     audio_silence();
     return fl_erase4k(off, &took);
+#endif
 }
+uint32_t plat_flash_held(void) { return flash_held; }
 int plat_data_write(uint32_t off, const void *src, uint32_t n)   /* page programs only (fl_prog_ram, 0x02): bits
                                                                  * clear in place, nothing erased, nothing read back
                                                                  * (plat.h's promise: keep it so) */

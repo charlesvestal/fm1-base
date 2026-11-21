@@ -1027,8 +1027,8 @@ static uint8_t *const data_area = PLAT_DATA_AREA;   /* the embedder's own (host/
 static uint8_t data_area[DATA_TOP - DATA_BASE];
 #endif
 static uint8_t data_ready;
-static uint32_t data_writes;            /* every erase and write */
 static int data_cmd_rc;                   /* the last script data_erase / data_write: what it returned (expect data_rc) */
+static uint32_t data_writes;            /* every erase and write */
 static void data_init(void)
 {
     if (!data_ready) {

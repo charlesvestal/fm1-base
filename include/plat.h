@@ -360,12 +360,16 @@ void plat_yield(void);
 void plat_restart(void);
 void plat_log(const char *line);
 /* the flash's data area, 0x97000..0xDFFFF, for an app's own big data (a table it builds, samples): its store objects
- * live there too, at the offsets it gave them (APP_STORE_MAP), so it keeps to the rest. Main loop only; an erase or a
- * write stops everything for a moment (the sound too: no flash reads meanwhile).
+ * live there too, at the offsets it gave them (APP_STORE_MAP), so it keeps to the rest. Main loop only; a write stops
+ * everything for a moment (no flash reads meanwhile: a 256-byte page at a time). An erase (here and the store's) runs in
+ * windows of about 1 ms, the interrupts and the sound on between them, the sector reading anything until it is done
+ * (felucca-bsp's sliced erase; FM1B_ERASE_SLICED 0 in app.h or the environment: one window of 8-17 ms, the sound
+ * silenced, as for a flash part that does not suspend an erase: plat_flash_held counts those).
  * Two more windows for big data, outside the store: PLAT_XDATA0 (16 KiB, just above the app area) and PLAT_XDATA1
  * (92 KiB, above the update's staging). The update loader clears an update record it finds in the last 256 bytes of
  * a sector there (bsp/loader/ldr_core.c: "AT" at bytes 0xF06..0xF07, a nonzero CRC-16 at 0xF00 over the 78 bytes
- * from 0xF02), so in these two an app keeps bytes 0xF00..0xF07 of every sector erased (0xFF), or else makes sure
+ * from 0xF02) in place: those bytes, 8 to 80 from 0xF00, programmed to 0, the rest of the sector kept. So in these
+ * two an app keeps bytes 0xF00..0xF07 of every sector erased (0xFF), or else makes sure
  * those bytes never read as a record: never "AT" at 0xF06 (LOOM-8's sample bank moves its data so, and refuses a
  * bank that has it).
  * A fourth, on request (fm1.toml xdata2 = true: FM1B_XDATA2): PLAT_XDATA2, the three sectors 0xFC000..0xFEFFF
@@ -374,9 +378,14 @@ void plat_log(const char *line);
  * looks for records below 0xFC000 only, so no 0xF00 rule here. Store objects may sit there too (the template's
  * settings pair is 0xFC000 / 0xFD000): with the window on, plat_data_erase and plat_data_write refuse a store
  * object's sectors in it, so an app with this window puts its objects elsewhere (or keeps to the rest) */
-#define PLAT_DATA_LO 0x97000u
+/* An app with a bigger slot (fm1.toml app_end: FM1B_APP_END, its code past 0x93000): the data area starts at its end,
+ * and XDATA0 is what is left of 0x93000..0x96FFF above it (none from 0x97000 on) */
+#ifndef FM1B_APP_END
+#define FM1B_APP_END 0x93000u
+#endif
+#define PLAT_DATA_LO (FM1B_APP_END > 0x97000u ? FM1B_APP_END : 0x97000u)
 #define PLAT_DATA_HI 0xE0000u
-#define PLAT_XDATA0_LO 0x93000u
+#define PLAT_XDATA0_LO (FM1B_APP_END < 0x97000u ? FM1B_APP_END : 0x97000u)
 #define PLAT_XDATA0_HI 0x97000u
 #define PLAT_XDATA1_LO 0xE5000u
 #define PLAT_XDATA1_HI 0xFC000u
@@ -401,6 +410,7 @@ const uint8_t *plat_data(uint32_t off);   /* read in place; 0 = outside the wind
  * that tells the installers which bootloader the FM-1 has. Read only; main loop; 0 = read */
 int plat_boot_read(uint32_t off, void *dst, uint32_t n);
 int plat_data_erase(uint32_t off);        /* the 4 KiB sector at off (aligned); 0 = done */
+uint32_t plat_flash_held(void);           /* erases since boot that held the sound for the whole erase (above) */
 int plat_data_write(uint32_t off, const void *src, uint32_t n);   /* src in RAM; 0 = done */
 /* plat_data_write programs, as NOR flash does: each byte becomes what it was AND what is written (bits go from 1 to
  * 0 only, and only an erase sets them again). So it writes into erased flash, and it may also clear bits in place, in

@@ -107,6 +107,41 @@ int main(void)
         }
         bad += check("objects in data regions, clear of the sample slots", (int)ok);
     }
+    {   /* every payload length a page boundary can meet, loaded whole, cut short and by its head; then the flash's
+         * hash: the same with and without APP_STORE_BOUNCE (run_tests.sh compares the two builds' lines) */
+        static const uint32_t LENS[] = {1, 31, 255, 256, 257, 511, 512, 600, 1000, ST_PAYLOAD_MAX - 1u, ST_PAYLOAD_MAX};
+        static uint8_t big[ST_PAYLOAD_MAX], back[ST_PAYLOAD_MAX + 8u];
+        uint32_t i, k, ok = 1, hash = 2166136261u;
+        memset(nor, 0xFF, sizeof nor);
+        for (i = 0; i < sizeof LENS / sizeof LENS[0]; i++) {
+            uint32_t len = LENS[i];
+            for (k = 0; k < len; k++)
+                big[k] = (uint8_t)(k * 7u + i * 13u + (k >> 8));
+            ok &= st_save(OBJ_PROJECT0, big, len) == 0;
+            memset(back, 0x5A, sizeof back);
+            ok &= st_load(OBJ_PROJECT0, back, sizeof back) == (int)len && !memcmp(back, big, len) && back[len] == 0x5A;
+            memset(back, 0x5A, sizeof back);
+            ok &= st_load(OBJ_PROJECT0, back + 1, len / 2u + 1u) == (int)(len / 2u + 1u) &&   /* (unaligned, cut short) */
+                  !memcmp(back + 1, big, len / 2u + 1u) && back[0] == 0x5A && back[len / 2u + 2u] == 0x5A;
+            ok &= st_size(OBJ_PROJECT0) == (int)len;
+            memset(back, 0x5A, sizeof back);
+            ok &= st_load_head(OBJ_PROJECT0, back, len) == (int)len && !memcmp(back, big, len) &&
+                  st_load_head(OBJ_PROJECT0, back, len + 1u) < 0;
+        }
+        ok &= st_save(OBJ_PROJECT0, big, ST_PAYLOAD_MAX + 1u) == -1;
+        fail_after = 2;                                  /* a big save torn after its second page: the last one stays */
+        memset(back, 0x33, sizeof back);
+        st_save(OBJ_PROJECT0, back, 3000u);
+        fail_after = -1;
+        ok &= st_load(OBJ_PROJECT0, back, sizeof back) == (int)ST_PAYLOAD_MAX && !memcmp(back, big, ST_PAYLOAD_MAX);
+        nor[st_sector(OBJ_PROJECT0, 0) + ST_PAYLOAD_OFF + 3000u] ^= 0x04;   /* rot past the first pages, both copies */
+        nor[st_sector(OBJ_PROJECT0, 1) + ST_PAYLOAD_OFF + 3000u] ^= 0x04;
+        ok &= st_load(OBJ_PROJECT0, back, sizeof back) < 0 && st_load_head(OBJ_PROJECT0, back, 4) < 0;
+        bad += check("every length, cut short, by its head", (int)ok);
+        for (i = 0; i < sizeof nor; i++)
+            hash = (hash ^ nor[i]) * 16777619u;
+        printf("flash fnv1a %08x\n", hash);
+    }
     printf("%s\n", bad ? "STORAGE TEST FAILED" : "storage test passed");
     return bad != 0;
 }
