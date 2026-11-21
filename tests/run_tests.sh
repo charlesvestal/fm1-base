@@ -89,6 +89,7 @@ run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-funct
 # plat_headphones' debounce (device/plat_hp.c) over a simulated jack: a plug's bounce gives one change, 100 ms on
 run hp sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/hp_test tests/hp_test.c && $OUT/hp_test"
 run fastmath sh -c "$CC -O2 -w -o $OUT/fastmath_test tests/fastmath_test.c -lm && $OUT/fastmath_test"
+run outside-hosts "$PY" tests/outside_hosts_test.py
 run flash-ok sh -c "$CC -std=c99 -Wall -Wextra -Werror -o $OUT/flash_ok_test tests/flash_ok_test.c && $OUT/flash_ok_test"   # device/fm1_flash_ok.h: the flash parts the storage may use
 run midi-rel sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -o $OUT/midi_rel_test tests/midi_rel_test.c && $OUT/midi_rel_test"   # include/midi_rel.h
 run boot-pack sh tests/boot_pack_test.sh               # the boot's LZMA load images (boot_pack = true)
