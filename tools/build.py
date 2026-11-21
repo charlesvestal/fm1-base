@@ -88,12 +88,13 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              the default: true with usb_audio_in, false with usb_audio_split, which has its own interface order): audio control, audio in, audio out, MIDI, and the
                              audio control collection in that order. macOS 13-15 show no USB audio device while MIDI is
                              interface 1, between audio control and audio streaming (bisected by darosh on macOS 15.8.1);
-                             bcdDevice +0.20 x 1 in its high byte (felucca-bsp's own +0.80 is usb_audio_out_feedback's here). false: the order of fm1-base before 2026-10-31 (MIDI interface 1).
+                             bcdDevice +0.80 (felucca-bsp's FELUCCA_UAC_MIDI_LAST=1; 2: +1.00). false: the order of fm1-base before 2026-10-31 (MIDI interface 1).
                              2: MIDI left out of the collection too (a test build: no USB MIDI on Linux)
   usb_iad = true             without the USB console, an interface association descriptor over the audio function, the
-                             device then misc / IAD (felucca-bsp FELUCCA_UAC_IAD; the default: false; not with usb_audio_split); bcdDevice +0.60 in the high byte
+                             device then misc / IAD (felucca-bsp FELUCCA_UAC_IAD; the default: false; not with usb_audio_split); bcdDevice +2.00
   usb_audio_in_channels = 4  the USB audio input's channels, 2, 4 or 8, the app filling every one (FM1B_UAC_CH, FM1B_UAC_CAPTURE:
-                             app.h APP_USB_CAPTURE, plat.h); 24-bit up to 4, 16-bit at 8. Not with usb_audio_channels
+                             app.h APP_USB_CAPTURE, plat.h); 24-bit up to 4, 16-bit at 8 (6 is not offered: the bsp refuses capture with 6). bcdDevice
+                             +10.00 (2 channels), +20.00 (4) or +30.00 (8), +80.00 with 24-bit. Not with usb_audio_channels
   usb_audio_in_host_clock = true   the USB audio input on the computer's clock (FM1B_UAC_HOST_CLOCK: felucca-bsp's
                              FELUCCA_UAC_HOST_CLOCK): resampled to exactly 44.1 kHz, the plain packet pattern, a
                              synchronous endpoint, for a computer that monitors the input to its output (one clock)
@@ -105,7 +106,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              the computer's 24 bits reach the app's render whole
   usb_audio_split = true     the USB audio input and output as two audio functions of their own (FM1B_UAC_SPLIT:
                              felucca-bsp's FELUCCA_UAC_SPLIT): a computer lists two devices, each on its own clock, and
-                             MIDI's audio control holds MIDI alone; not with FM1B_CDC. With it, their names:
+                             MIDI's audio control holds MIDI alone; not with FM1B_CDC; bcdDevice +0.02 (and +0.08). With
+                             it, their names:
   usb_audio_in_name = "..."  (FELUCCA_UAC_IN_NAME, default the usb_product + " In"), usb_audio_out_name (" Out"), and
   usb_audio_in_channel_names = ["CH1", ...]   the input's channels', one a channel (FELUCCA_UAC_CH_NAMES); ASCII, 31
                              characters at most each
@@ -1057,8 +1059,6 @@ def build_app():
     flags.append(f"-DFELUCCA_UAC_MIDI_LAST={int(midi_last)}")
     if CONF.get("usb_iad"):
         flags.append("-DFELUCCA_UAC_IAD=1")
-    if CONF.get("usb_console") and "FM1B_CDC" not in os.environ:
-        flags.append("-DFM1B_CDC=1")              # the USB serial console (device/console.c)
     if CONF.get("crash_history") or CONF.get("debug_stats"):
         flags.append("-DFM1B_CRASHLOG=1")         # the crash history in flash (device/crashlog.c, stacks.c)
     if CONF.get("debug_stats"):
