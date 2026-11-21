@@ -174,6 +174,11 @@ run bta-jobs-flags "$PY" tests/bta_jobs_flags_test.py
 run res-base "$PY" tests/res_base_test.py
 # app.h's store places (APP_STORE_MAP, the pool) against the data area above the app area (tools/build.py store_errors)
 run store-place "$PY" tests/store_place_test.py
+# the USB serial number (fm1.toml usb_serial) with the digest of the USB audio configuration: tools/build.py's digest (none
+# with every option at its default, one per configuration otherwise) and device/usb_serial_mix.h's mixing of it into the
+# chip's ID (no digest: the serial of the firmwares out there, byte for byte; two digests: two serials)
+run usb-serial "$PY" tests/usb_serial_test.py
+run usb-serial-c sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Idevice -o $OUT/usb_serial_test tests/usb_serial_test.c && $OUT/usb_serial_test"
 # the check on an app's RAM code (tools/ramcode.py, plat.h PLAT_RAM_CODE): RAM -> RAM passes, into XIP fails
 run ramcode "$PY" tests/ramcode_test.py
 # the web installer's m-bootloader step (web/fm1ota.js installBoot) against a simulated FM-1, and finding the FM-1 by
