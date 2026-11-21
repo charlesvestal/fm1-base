@@ -16,8 +16,8 @@ const m = /\/\/ --- ports: begin[^\n]*\n([\s\S]*?)\/\/ --- ports: end/.exec(html
 if (!m) { console.log("FAIL no ports markers in web/mirror/index.html"); process.exit(1); }
 const PORTS_JS = fs.readFileSync(path.join(root, "web/fm1ports.js"), "utf8").replace(/^export\s+/gm, "").replace(/^import .*?;\n/gm, "");
 if (!m[1].includes("{{PORTS_JS}}")) { console.log("FAIL the ports part has no {{PORTS_JS}}"); process.exit(1); }
-const { mirrorPorts, Asking } =
-  new Function(`"use strict";\n${m[1].replace("{{PORTS_JS}}", () => PORTS_JS)}\nreturn { mirrorPorts, Asking };`)();
+const { mirrorPorts, Asking, livePorts, outputFor } =
+  new Function(`"use strict";\n${m[1].replace("{{PORTS_JS}}", () => PORTS_JS)}\nreturn { mirrorPorts, Asking, livePorts, outputFor };`)();
 
 let fails = 0;
 const check = (ok, msg) => { console.log(`${msg.padEnd(72)} ${ok ? "ok" : "FAIL"}`); if (!ok) fails++; };
@@ -62,6 +62,21 @@ const MP = mirrorPorts("Template");
   const p = port("FM-1 MIDI 1", null, "FM-1 MIDI 2"), q = port("Launchkey Mini");
   const c = MP.choose(midi([p, q]));
   check(c && c.input === p.input && c.output === p.output, "an output named the same but for its number");
+}
+{
+  // a Bluetooth port: never taken by itself, but kept for the user to pick by hand (the two drop-downs) and when picked
+  const bt = port("Template Bluetooth"), usb = port("Template"), other = port("Arturia KeyStep");
+  const acc = midi([bt, other, usb]);
+  check(livePorts(acc.inputs).map((p) => p.name).join() === "Arturia KeyStep,Template", "the lists found by themselves: no Bluetooth port");
+  check(livePorts(acc.inputs, true).map((p) => p.name).join() === "Arturia KeyStep,Template,Template Bluetooth",
+        "the drop-downs' list: Bluetooth ports kept, last");
+  let c = MP.choose(acc);
+  check(c && c.input === usb.input, "choosing by itself: the USB port, not the Bluetooth one");
+  c = MP.choose(midi([bt]));
+  check(c === null, "  only a Bluetooth port: none taken by itself");
+  c = MP.choose(acc, { in: "Template Bluetooth", out: "Template Bluetooth" });
+  check(c && c.input === bt.input && c.output === bt.output, "a Bluetooth port picked by hand: kept, with its output");
+  check(outputFor(acc, bt.input) === bt.output && outputFor(acc, usb.input) === usb.output, "an input's output: a Bluetooth one's own, a USB one never Bluetooth");
 }
 {
   // an FM-1 under another device's name: found by its HELLO answer; the loopback and other gear never taken

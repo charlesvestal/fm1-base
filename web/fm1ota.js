@@ -16,7 +16,7 @@
 // how far it compared with cmd 0x32 [sectors compared, all]. A loader that says nothing gets the classic protocol,
 // unchanged; a package without a Felucca loader (M-VAVE's firmware: M-VAVE's loader) never hears the hello.
 
-import { PORT_NAMES, usualName, livePorts, outputFor, pairs, askAll } from "./fm1ports.js";
+import { PORT_NAMES, usualName, livePorts, outputFor, pairs, askAll, IS_BLUETOOTH } from "./fm1ports.js";
 
 const HS_QUERY = [0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7];
 // the handshake with the one-byte body 01 (00 59 11, length 1, 01, checksum FE): a firmware on felucca-bsp's chip/ota.c
@@ -31,9 +31,6 @@ const LOADER_MARK = [..."FELUCCA-LOADER-1"].map((c) => c.charCodeAt(0));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const IS_OTA = (id) => /^ota-/i.test(id.model);
 
-// an FM-1 paired over Bluetooth MIDI shows a port named "... Bluetooth" beside its USB one: it never answers an update
-// (and a Mac lists the paired one first), so no port with that word is asked, picked, listed or tried
-export const IS_BLUETOOTH = (name) => /bluetooth/i.test(name || "");
 
 // M-VAVE's FM1 Open firmware (V10, 2026-10): its updater takes only a package it has been told about
 // first (cmd 49 reads its state, cmd 50 arms it with the image length and the package's SHA-256); then

@@ -275,9 +275,9 @@ function mirrorPorts(name) {
   // the pair to mirror: the saved one ({ in, out }: port names), else one named after the firmware, else one with a
   // usual name, else one that answered a HELLO (heard: their names) -> { input, output }, or null
   function choose(access, saved = {}, heard = new Set()) {
-    const ins = livePorts(access.inputs), outs = livePorts(access.outputs);
-    const input = ins.find((p) => saved.in && p.name === saved.in) || ins.find((p) => nameRe.test(p.name || "")) ||
-      ins.find((p) => usualName(p.name, usual)) || ins.find((p) => heard.has(p.name));
+    const ins = livePorts(access.inputs), outs = livePorts(access.outputs, true);
+    const input = livePorts(access.inputs, true).find((p) => saved.in && p.name === saved.in) ||     // (a pick may be a Bluetooth port)
+      ins.find((p) => nameRe.test(p.name || "")) || ins.find((p) => usualName(p.name, usual)) || ins.find((p) => heard.has(p.name));
     if (!input) return null;
     const output = (input.name === saved.in && outs.find((o) => saved.out && o.name === saved.out)) || outputFor(access, input);
     return output ? { input, output } : null;
@@ -421,7 +421,7 @@ function fill(sel, ports, pick) {
 const MP = mirrorPorts(NAME), asking = new Asking(), answered = new Set();
 let seeking = 0;
 function pickPorts() {
-  const ins = livePorts(access.inputs), outs = livePorts(access.outputs);
+  const ins = livePorts(access.inputs, true), outs = livePorts(access.outputs, true);   // (Bluetooth ports too: for picking by hand)
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(`${SLUG}-mirror-ports`) || "{}"); } catch {}
   const c = MP.choose(access, saved, answered);

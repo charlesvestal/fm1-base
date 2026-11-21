@@ -11,7 +11,7 @@ DAW's MIDI through) sends the HELLO back as it went out, with no name, so it is 
 is the one with its name, else the only one with its name but for a number at the end (Windows numbers each port),
 else the only output there is.
 
-  ports = fm1ports.find(port=None, names=())    [(input, output)], best first (port: part of a name, only those)
+  ports = fm1ports.find(port=None, names=())    [(input, output)], best first (port: part of a name, only those, even a Bluetooth one)
   inp, out, name = fm1ports.connect(...)         the first of them that opens (LookupError: none)
 """
 import re
@@ -53,9 +53,16 @@ def pair_output(name, outs):
     return outs[0] if len(outs) == 1 else None
 
 
-def pairs(ins, outs):
-    """every input that has an output: [(input, output)]"""
-    ins, outs = list(dict.fromkeys(ins)), list(dict.fromkeys(outs))
+def pairs(ins, outs, bluetooth=False):
+    """every input that has an output: [(input, output)]. Never a Bluetooth MIDI port (an FM-1 paired over Bluetooth shows
+    one beside its USB port: an install or a backup over it is not offered, and it answers nothing asked of it), unless
+    bluetooth=True (a port the user named): then they come last"""
+    def listed(names):
+        names = list(dict.fromkeys(names))
+        if not bluetooth:
+            return [n for n in names if "bluetooth" not in (n or "").lower()]
+        return sorted(names, key=lambda n: "bluetooth" in (n or "").lower())
+    ins, outs = listed(ins), listed(outs)
     return [(i, o) for i in ins if (o := pair_output(i, outs))]
 
 
@@ -154,13 +161,14 @@ def ask(mido=None, only=None, skip=lambda n: False, tries=TRIES, timeout=TIMEOUT
 
 
 def find(port=None, names=(), mido=None, hello=True, timeout=TIMEOUT):
-    """the FM-1's port pairs, best first: [(input, output)]. port: part of a port's name (any case), and only those
-    (nothing asked); else the pairs with a usual name or one of names, and when there are none, the ones that answer
-    a HELLO (hello=False: not asked)"""
+    """the FM-1's port pairs, best first: [(input, output)]. port: part of a port's name (any case), and only those,
+    even a Bluetooth one (nothing asked); else the pairs with a usual name or one of names, and when there are none, the
+    ones that answer a HELLO (hello=False: not asked)"""
     mido = _mido(mido)
+    if port:                                    # (a port asked for by name is kept even when it is a Bluetooth one)
+        return [p for p in pairs(mido.get_input_names(), mido.get_output_names(), bluetooth=True)
+                if port.lower() in p[0].lower()]
     ps = pairs(mido.get_input_names(), mido.get_output_names())
-    if port:
-        return [p for p in ps if port.lower() in p[0].lower()]
     mine = [p for p in ps if usual(p[0], names)]
     if mine or not hello:
         return mine

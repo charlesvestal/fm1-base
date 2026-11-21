@@ -27,12 +27,20 @@ export function usualName(name, names = PORT_NAMES) {
   return names.some((p) => n.includes(p));
 }
 
-export const livePorts = (map) => [...map.values()].filter((p) => p.state !== "disconnected");
+// never a Bluetooth MIDI port: an FM-1 paired over Bluetooth shows one beside its USB port, an install or a backup over
+// it is not offered, and it answers nothing asked of it. bluetooth = true: a list the user picks from by hand (the mirror
+// page's two drop-downs) keeps them, after the others
+export const IS_BLUETOOTH = (name) => /bluetooth/i.test(name || "");
+export const livePorts = (map, bluetooth = false) => {
+  const live = [...map.values()].filter((p) => p.state !== "disconnected" && (bluetooth || !IS_BLUETOOTH(p.name)));
+  return bluetooth ? [...live.filter((p) => !IS_BLUETOOTH(p.name)), ...live.filter((p) => IS_BLUETOOTH(p.name))] : live;
+};
 
 // an input's output: the one with its name; else the only one with its name but for a number at the end (Windows
-// numbers each port); else the only output there is. null: none
+// numbers each port); else the only output there is. null: none. A Bluetooth input (picked by hand) looks among the
+// Bluetooth outputs too
 export function outputFor(access, input) {
-  const outs = livePorts(access.outputs);
+  const outs = livePorts(access.outputs, IS_BLUETOOTH(input.name));
   const bare = (s) => (s || "").replace(/\s+\d+$/, "");
   const same = outs.filter((o) => bare(o.name) === bare(input.name));
   return outs.find((o) => o.name === input.name) || (same.length === 1 ? same[0] : null) ||
