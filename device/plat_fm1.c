@@ -63,7 +63,18 @@ int plat_battery(void)                           /* (a level moves once the read
 }
 #ifdef APP_BATTERY_RAW
 int32_t plat_battery_raw(void) { return batt_raw; }
+/* the supply (plat_battery_charging): the chip's P33 power registers, read by the main loop (device/main_fm1.c, twice a second,
+ * interrupts off: the P33 bus is shared). JieLi AC79 SDK include_lib/driver/cpu/wl82/asm/p33.h: LDO5V_DET_GET = P3_LDO5V_CON
+ * (0xA1) bit 5, IS_CHARGE_EN = P3_CHG_CON0 (0x1A) bit 0, CHARGE_FULL_FLAG_GET = P3_CHG_READ (0x19) bit 0 */
+static int8_t supply_st = -1;
+static void plat_supply_read(void)
+{
+    uint8_t ldo = fm1_p33_read(0xA1u), con = fm1_p33_read(0x1Au), rd = fm1_p33_read(0x19u);
+    supply_st = !(ldo & 0x20u) ? 0 : (con & 1u) && !(rd & 1u) ? 2 : 1;
+}
+int plat_battery_charging(void) { return supply_st; }
 #endif
+
 
 #if FM1B_HEADPHONES
 #include "plat_hp.c"                       /* the headphone jack, debounced (plat_headphones) */
@@ -278,6 +289,10 @@ _Static_assert(FL_GLOB_LO == PLAT_XDATA2_LO && FL_GLOB_HI == PLAT_XDATA2_HI, "PL
 const uint8_t *plat_data(uint32_t off)
 {
     return flash_ok && PLAT_DATA_OK(off, 1u) ? (const uint8_t *)FL_XIP(off) : 0;
+}
+int plat_boot_read(uint32_t off, void *dst, uint32_t n)   /* (unity.c st_read: the RAM driver in 256-byte IRQ-off windows) */
+{
+    return flash_ok && plat_in(off, n, 0u, 0x4000u) ? st_read(off, dst, n) : -1;
 }
 int plat_data_erase(uint32_t off)
 {

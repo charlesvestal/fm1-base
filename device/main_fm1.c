@@ -1254,6 +1254,7 @@ static void fm1_main(void)
 {
     int32_t knob = 512 * 16;
     uint32_t batt_t = 0;                            /* (the battery's last reading, fm1_ms) */
+    uint32_t supply_t = 0;                          /* (the supply's: plat_battery_charging) */
     uint32_t last_frame = 0;
     int took;                                       /* a SysEx frame taken this pass (not the updater's) */
     {
@@ -1430,6 +1431,14 @@ static void fm1_main(void)
             if (b > 0)
                 batt_raw = batt_raw ? batt_raw + (b - batt_raw) / 16 : b;
         }
+#ifdef APP_BATTERY_RAW
+        if (fm1_ms - supply_t >= 500u) {            /* the supply: 5 V and the charger (plat_battery_charging) */
+            uint32_t f = irq_save();
+            plat_supply_read();
+            irq_restore(f);
+            supply_t = fm1_ms;
+        }
+#endif
         fm1b_dbg.stage = 2;                         /* (breadcrumbs: where a watchdog reset found the loop) */
         ble_poll();                                 /* Bluetooth's tasks, once started */
 #if FM1B_WIFI
