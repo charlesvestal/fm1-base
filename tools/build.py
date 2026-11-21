@@ -25,6 +25,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              With any USB audio option (usb_audio_*, usb_midi_last, usb_iad) off its default, a digest of the
                              configuration and id_prefix is mixed into it (FM1B_USB_SERIAL_MIX; usb_serial_mix below), so Windows
                              sees a new device when the descriptors change; with all at their defaults, the chip's alone as before
+                             That is only with usb_serial = true: a firmware that turns on a USB audio option without it still
+                             shows Windows the same device (build.py prints a note for it, usb_serial_note, and changes nothing)
   usb_name_fn = "fn"         the name of the app's function `const char *fn(void)` the USB product name is asked of each time a
                              host reads it (FELUCCA_USB_NAME_FN; usb_product is the fallback, the audio devices' names follow it
                              unless usb_audio_in_name / usb_audio_out_name are set): a name with something of this FM-1 in it
@@ -1182,6 +1184,17 @@ def usb_serial_flags():
     return flags
 
 
+def usb_serial_note(conf):
+    """the note build_app prints (stderr, no flag, nothing in the image) when a USB audio option is on without
+    usb_serial = true: the digest of usb_serial_mix is part of the serial only with it, so a computer would keep taking
+    this firmware for the same device as before; None otherwise"""
+    if conf.get("usb_serial") or usb_serial_mix(conf) is None:
+        return None
+    return ("note: fm1.toml turns on USB audio options without usb_serial = true: a computer keeps treating this firmware "
+            "as the same device as before (Windows binds drivers by VID/PID/serial); set usb_serial = true so the "
+            "configuration is part of the serial")
+
+
 def cache_ram_ways():
     """fm1.toml cache_ram_ways: the data cache's ways used as RAM, 0 (none: off), 2, 4 or 7 (FM1B_CACHE_RAM=N in the
     environment over it)"""
@@ -1304,6 +1317,9 @@ def build_app():
         if CONF.get(key):
             flags.append(f'-D{macro}="{CONF[key]}"')
     flags += usb_serial_flags()                   # a serial number from the chip's ID (device/plat_fm1.c)
+    note = usb_serial_note(CONF)                  # USB audio options without usb_serial: a text only, the flags as they were
+    if note:
+        print(note, file=sys.stderr)
     if CONF.get("usb_name_fn"):                   # the product name asked of the app at run time (felucca-bsp chip/usb.c)
         fn = CONF["usb_name_fn"]
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", fn):
