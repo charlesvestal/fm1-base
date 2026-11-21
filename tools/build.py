@@ -104,6 +104,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   usb_host = true            the USB port as a MIDI host when the app asks (FM1B_USB_HOST: felucca-bsp's
                              FELUCCA_USB_HOST, docs/USB_HOST.md; plat_usb_host in plat.h): a USB-MIDI controller or
                              synth, directly or behind one powered hub (the FM-1 gives no power). Boot is a device
+  conf_gen = "x.py args"     a script of the app (cwd APP_DIR) whose output, fm1.toml lines (ble = false), replaces the
+                             file's own before the build: a setting the app's configuration chooses
   mirror = true              the screen and panel mirrored over USB (FM1B_MIRROR: device/mirror.c; web/mirror/,
                              tools/fm1_mirror.py), the panel played from the host; FM1B_MIRROR=1 in the environment
                              builds it in whatever fm1.toml says (an app's demo build), FM1B_POOL_SPARE=N the
@@ -286,6 +288,7 @@ own instead, with the tree read-only (tc). The package's three SDK files come fr
 import argparse
 import functools
 import hashlib
+import json
 import os
 import platform
 import re
@@ -353,17 +356,22 @@ BT_SYMS = ("btstack_init", "bt_ble_init", "bt_max_pwr_set", "le_controller_set_m
 
 
 def read_conf(path):
-    """fm1.toml: key = "string" | number | true | false | ["string", ...] (a list may go on over several lines),
+    return parse_conf(path.read_text(), path)
+
+
+def parse_conf(text, path):
+    """fm1.toml: key = "string" | number | true | false | ["string", ...] | [[number, ...], ...] (a list may go on over
+    several lines),
     # comments (the little TOML a firmware needs)"""
     conf = {}
     pending, start = "", 0
-    for no, line in enumerate(path.read_text().splitlines(), 1):
+    for no, line in enumerate(text.splitlines(), 1):
         line = re.sub(r"\s+#.*$", "", line).strip()
         if not line or line.startswith("#"):
             continue
         if pending:                                  # a list's next line
             line, no = pending + " " + line, start
-        if re.match(r"[A-Za-z_][A-Za-z0-9_]*\s*=\s*\[", line) and "]" not in line:
+        if re.match(r"[A-Za-z_][A-Za-z0-9_]*\s*=\s*\[", line) and line.count("[") > line.count("]"):
             pending, start = line, no
             continue
         pending = ""
@@ -905,6 +913,17 @@ def cpu2_stack_flags():
     return [f"-DFM1_CPU1_USTACK_BYTES={n}"]
 
 
+def write_sizes(img, syms):
+    """OUT/sizes.json: this build's budgets, whether or not it fits (a caller that sizes configurations reads it, as
+    a configuration builder does): flash = the app image against the app slot, ram = .data+.bss, pool, ramtext = the RAM code"""
+    def sym(name):
+        mm = re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M)
+        return int(mm.group(1), 16) if mm else 0
+    sizes = {"flash": len(img), "ram": sym("_bss_end") - sym("_data_start"), "pool": sym("_pool_end") - sym("_pool_start"),
+             "ramtext": sym("_rt_end") - sym("_rt_start"), "app_slot": APP_SLOT}
+    (OUT / "sizes.json").write_text(json.dumps(sizes, indent=1) + "\n")
+
+
 def build_app():
     flags = [*CFLAGS, *FPU, *inc(BSP / "chip", BSP / "boards" / "fm1", SRC / "device", SRC / "include", SRC / "lib", APP, GEN,
                                  *(APP / d for d in CONF.get("include", []) + CONF.get("device_include", [])))]
@@ -994,11 +1013,11 @@ def build_app():
         raise SystemExit(f"fm1.toml: unity_opt is \"s\" or \"z\", not {unity_opt!r}")
     flags = [f"-O{unity_opt}" if f == "-Os" else f for f in flags]
     ir = CONF.get("ir_pass")                      # the app's pass over the IR (see the top)
-    ir_out = ["-S", "-emit-llvm", "-Xclang", "-disable-llvm-optzns"] if ir else []
+    ir_out = ["-S", "-emit-llvm", "-Xclang", "-disable-llvm-optzns"] if ir else ["-c"]   # (IR: -S, so no -c: clang warns "-c unused")
     units = [("cc", "-c", BSP / "chip" / "crt0.S", "-o", OUT / "crt0.o"),
              ("cc", "-c", BSP / "chip" / "fm1_vec.S", "-o", OUT / "fm1_vec.o"),
              ("cc", "-c", BSP / "chip" / "fm1_isr.S", "-o", OUT / "fm1_isr.o"),
-             ("cc", *flags, *ir_out, "-c", SRC / "device" / "unity.c", "-o", OUT / ("unity.ll" if ir else "unity.o"))]
+             ("cc", *flags, *ir_out, SRC / "device" / "unity.c", "-o", OUT / ("unity.ll" if ir else "unity.o"))]
     objs = [OUT / "crt0.o", OUT / "fm1_vec.o", OUT / "fm1_isr.o", OUT / "unity.o"]
     if CPU2:                                      # the second core's entry and stacks
         units.append(("cc", *cpu2_stack_flags(), "-c", BSP / "chip" / "fm1_cpu1.S", "-o", OUT / "fm1_cpu1.o"))
@@ -1014,7 +1033,7 @@ def build_app():
     for u in CONF.get("o2", []):
         for f in (sorted(APP.glob(u)) if any(ch in u for ch in "*?[") else [APP / u]):
             o = OUT / "o2" / ("_".join(f.relative_to(APP).with_suffix("").parts) + ".o")
-            units.append(("cc", *o2, *o2_more, *inc(f.parent), *ir_out, "-c", f, "-o", o.with_suffix(".ll") if ir else o))
+            units.append(("cc", *o2, *o2_more, *inc(f.parent), *ir_out, f, "-o", o.with_suffix(".ll") if ir else o))
             objs.append(o)
             o2_units.append((f, o))
     jieli = (BLE and not OWN) or WIFI             # JieLi's libraries linked (the shim, LTO)
@@ -1800,6 +1819,13 @@ def main():
     a = ap.parse_args()
     APP = a.app.resolve()
     CONF = read_conf(APP / "fm1.toml")
+    if CONF.get("conf_gen"):                      # the app's script (cwd APP_DIR) prints fm1.toml lines over the file's own
+        c = CONF["conf_gen"].split()
+        r = subprocess.run([sys.executable, str(APP / c[0]), *c[1:]], cwd=APP, capture_output=True, text=True)
+        if r.returncode:
+            sys.stderr.write(r.stderr)
+            raise SystemExit(f"build: conf_gen {c[0]} failed")
+        CONF.update(parse_conf(r.stdout, c[0]))
     NAME = CONF.get("name", APP.name).lower()
     BLE = bool(CONF.get("ble")) and not a.no_ble
     OWN = BLE and CONF.get("ble_stack", "jieli") == "own"
@@ -1853,6 +1879,7 @@ def main():
         gen.result()
         ota = ldr.result()
     img, syms, dis, rt = build_app()
+    write_sizes(img, syms)
     errors, notes = check(img, syms, dis, rt)
     hal_err = mmio_check()
     errors += hal_err
