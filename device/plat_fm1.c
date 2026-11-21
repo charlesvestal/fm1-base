@@ -548,21 +548,20 @@ const uint8_t *plat_chip_uid(void) { return 0; }
 #ifdef FELUCCA_USB_SERIAL_FN
 /* the USB serial number (fm1.toml usb_serial, felucca-bsp FELUCCA_USB_SERIAL_FN): plat_chip_uid's 16 bytes folded into 12
  * (the last 4 over the first 4), 24 hex digits; "" with no ID (the bsp then says "0"). The same on every firmware with it,
- * so a computer tells FM-1s apart whichever port they are in (macOS's MIDI setup goes by the port without one) */
+ * so a computer tells FM-1s apart whichever port they are in (macOS's MIDI setup goes by the port without one).
+ * With FM1B_USB_SERIAL_MIX (a firmware with USB audio options set: tools/build.py usb_serial_mix) the digest of its
+ * configuration is mixed in (usb_serial_mix.h), so Windows sees a new device when the descriptors change */
+#include "usb_serial_mix.h"
+#ifdef FM1B_USB_SERIAL_MIX
+_Static_assert(sizeof(FM1B_USB_SERIAL_MIX) == 25, "FM1B_USB_SERIAL_MIX: 24 hex digits");
+#define FM1B_SERIAL_MIX FM1B_USB_SERIAL_MIX
+#else
+#define FM1B_SERIAL_MIX ((const char *)0)
+#endif
 const char *FELUCCA_USB_SERIAL_FN(void)
 {
     static char sn[25];
-    const uint8_t *u = plat_chip_uid();
-    uint32_t i;
-    if (!u)
-        return "";
-    for (i = 0; i < 12u; i++) {
-        uint8_t b = (uint8_t)(u[i] ^ (i < 4u ? u[12u + i] : 0u));
-        sn[2u * i] = "0123456789ABCDEF"[b >> 4];
-        sn[2u * i + 1u] = "0123456789ABCDEF"[b & 15u];
-    }
-    sn[24] = 0;
-    return sn;
+    return usb_serial_make(sn, plat_chip_uid(), FM1B_SERIAL_MIX);
 }
 #endif
 int plat_dev_id(void) { return plat_uid_hash16(plat_chip_uid()); }
