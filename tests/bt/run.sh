@@ -61,10 +61,14 @@ t bt_crypto bt_crypto_test.c
 t bt_ssp bt_ssp_test.c
 t bt_lmp bt_lmp_test.c
 t bt_afh bt_afh_test.c
+# Bluetooth audio under CPU load (bt_ltx.c): CPU0 at 50/100/130/200 % for 10 simulated minutes, the AFH switches met
+t bt_ltx bt_ltx_test.c
 t bt_l2cap bt_l2cap_test.c
 t bt_sdps bt_sdps_test.c
 t bt_avrcp bt_avrcp_test.c
 t bt_avdtp bt_avdtp_test.c
+# the frames kept for the app's render jobs (bt_keep.c): their bytes after a flush, two callers
+t bt_keep bt_keep_test.c -O2 -w
 t bt_sbc bt_sbc_test.c -O2 -w -I$T/ref/sbc_dec $T/ref/sbc_dec/*.c -lm
 # FM-1 to FM-1: two whole stacks, units built apart
 F2F=1

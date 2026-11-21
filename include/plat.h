@@ -302,6 +302,18 @@ int plat_bta_timed_out(void);          /* PLAT_BTA_REFUSED because the set-up ti
 int32_t plat_bta_latency_us(void);     /* what the stream adds on the FM-1's side (its queue), us; -1: not streaming.
                                         * An app that follows a clock may play that much earlier (the device's own
                                         * buffer comes on top and is not known) */
+/* the stream's SBC encoding as the app's render jobs (an app with a second core; fm1.toml bt_audio_jobs = true: FM1B_BTA_JOBS,
+ * 1,280 B more of the pool, and not with cpu2_fallback; without it these do nothing). With keep on, the frames a render's output completes are kept and
+ * not encoded at the feed; the next render encodes them, one a plat_bta_job call (either core, from the render: not the
+ * main loop), and the next feed sends them (one half later, the same bytes). One frame is encoded at a time: a call that
+ * finds one being encoded by the other core, or none left, does nothing. Those the render did not encode, the feed
+ * encodes as before. Without Bluetooth audio: 0, nothing */
+int plat_bta_job_pending(void);        /* kept frames not yet taken by a job (the one being encoded is not counted) */
+void plat_bta_job(void);               /* the next one encoded (nothing when one is being encoded, or none is left) */
+void plat_bta_job_keep(int on);        /* the render takes them (1) or not (0: encoded at the feed, as before) */
+uint32_t plat_bta_job_inline(void);    /* frames encoded at the feed instead, since boot (a job not taken, or keep off) */
+int plat_bta_streams(void);            /* 1: the last render went to Bluetooth (the FM-1's own output muted for it); for the
+                                        * render (the audio interrupt) to plan its block by. 0 without Bluetooth audio */
 /* Bluetooth audio's big buffers in the app's memory (fm1.toml bt_audio_mem = "app": FM1B_BTA_MEM 1): the audio packets'
  * queue and the receptions' ring, which only a run of the Classic radio uses (a scan, a page, a link), are a block the
  * app lends while an AUDIO mode is on, instead of static RAM: an app that switches Bluetooth audio off has that RAM
@@ -315,8 +327,6 @@ int32_t plat_bta_latency_us(void);     /* what the stream adds on the FM-1's sid
 #endif
 uint32_t plat_bta_mem_bytes(void);
 int plat_bta_mem(void *p);
-int plat_bta_streams(void);            /* 1: the last render went to Bluetooth (the FM-1's own output muted for it); for the
-                                        * render (the audio interrupt) to plan its block by. 0 without Bluetooth audio */
 
 /* WiFi (fm1.toml wifi = true: FM1B_WIFI 1): a station on JieLi's WiFi libraries and the SDK's lwIP, on the same shim.
  * Off until the app turns it on; then it joins the networks it joined before (kept in the app's store object OBJ_WIFI,

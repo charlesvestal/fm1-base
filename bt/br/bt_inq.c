@@ -754,6 +754,11 @@ static void bti_poll(void)                         /* the main loop */
         if (bti.mode >= BTI_M_PAGE)
             bp_sec_tick();                         /* (the link's channel assessment, bt_afh.c; its channel line) */
     }
+    if (bti.mode == BTI_M_CONN) {                  /* what this pass queued may go now: IRQ 40 hands it over (bt_ltx.c) */
+        fm1_br_irqs_hold(1);
+        blt_publish();
+        fm1_br_irqs_hold(0);
+    }
 #if FELUCCA_CDC && FELUCCA_BT_DIAG
     if (bti_st.phase == BTI_INQ_RUN) {
         done_printed = 0;

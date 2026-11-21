@@ -208,6 +208,21 @@ static uint8_t plat_host_exact;
 static const char *plat_host_dir = ".";        /* the run's output directory (an app's commands: "out:NAME") */
 static const char *plat_host_line = "";        /* the script's line being run (an app's command with more words) */
 
+/* an app's tests of its split: FM1B_HOST_CPU2_BUSY=k, the second core
+ * reads busy for k looks after each job it was handed (it ran at once all the same; on the device the first core's calls
+ * to plat_bta_job meanwhile find a frame in flight and do nothing: tests/bt/bt_keep_test.c);
+ * FM1B_HOST_BTA_JOBS=1, a kept SBC frame always waiting (plat_bta_job_pending), each job one frame (counted, not encoded) */
+static int host_env_n(const char *k, int *cache)
+{
+    if (*cache < 0) {
+        const char *v = getenv(k);
+        *cache = v ? atoi(v) : 0;
+    }
+    return *cache;
+}
+static int host_busy_n = -1, host_bta_n = -1, host_busy_left;
+static uint32_t host_bta_jobs;
+
 uint32_t plat_ms(void);
 uint32_t plat_buttons(void);
 uint32_t plat_keys(void);
@@ -870,6 +885,12 @@ void plat_bta_hangup(void)
         bth_st = bth_rest();
 }
 int plat_bta_state(void) { return bth_st; }
+int plat_bta_streams(void) { return bth_st == PLAT_BTA_STREAMING && bth_out; }
+int plat_bta_job_pending(void) { return host_env_n("FM1B_HOST_BTA_JOBS", &host_bta_n) > 0; }   /* (the host's stream
+                                                 * encodes nothing; FM1B_HOST_BTA_JOBS: a frame always kept, above) */
+void plat_bta_job(void) { host_bta_jobs++; }
+void plat_bta_job_keep(int on) { (void)on; }   /* (the device's own output muted then) */
+uint32_t plat_bta_job_inline(void) { return 0; }
 void plat_bta_output(int to_device)
 {
     if (bth_st == PLAT_BTA_STREAMING)
@@ -907,6 +928,12 @@ static int bta_script(const char *what, const char *name, int lineno)   /* "bta 
     printf("line %d: bta %s %s: add or drop NAME\n", lineno, what, name);
     return 1;
 }
+#else
+int plat_bta_streams(void) { return 0; }
+int plat_bta_job_pending(void) { return host_env_n("FM1B_HOST_BTA_JOBS", &host_bta_n) > 0; }
+void plat_bta_job(void) { host_bta_jobs++; }
+void plat_bta_job_keep(int on) { (void)on; }
+uint32_t plat_bta_job_inline(void) { return 0; }
 #endif
 #if FM1B_WIFI
 /* WiFi (FM1B_WIFI): a stand-in, two networks around ("Home", kept, and "Cafe", open), on 0.5 s after asked, joined
@@ -1782,12 +1809,13 @@ int plat_cpu2_run(void (*fn)(uint32_t), uint32_t arg)
     cpu2_in_job = 1;
     fn(arg);
     cpu2_in_job = 0;
+    host_busy_left = host_env_n("FM1B_HOST_CPU2_BUSY", &host_busy_n);
     return 1;
 }
 uint32_t plat_core(void) { return (uint32_t)cpu2_in_job; }
 int plat_cpu2_wait(void) { return 0; }
 void plat_cpu2_sync(void) {}
-int plat_cpu2_busy(void) { return 0; }
+int plat_cpu2_busy(void) { return host_busy_left > 0 ? host_busy_left--, 1 : 0; }
 int plat_cpu2_gave_up(void) { return 0; }
 uint32_t plat_cpu2_bad(void) { return 0; }
 int plat_cpu2_barred(void) { return 0; }

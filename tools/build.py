@@ -66,6 +66,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   bt_audio_mem = "app"       with bt_audio: its audio packets' queue and the receptions' ring (17.7 KB) lent by the app
                              while an AUDIO mode is on, not static RAM (FM1B_BTA_MEM; plat.h plat_bta_mem): an app
                              whose arena gets them back while Bluetooth audio is off. Default "static"
+  bt_audio_jobs = true       with bt_audio and cpu2: the app runs the stream's SBC frames as render jobs (plat.h plat_bta_job*,
+                             FM1B_BTA_JOBS): 1,280 B more pool for the two kept frames. Off by default: the feed
+                             encodes them, and the calls do nothing. Not with cpu2_fallback
   bt_audio_sim = true        with bt_audio: the host simulator and the browser emulator built with FM1B_BT_AUDIO, on
                              fm1-base's stand-in for plat_bta_* (the script's "bta add NAME"); off by default, so an
                              app keeps its own stand-in there (without FM1B_BT_AUDIO)
@@ -809,6 +812,22 @@ def bta_mem_flags():
     return ["-DFM1B_BTA_MEM=1"] if v == "app" and CONF.get("bt_audio") else []
 
 
+def bta_jobs_flags():
+    """fm1.toml bt_audio_jobs = true (with bt_audio): the app runs the stream's SBC frames as render jobs (plat.h
+    plat_bta_job*, FM1B_BTA_JOBS). It needs cpu2 (the jobs' lock is the two cores'), and not cpu2_fallback: a second core
+    retired in the middle of a job leaves its frame in flight and the lock's flag set, and the feed's flush would wait
+    for it in the audio interrupt until the watchdog restarts"""
+    if not CONF.get("bt_audio_jobs"):
+        return []
+    if not CONF.get("cpu2"):
+        raise SystemExit("build: fm1.toml bt_audio_jobs = true needs cpu2 = true (the jobs' lock is the two cores')")
+    if CONF.get("cpu2_fallback"):
+        raise SystemExit("build: fm1.toml bt_audio_jobs = true does not go with cpu2_fallback = true (a second core retired "
+                         "in the middle of a job leaves its frame in flight, and the feed would wait for it in the audio "
+                         "interrupt until the watchdog restarts): leave cpu2_fallback off, a failure then restarts the FM-1")
+    return ["-DFM1B_BTA_JOBS=1"]
+
+
 def radio_units():
     """copy what the Bluetooth or WiFi build needs from the SDK into build/ble (the container sees only this tree);
     return the compile commands, the objects and the link's libraries"""
@@ -943,6 +962,7 @@ def build_app():
                 flags.append("-DBLE_CENTRAL=3")
         if CONF.get("bt_audio"):                   # Bluetooth audio out (A2DP source, bt/br)
             flags += ["-DFM1B_BT_AUDIO=1", *bta_mem_flags()]
+            flags += bta_jobs_flags()              # the app's render jobs encode the SBC frames (plat_bta_job*)
             if CONF.get("bt_log"):                 # its step-by-step lines on the radio's log (fm1_remote.py log)
                 flags.append("-DFM1B_BT_LOG=1")
         if CONF.get("ble_midi_time"):              # BLE MIDI in by the sender's time (plat_midi_in_t24), transport not held
