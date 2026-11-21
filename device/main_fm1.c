@@ -1562,18 +1562,22 @@ void fm1_cstart(void)
     fm1_irq_init();
     for (d = _bss_start; d < _bss_end; d++)
         *d = 0;
+    uint32_t *pool_dirty_end = _pool_end;           /* (where the boot decoder's tables may have left the RAM dirty) */
     if (_rt_load[0] == BOOT_LZMA_MAGIC) {
         /* the load images boot-packed (fm1.toml boot_pack, tools/boot_pack.py), .ram_text's then .data's, the decoder's
          * tables in the pool, cleared after; one that does not unpack exactly: update mode */
         const uint32_t *at = boot_image(_rt_load, _rt_start, _rt_end);
         (void)boot_image(at, _data_start, _data_end);
+        if (_pool_start + (BOOT_LZMA_PROBS + 1u) / 2u > pool_dirty_end)   /* (a pool smaller than the tables: they run on
+                                                                          * into the packed SRAM's free part) */
+            pool_dirty_end = _pool_start + (BOOT_LZMA_PROBS + 1u) / 2u;
     } else {
         for (s = _data_load, d = _data_start; d < _data_end; s++, d++)
             *d = *s;
         for (s = _rt_load, d = _rt_start; d < _rt_end; s++, d++)
             *d = *s;
     }
-    for (d = _pool_start; d < _pool_end; d++)
+    for (d = _pool_start; d < pool_dirty_end; d++)
         *d = 0;
 #if FM1B_CACHE_RAM
     fm1_cache_ram_init(FM1B_CACHE_RAM);             /* data-cache ways as RAM (felucca-bsp's fm1_cache_ram.h): its RAM

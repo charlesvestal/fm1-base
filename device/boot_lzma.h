@@ -39,7 +39,7 @@ static inline void boot_rc_norm(boot_rc_t *r)
         r->range<<=8;r->code=(r->code<<8)|*r->at++;
     }
 }
-static inline uint32_t boot_rc_bit(boot_rc_t *r,volatile uint16_t *p)
+static __attribute__((noinline)) uint32_t boot_rc_bit(boot_rc_t *r,volatile uint16_t *p)
 {
     uint32_t v=*p,bound=(r->range>>11)*v,b;
     if(r->code<bound){r->range=bound;*p=(uint16_t)(v+((2048u-v)>>5));b=0;}
