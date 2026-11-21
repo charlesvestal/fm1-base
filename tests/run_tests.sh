@@ -174,6 +174,10 @@ if command -v node >/dev/null 2>&1; then
 else
     echo "  skip backup-page (no node)"
 fi
+# an update or the soft key's UBOOT begins: the app stops cleanly first (APP_UPDATE_BEGIN), before the first erase or
+# write and before the restart (bsp/chip/ota.c on a simulated NOR; main_fm1.c's order)
+run update-begin sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -o $OUT/update_begin_test \
+    tests/update_begin_test.c && $OUT/update_begin_test"
 PKG=template/build/template.fwsc
 [ -f "$PKG" ] || PKG=template/build/template-usb.fwsc      # (a build without the radio, --no-ble: CI's)
 if [ -f "$PKG" ]; then

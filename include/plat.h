@@ -795,6 +795,15 @@ int app_stats_quiet(void);
  *   APP_LOG         void app_log(void (*line)(const char *t))   the development readout over USB-MIDI (F0 7D 4C 47 F7,
  *                   "LG"): the app's own lines, each through line (ASCII, 40 characters at most), before its "end".
  *                   Main loop
+ *   APP_UPDATE_BEGIN int app_update_begin(void)   an update (the upgrade command) or the soft key's UBOOT from the
+ *                   host begins: stop cleanly (a sequencer stopped, its notes and MIDI OUT let go), before anything is
+ *                   staged or erased and before the restart. Called once per main-loop pass (the audio interrupt
+ *                   running, the watchdog fed around it) until it returns 0 (stopped; return at once when nothing
+ *                   plays) or PLAT_UPDATE_BEGIN_MS (300 ms, device/update_begin.h) have passed since the first call:
+ *                   the update goes ahead then whatever it returns, so a hook that never finishes cannot stop an
+ *                   update. Return nonzero while it still needs time, never wait inside it. An update then runs
+ *                   app_panic; the soft key's UBOOT only the platform's audio stop (no app code after the hook).
+ *                   Without it: nothing waited for
  *
  * Screen mirroring (fm1.toml mirror = true: FM1B_MIRROR 1, device/mirror.c): the screen and the panel live on a
  * computer (base/web/mirror/, tools/fm1_mirror.py), and the panel played from it. Nothing for the app to call; an app
