@@ -16,8 +16,15 @@
 #define FELUCCA_BT_DIAG 0
 #define FELUCCA_DUAL 0                            /* (the second core is fm1-base's: it keeps to RAM, cpu2.c) */
 #define IN_POOL PLAT_POOL
-#define BA_KEEP 2u                                /* a half's SBC frames kept for the app's render jobs (bt_acl.c,
-                                                   * plat_bta_job*: two a 256-frame half) */
+#ifndef FM1B_BTA_JOBS
+#define FM1B_BTA_JOBS 0                           /* fm1.toml bt_audio_jobs = true: the app runs the SBC frames as render jobs */
+#endif
+#if FM1B_BTA_JOBS
+#define BA_KEEP 2u                                /* a half's SBC frames kept for the app's render jobs (bt_keep.c,
+                                                   * plat_bta_job*: two a 256-frame half; 1,280 B of the pool) */
+#define BA_CORE() plat_core()                     /* (the claim's lock: which core calls) */
+#define BA_SYNC() plat_cpu2_sync()                /* (a barrier between the cores: fm1.toml cpu2 = true, cpu2.c) */
+#endif
 #ifndef BTI_RING
 #define BTI_RING 12u                              /* receptions waiting for the main loop (Optimist's 32 overflowed only while
                                                    * its console printed; there is none here): 7.3 KB of pool less */
@@ -193,10 +200,17 @@ static int own_bta_feed(const int32_t *o, uint32_t n)
 }
 
 /* ---- plat.h */
-int plat_bta_job_pending(void) { return ba_keep_n - ba_keep_done; }   /* (the render, before its split) */
-void plat_bta_job(void) { ba_keep_one(); }        /* (a render job, either core: the next kept frame encoded) */
+#if BA_KEEP
+int plat_bta_job_pending(void) { return (int)ba_keep_pending(); }   /* (the render, before its split; not the frame in flight) */
+void plat_bta_job(void) { (void)ba_keep_one(); }   /* (a render job, either core: the next kept frame encoded, none when one is in flight) */
 void plat_bta_job_keep(int on) { ba_keep_on = (uint8_t)(on != 0); }
 uint32_t plat_bta_job_inline(void) { return ba_feed_enc; }   /* (frames encoded at the feed, not as jobs) */
+#else                                              /* (without fm1.toml bt_audio_jobs: the feed encodes, as it always did) */
+int plat_bta_job_pending(void) { return 0; }
+void plat_bta_job(void) {}
+void plat_bta_job_keep(int on) { (void)on; }
+uint32_t plat_bta_job_inline(void) { return 0; }
+#endif
 uint32_t plat_bta_mem_bytes(void)
 {
 #if FM1B_BTA_MEM

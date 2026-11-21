@@ -66,6 +66,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   bt_audio_mem = "app"       with bt_audio: its audio packets' queue and the receptions' ring (17.7 KB) lent by the app
                              while an AUDIO mode is on, not static RAM (FM1B_BTA_MEM; plat.h plat_bta_mem): an app
                              whose arena gets them back while Bluetooth audio is off. Default "static"
+  bt_audio_jobs = true       with bt_audio and cpu2: the app runs the stream's SBC frames as render jobs (plat.h plat_bta_job*,
+                             FM1B_BTA_JOBS): 1,280 B more pool for the two kept frames. Off by default: the feed
+                             encodes them, and the calls do nothing
   bt_audio_sim = true        with bt_audio: the host simulator and the browser emulator built with FM1B_BT_AUDIO, on
                              fm1-base's stand-in for plat_bta_* (the script's "bta add NAME"); off by default, so an
                              app keeps its own stand-in there (without FM1B_BT_AUDIO)
@@ -943,6 +946,10 @@ def build_app():
                 flags.append("-DBLE_CENTRAL=3")
         if CONF.get("bt_audio"):                   # Bluetooth audio out (A2DP source, bt/br)
             flags += ["-DFM1B_BT_AUDIO=1", *bta_mem_flags()]
+            if CONF.get("bt_audio_jobs"):          # the app's render jobs encode the SBC frames (plat_bta_job*)
+                if not CONF.get("cpu2"):
+                    raise SystemExit("build: fm1.toml bt_audio_jobs = true needs cpu2 = true (the jobs' lock is the two cores')")
+                flags.append("-DFM1B_BTA_JOBS=1")
             if CONF.get("bt_log"):                 # its step-by-step lines on the radio's log (fm1_remote.py log)
                 flags.append("-DFM1B_BT_LOG=1")
         if CONF.get("ble_midi_time"):              # BLE MIDI in by the sender's time (plat_midi_in_t24), transport not held

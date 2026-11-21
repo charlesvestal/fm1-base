@@ -67,6 +67,8 @@ t bt_l2cap bt_l2cap_test.c
 t bt_sdps bt_sdps_test.c
 t bt_avrcp bt_avrcp_test.c
 t bt_avdtp bt_avdtp_test.c
+# the frames kept for the app's render jobs (bt_keep.c): their bytes after a flush, two callers
+t bt_keep bt_keep_test.c -O2 -w
 t bt_sbc bt_sbc_test.c -O2 -w -I$T/ref/sbc_dec $T/ref/sbc_dec/*.c -lm
 # FM-1 to FM-1: two whole stacks, units built apart
 F2F=1

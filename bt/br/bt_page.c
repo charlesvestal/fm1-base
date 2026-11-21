@@ -1018,8 +1018,7 @@ static void con_btpage(const char *p)
             bp_afh_send(1);
         }
         bti_kv("btpage: afh ", (uint32_t)v);
-        bti_kv(" at slot ", blt.afh_at);
-        con_puts("\r\n");
+        con_puts(" queued: its instant is set when the PDU goes out (the status line's afh=)\r\n");
         return;
     }
 #endif

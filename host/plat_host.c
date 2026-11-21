@@ -209,7 +209,8 @@ static const char *plat_host_dir = ".";        /* the run's output directory (an
 static const char *plat_host_line = "";        /* the script's line being run (an app's command with more words) */
 
 /* an app's tests of its split: FM1B_HOST_CPU2_BUSY=k, the second core
- * reads busy for k looks after each job it was handed (it ran at once all the same: the first core takes jobs meanwhile);
+ * reads busy for k looks after each job it was handed (it ran at once all the same; on the device the first core's calls
+ * to plat_bta_job meanwhile find a frame in flight and do nothing: tests/bt/bt_keep_test.c);
  * FM1B_HOST_BTA_JOBS=1, a kept SBC frame always waiting (plat_bta_job_pending), each job one frame (counted, not encoded) */
 static int host_env_n(const char *k, int *cache)
 {

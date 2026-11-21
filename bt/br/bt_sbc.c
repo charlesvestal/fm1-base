@@ -35,7 +35,7 @@ static struct {
     int16_t bitpool, mode, freq;                    /* the settings it was encoded with */
     uint8_t frame[128];
 } sbc_sil;
-static int sbc_pcm_zero(const int16_t *pcm)
+static int sbc_pcm_zero(const int16_t *pcm)         /* pcm: 4-aligned (bt_acl.c's ba_pcm_acc and the kept frames' are) */
 {
     const uint32_t *w = (const uint32_t *)(const void *)pcm;   /* (16-bit samples, 4-aligned: two a word) */
     uint32_t i, o = 0;
@@ -74,8 +74,8 @@ void bt_sbc_init(struct bt_sbc_ctx *ctx, uint32_t sample_rate, uint8_t bitpool, 
     p->u16BitRate = (uint16_t)((8u * len * sample_rate / 128u + 999u) / 1000u);
     p->Format = SBC_FORMAT_GENERAL;
     SBC_Encoder_Init(p);
-    p->s16BitPool = bitpool;
-    sbc_sil.prev_zero = 0, sbc_sil.len = 0;         /* (silence: from the next frames, encoded as they come) */                        /* (exactly the agreed one: the rate's rounding may not land on it) */
+    p->s16BitPool = bitpool;                        /* (exactly the agreed one: the rate's rounding may not land on it) */
+    sbc_sil.prev_zero = 0, sbc_sil.len = 0;         /* (silence: from the next frames, encoded as they come) */
 }
 
 uint32_t bt_sbc_encode(struct bt_sbc_ctx *ctx, const int16_t *pcm, uint8_t *out)

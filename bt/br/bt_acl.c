@@ -300,7 +300,7 @@ static void ba_chan_open(uint32_t c)               /* both configurations done *
 static uint16_t ba_rtp_seq;
 static uint32_t ba_rtp_ts;
 static struct bt_sbc_ctx ba_sbc;
-static int16_t ba_pcm_acc[BT_SBC_SAMPLES_PER_FRAME * 2];
+static int16_t ba_pcm_acc[BT_SBC_SAMPLES_PER_FRAME * 2] __attribute__((aligned(4)));   /* (sbc_pcm_zero reads it as words) */
 static uint32_t ba_pcm_cnt;
 static uint8_t ba_sbc_init_done;
 
@@ -316,40 +316,11 @@ _Static_assert(4u + 12u + 1u + BA_MFRAMES * (12u + (8u + 16u * BA_BITPOOL + 7u) 
 static uint8_t ba_mbuf[BA_MFRAMES * 128u];
 static uint32_t ba_mlen, ba_mn;
 static uint8_t ba_live;                            /* bt_audio_feed streams (the audio ISR's) */
-/* BA_KEEP (bt_own_audio.c, plat_bta_job*: 2026-11-01, an app with a second core): the frames a half completes are kept, their
- * PCM copied, and encoded during the next render, one an app job (on either core), instead of
- * inline here on CPU0 after the render (two a 256-frame half, ~4x a synth part's per-sample cost each). Sent at the next
- * feed, in order, the same bytes, one half (5.8 ms) later. Not taken (keep off, CPU1 down and no job ran, the slots
- * full): encoded here as before */
 #ifndef BA_KEEP
 #define BA_KEEP 0u
 #endif
 #if BA_KEEP
-static int16_t ba_keep_pcm[BA_KEEP][BT_SBC_SAMPLES_PER_FRAME * 2] IN_POOL;
-static uint8_t ba_keep_frm[BA_KEEP][128] IN_POOL;
-static uint32_t ba_keep_len[BA_KEEP];
-static volatile uint8_t ba_keep_n, ba_keep_done;   /* frames kept; encoded of them (in order) */
-static volatile uint8_t ba_keep_on;                /* the app runs the jobs (plat_bta_job_keep) */
-static uint32_t ba_feed_enc;                       /* frames encoded here at the feed, on CPU0 after the render (not a job;
-                                                    * plat_bta_job_inline: the app's CPU TIMES) */
-static void ba_keep_one(void)                      /* the next kept frame encoded (a job: either core; or the feed) */
-{
-    uint32_t k = ba_keep_done;
-    if (k < ba_keep_n) {
-        ba_keep_len[k] = bt_sbc_encode(&ba_sbc, ba_keep_pcm[k], ba_keep_frm[k]);
-        ba_keep_done = (uint8_t)(k + 1u);
-    }
-}
-static void ba_sbc_out(const uint8_t *frame, uint32_t slen);
-static void ba_keep_flush(void)                    /* every kept frame encoded (the rest here) and sent, in order */
-{
-    uint32_t k;
-    while (ba_keep_done < ba_keep_n)
-        ba_keep_one(), ba_feed_enc++;
-    for (k = 0; k < ba_keep_n; k++)
-        ba_sbc_out(ba_keep_frm[k], ba_keep_len[k]);
-    ba_keep_n = ba_keep_done = 0;
-}
+#include "bt_keep.c"                               /* the frames kept for the app's render jobs (plat_bta_job*) */
 #endif
 static uint32_t ba_qavg;                           /* the audio packets queued (bt_page.c bp_mq), mean over ~0.7 s, Q8 */
 
@@ -444,11 +415,7 @@ int bt_audio_feed(const int32_t *q15_pcm, uint32_t n)   /* 1: it streams (audio.
         if (ba_pcm_cnt >= BT_SBC_SAMPLES_PER_FRAME) {
             uint8_t frame[128];
 #if BA_KEEP
-            if (ba_keep_on && ba_keep_n < BA_KEEP) {   /* kept for the next render's jobs (its PCM copied) */
-                uint32_t k;
-                for (k = 0; k < 2u * BT_SBC_SAMPLES_PER_FRAME; k++)
-                    ba_keep_pcm[ba_keep_n][k] = ba_pcm_acc[k];
-                ba_keep_n++;
+            if (ba_keep_add(ba_pcm_acc)) {             /* kept for the next render's jobs (its PCM copied) */
                 ba_pcm_cnt = 0;
                 continue;
             }
