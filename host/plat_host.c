@@ -533,6 +533,7 @@ void plat_midi_send(uint32_t pkt, uint32_t to)
                 (pkt >> 24) & 0xFF, to & TO_USB ? " USB" : to & TO_USBH_SIM ? " USBH" : "", to & TO_BLE_HOST ? " BLE" : "",
                 to & TO_BLE_DEV ? " BLE-DEV" : "");
 }
+int plat_midi_rt(uint32_t pkt) { plat_midi_send(pkt, TO_USB); return 1; }   /* (the host has no endpoint to load early) */
 
 /* Bluetooth (FM1B_BLE): a stand-in for the stack, ready a second after the start, and its log */
 static uint32_t ble_t0;
@@ -2262,6 +2263,10 @@ static void sim_ms_begin(uint32_t ms)
 #if defined APP_KEY_SENSE
     if (sense_on)
         app_host_tick();                        /* the keys' readings, as the scan hands them over */
+#endif
+#ifdef APP_TICK_FAST
+    for (int k = 0; k < 10; k++)
+        app_tick_fast();                        /* 10 kHz on the device: ten a host tick here */
 #endif
 #ifdef APP_TICK
     app_tick();                                 /* 1 kHz, as the device's timer runs it */

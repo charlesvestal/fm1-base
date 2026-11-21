@@ -120,6 +120,11 @@ uint32_t plat_midi_in_from(void);      /* where the last one came from, as an ou
 void plat_midi_send(uint32_t pkt, uint32_t to);   /* to: TO_USB | TO_BLE, or one link; main loop, the render or the
                                                    * tick */
 void plat_midi_out(uint32_t pkt);      /* plat_midi_send(pkt, TO_USB) */
+/* a real-time USB-MIDI packet (a clock tick, Start, Stop) to the computer NOW, from app_tick_fast (APP_TICK_FAST): loaded
+ * into the endpoint at once, or at the next 0.1 ms tick while the previous packet is still there, ahead of the queued
+ * messages; not held while the render runs. 0: 8 already waiting (dropped). plat_midi_send goes out at the next 2 kHz
+ * poll outside the render instead (a clock tick through it, released by app_tick: 418 us sd on a Mac, up to 1.5 ms) */
+int plat_midi_rt(uint32_t pkt);
 uint32_t plat_midi_out_room(uint32_t to);   /* the free slots in the out queues of to (TO_USB, TO_BLE, a link: each
                                         * has its own): the fewest among the ones someone listens on; 0 when nobody
                                         * does. A sequencer keeps room for the note-offs it owes before it sends a
@@ -756,6 +761,8 @@ int app_stats_quiet(void);
 
 /* the app's optional hooks (app.h defines the macro when it has the function):
  *   APP_TICK        void app_tick(void)           1 kHz, in the timer interrupt (a clock, a sequencer)
+ *   APP_TICK_FAST   void app_tick_fast(void)      10 kHz, in the timer interrupt, also inside the render (what must leave
+ *                                                 on time: CLOCK OUT's ticks by plat_midi_rt); a few microseconds at most
  *   APP_BOOT        void app_boot(void)           once, after the platform is up, before app_ui_init (a radio)
  *   APP_LOOP        void app_loop(void)           every pass of the main loop (a radio's tasks)
  *   APP_YIELD       void app_yield(void)          from plat_yield, inside long work
