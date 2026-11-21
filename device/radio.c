@@ -306,13 +306,10 @@ void ble_midi_name(char *name)
 {
     static const char hex[] = "0123456789ABCDEF";
     const uint8_t *u = plat_chip_uid();
-    uint32_t h = 2166136261u, i = 1;
-    while (u && i < 16u && u[i] == u[0])          /* all FF or all 0: no ID */
-        i++;
-    if (u && i < 16u) {
-        for (i = 0; i < 16u; i++)
-            h = (h ^ u[i]) * 16777619u;
-        h ^= h >> 16;
+    int id = plat_uid_hash16(u);                  /* (all FF or all 0: no ID) */
+    uint32_t h, i;
+    if (id >= 0) {
+        h = (uint32_t)id;
     } else {
         u = bt_get_mac_addr();
         h = (uint32_t)u[4] << 8 | u[5];

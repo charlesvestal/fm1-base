@@ -510,6 +510,7 @@ const char *FELUCCA_USB_SERIAL_FN(void)
     return sn;
 }
 #endif
+int plat_dev_id(void) { return plat_uid_hash16(plat_chip_uid()); }
 int plat_store_load(uint32_t obj, void *dst, uint32_t max) { return flash_ok ? st_load(obj, dst, max) : -1; }
 int plat_store_head(uint32_t obj, void *dst, uint32_t n) { return flash_ok ? st_load_head(obj, dst, n) : -1; }
 int plat_store_size(uint32_t obj) { return flash_ok ? st_size(obj) : -1; }

@@ -15,7 +15,9 @@
  *
  * Part of radio.c (the unity build). */
 #ifndef BLE_DEVICE_NAME
-#define BLE_DEVICE_NAME "FM-1"                    /* "FM-1 XXXX", XXXX this FM-1's own (own_addr), as JieLi's build named it */
+#define BLE_DEVICE_NAME "FM-1"                    /* "FM-1 XXXX", XXXX this FM-1's own (own_addr), as JieLi's build named it; an
+                                                   * app names it itself ("FM1-XXXX": BLE_DEVICE_NAME "FM1-", BLE_NAME_SEP "") */
+#define BLE_NAME_SEP " "
 #endif
 #if FM1B_BLE_CENTRAL && !defined(BLE_CENTRAL)
 #define BLE_CENTRAL 1
@@ -91,15 +93,12 @@ static int own_save(void)
 static void own_addr(uint8_t a[6])
 {
     const uint8_t *u = plat_chip_uid();
-    uint32_t h = 2166136261u, g = 0x9E3779B9u, i = 1;
-    while (u && i < 16u && u[i] == u[0])
-        i++;
-    if (u && i < 16u) {
-        for (i = 0; i < 16u; i++) {
-            h = (h ^ u[i]) * 16777619u;
+    int id = plat_uid_hash16(u);                  /* (plat.h plat_dev_id: the four digits of "FM1-XXXX") */
+    uint32_t h, g = 0x9E3779B9u, i;
+    if (id >= 0) {
+        h = (uint32_t)id;
+        for (i = 0; i < 16u; i++)
             g = (g ^ u[i]) * 2246822519u;
-        }
-        h ^= h >> 16;
     } else {                                      /* no ID: a random one, kept */
         h = fm1_ticks();
         g = fm1_ticks() * 2654435761u;

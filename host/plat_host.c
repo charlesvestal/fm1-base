@@ -1447,6 +1447,7 @@ const uint8_t *plat_chip_uid(void)
     static const uint8_t U[16] = {0x46, 0x4D, 0x31, 0x2D, 0x68, 0x6F, 0x73, 0x74};   /* "FM1-host" */
     return U;
 }
+int plat_dev_id(void) { return plat_uid_hash16(plat_chip_uid()); }
 int plat_store_load(uint32_t obj, void *dst, uint32_t max)
 {
     int n;
