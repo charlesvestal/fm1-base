@@ -1163,15 +1163,15 @@ void plat_restart(void)
  * Not in safe mode (no app running there). The watchdog fed on both sides of the app's ask */
 static int update_ready(void)
 {
-    static update_begin_t st;
 #ifdef APP_UPDATE_BEGIN
+    static update_begin_t st;
     int r;
     fm1_wdt_feed();
     r = update_begin_ready(&st, fm1_ms, app_update_begin);
     fm1_wdt_feed();
     return r;
 #else
-    return update_begin_ready(&st, fm1_ms, 0);
+    return 1;                                       /* (no hook: nothing waited for, nothing built) */
 #endif
 }
 

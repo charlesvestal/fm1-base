@@ -197,7 +197,7 @@ int main(void)
         assert(s && e && s < e && !(strstr(safe, "update_ready()") && strstr(safe, "update_ready()") < e));
         assert(f && f < safe);
         assert(in_order(f, "#ifdef APP_UPDATE_BEGIN", "fm1_wdt_feed();\n    r = update_begin_ready(&st, fm1_ms, app_update_begin);\n    fm1_wdt_feed();", "#else"));
-        assert(in_order(f, "#else", "update_begin_ready(&st, fm1_ms, 0)", "#endif\n}"));
+        assert(in_order(f, "#else", "return 1;", "#endif\n}"));   /* (no hook: nothing kept, nothing waited for) */
         assert(strstr(f, "#endif\n}") < strstr(f, "static void enter_uboot"));
         assert(strstr(m, "#include \"update_begin.h\""));
     }
