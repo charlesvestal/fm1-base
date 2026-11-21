@@ -55,6 +55,33 @@ run shim_lock sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/shi
 # the RAM layouts as tools/build.py reads them: device/app.ld's fixed regions (the default), app_packed.ld's one
 # region (ram_layout = "packed"), RAM code first, then data, bss, the pool
 run layout "$PY" tests/layout_test.py
+# USB audio (felucca-bsp's chip/usb.c, tests/uac_test.c) as fm1-base builds it: the default (its descriptors byte for
+# byte as before an app's own channels), an app's 4 channels in 24-bit with the output, and the input on the
+# computer's clock (usb_audio_in_host_clock: minutes of a model host and crystal), and the output with its feedback
+# (usb_audio_out_feedback: minutes of a model host that follows it, every sample played as sent), in 24-bit too
+# (usb_audio_out_24bit), and the two as functions of their own, named (usb_audio_split), with all of these
+run usb-audio sh -c "$CC -std=c11 -O1 -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-variable \
+    -Wno-missing-field-initializers -Ibsp/chip -o $OUT/uac_test bsp/tests/uac_test.c -lm && $OUT/uac_test && \
+    $CC -std=c11 -O1 -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers \
+    -Ibsp/chip -DTEST_CH=4 -DTEST_24=1 -o $OUT/uac_test4 bsp/tests/uac_test.c -lm && $OUT/uac_test4 && \
+    $CC -std=c11 -O1 -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers \
+    -Ibsp/chip -DTEST_HC=1 -o $OUT/uac_test_hc bsp/tests/uac_test.c -lm && $OUT/uac_test_hc && \
+    $CC -std=c11 -O1 -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers \
+    -Ibsp/chip -DTEST_FB=1 -DTEST_O24=1 -o $OUT/uac_test_fb bsp/tests/uac_test.c -lm && $OUT/uac_test_fb && \
+    $CC -std=c11 -O1 -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers \
+    -Ibsp/chip -DTEST_SPLIT=1 -DTEST_NAMES=1 -DTEST_FB=1 -DTEST_O24=1 -DTEST_HC=1 -DTEST_CH=4 -DTEST_24=1 \
+    -o $OUT/uac_test_split bsp/tests/uac_test.c -lm && $OUT/uac_test_split && \
+    $CC -std=c11 -O1 -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers \
+    -Ibsp/chip -DTEST_SPLIT=1 -DTEST_NAMEFN=1 -o $OUT/uac_test_namefn bsp/tests/uac_test.c -lm && $OUT/uac_test_namefn"
+# the rings a block the app lends (usb_audio_mem = "app": FELUCCA_UAC_MEM, TEST_MEM): not lent, silence in and nothing played;
+# lent, every test above on it; taken back and freed (ASan: never touched after), 20 lend / take-back cycles; as fm1-base's
+# default and with an app's own (4 channels, 24-bit, the feedback, split)
+run usb-audio-mem sh -c "$CC -std=c11 -O1 -g -fsanitize=address -fno-sanitize-recover=all -Wall -Wextra -Werror \
+    -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers -Ibsp/chip -DTEST_MEM=1 \
+    -o $OUT/uac_test_mem bsp/tests/uac_test.c -lm && $OUT/uac_test_mem && \
+    $CC -std=c11 -O1 -g -fsanitize=address -fno-sanitize-recover=all -Wall -Wextra -Werror -Wno-unused-function \
+    -Wno-unused-variable -Wno-missing-field-initializers -Ibsp/chip -DTEST_MEM=1 -DTEST_SPLIT=1 -DTEST_FB=1 -DTEST_O24=1 \
+    -DTEST_CH=4 -DTEST_24=1 -o $OUT/uac_test_mem4 bsp/tests/uac_test.c -lm && $OUT/uac_test_mem4"
 # the cache RAM (felucca-bsp's chip/fm1_cache_ram.h, fm1.toml cache_ram_ways) on a model of the cache's registers, tags and
 # ways: 2, 4 and 7 ways set, tested and zeroed; 0 and 8 nothing; a cache that never idles, masks not taken, a stuck bit
 # in each way: all put back, 0 bytes
@@ -132,6 +159,11 @@ run ram-run "$PY" tests/ram_run_test.py
 run romref "$PY" tests/romref_test.py
 # fm1.toml cpu2_stack (tools/build.py cpu2_stack_flags): the second core's job stack, its range and its stop message
 run cpu2-stack "$PY" tests/cpu2_stack_test.py
+# the USB serial number (fm1.toml usb_serial) with the digest of the USB audio configuration: tools/build.py's digest (none
+# with every option at its default, one per configuration otherwise) and device/usb_serial_mix.h's mixing of it into the
+# chip's ID (no digest: the serial of the firmwares out there, byte for byte; two digests: two serials)
+run usb-serial "$PY" tests/usb_serial_test.py
+run usb-serial-c sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Idevice -o $OUT/usb_serial_test tests/usb_serial_test.c && $OUT/usb_serial_test"
 # the check on an app's RAM code (tools/ramcode.py, plat.h PLAT_RAM_CODE): RAM -> RAM passes, into XIP fails
 run ramcode "$PY" tests/ramcode_test.py
 # the web installer's m-bootloader step (web/fm1ota.js installBoot) against a simulated FM-1, and finding the FM-1 by
@@ -243,6 +275,8 @@ run headphones template/build/host/template_host tests/hp.txt template/build/hos
 if sh tests/bt/run.sh; then :; else FAIL=1; fi
 # the template as an .rfm1 (tools/build.py --rfm1: the host simulator in WebAssembly for host apps), driven as a host
 # app drives it: the descriptor, the screen, a chord, the reader over SysEx, the flash image booted from again
+# the simulator's USB audio (usb_play, usb_rec): a computer's signal through the template's MASTER, recorded back
+run host-usb-audio "$PY" tests/host_usb_audio_test.py template/build/host/template_host template/build/tests/usb_audio
 if command -v emcc >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
     rm -f template/build/rfm1/*.rfm1
     run rfm1 sh -c "$PY tools/build.py template --rfm1 && node tests/rfm1_test.mjs template/build/rfm1/*.rfm1"

@@ -24,6 +24,16 @@
  *   bta add NAME | bta drop NAME a Bluetooth audio device around, or gone (FM1B_BT_AUDIO: a link to it is lost)
  *   jack in | jack out           headphones into the jack, or out (plat_headphones; nothing plugged at the start)
  *   wav FILE | wavstop           start / stop recording the output
+ *   usb_rec FILE | usb_recstop   (FM1B_UAC) a computer records the USB audio input from the next render into FILE (a WAV
+ *                                of FM1B_UAC_CH channels at 44.1 kHz, 24-bit with FM1B_UAC_24, else 16): the app's own
+ *                                channels (APP_USB_CAPTURE: app_usb_capture, plat_usb_audio_rec 1 meanwhile) or the
+ *                                master, as the device's platform takes them
+ *   usb_play FILE | usb_play off (FM1B_UAC_OUT) a computer plays FILE (a stereo WAV at 44.1 kHz, 16- or 24-bit; 24 sent
+ *                                as 16 without FM1B_UAC_OUT_24) through the FM-1 from the next render, then silence:
+ *                                plat_usb_audio_play's frames (APP_USB_PLAY), or added to the output at MASTER after the
+ *                                render, as the device's platform does. One clock: the simulator's frames are the
+ *                                computer's one for one (the device's clocks and resampling: felucca-bsp's
+ *                                tests/uac_test.c); expect usb_rec_frames / usb_play_frames count them
  *   usbwav FILE | usbwavstop     start / stop recording the USB audio input as a computer gets it: usb_audio_channels
  *                                (FM1B_UAC_CH) of 16 bits, the master on 1 and 2, the app's own after it (plat_usb_ch)
  *   peakreset                    restart the output peak (expect peak_db_min / peak_db_max)
@@ -32,8 +42,7 @@
  *   out                          print the MIDI sent since the last "out" (and forget it; clocks not shown)
  *   expect_out PORT B0 B1 B2     check that this message went out to PORT since the last "out" (USB, BLE, BLE-DEV, USBH)
  *   expect_no_out PORT B0 B1 B2  check that it did not
- *   expect WHAT VALUE            check state: exit 1 on mismatch; VALUE "<N" / ">N" is a bound (WHAT: store_writes,
- *                                store_tries, clocks_out, midi_out, usb_play_gain, usb_audio_full, ... below; data.ADDR: the
+ *   expect WHAT VALUE            check state: exit 1 on mismatch; VALUE "<N" / ">N" is a bound (WHAT data.ADDR: the
  *                                flash's byte at ADDR, as plat_data reads it; -1 outside its windows)
  *   reboot                       re-run boot from the simulated flash (persistence test)
  *                                (the app's plat_restart does the same, at the end of its millisecond; expect restarts)
@@ -1402,9 +1411,65 @@ int plat_host_read(uint32_t addr, uint8_t *dst, uint32_t n) { (void)addr, (void)
 void plat_host_patience(uint32_t try_ms, uint32_t total_ms) { (void)try_ms, (void)total_ms; }
 static int uac_full;                            /* plat_usb_audio_full: the render at full level, MASTER after it */
 void plat_usb_audio_full(int on) { uac_full = on != 0; }
+/* USB audio (the script's usb_rec, usb_play): what a computer records from the FM-1 and plays through it, as files */
+#ifndef FM1B_UAC
+#define FM1B_UAC 1                                  /* (device/unity.c's defaults; tools/build.py passes fm1.toml's) */
+#endif
+#ifndef FM1B_UAC_OUT
+#define FM1B_UAC_OUT 1
+#endif
+#ifndef FM1B_UAC_CH
+#define FM1B_UAC_CH 2
+#endif
+#ifndef FM1B_UAC_24
+#define FM1B_UAC_24 0
+#endif
+#ifndef FM1B_UAC_OUT_24
+#define FM1B_UAC_OUT_24 0
+#endif
+static FILE *usb_rec_f;                             /* the computer records into it (usb_rec) */
+static uint32_t usb_rec_frames, usb_play_frames;
+static int32_t *usb_play_buf;                       /* the computer's audio (usb_play): stereo, 24-bit as the render's */
+static uint32_t usb_play_n, usb_play_at;
+static uint8_t usb_rec_now;                         /* this render's: the computer records (plat_usb_audio_rec) */
+int plat_usb_audio_rec(void) { return FM1B_UAC && usb_rec_now && !usbh_port(); }   /* (a USB host: no computer) */
+/* the computer's next n frames at unity (24-bit), silence past its end; 1 while there are some */
+static int usb_play_take(int32_t *lr, uint32_t n)
+{
+    uint32_t i, got = FM1B_UAC_OUT && usb_play_buf && usb_play_at < usb_play_n && !usbh_port();
+    for (i = 0; i < n; i++) {
+        int ok = got && usb_play_at < usb_play_n;
+        lr[2u * i] = ok ? usb_play_buf[2u * usb_play_at] : 0;
+        lr[2u * i + 1u] = ok ? usb_play_buf[2u * usb_play_at + 1u] : 0;
+        usb_play_at += (uint32_t)ok;
+        usb_play_frames += (uint32_t)ok;
+    }
+    return (int)got;
+}
+void plat_usb_audio_stats(plat_usb_audio_stats_t *s)
+{
+    memset(s, 0, sizeof *s);
+    s->out_frames = usb_play_frames;                /* (the simulator keeps no packets: one clock, no ring) */
+    s->out_alt = (uint8_t)(usb_play_buf != 0);
+    s->in_alt = (uint8_t)(usb_rec_f != 0);
+}
+uint32_t plat_usb_audio_mem_bytes(void) { return 0u; }   /* (the simulator: no rings, one clock) */
+void plat_usb_audio_mem(void *p) { (void)p; }
+int plat_usb_audio_play(int32_t *lr, uint32_t n)
+{
+#ifdef APP_USB_PLAY
+    return usb_play_take(lr, n);
+#else
+    uint32_t i;                                 /* the platform mixes it at MASTER (run_ms) */
+    for (i = 0; i < 2u * n; i++)
+        lr[i] = 0;
+    return 0;
+#endif
+}
 static uint32_t usb_play_q12 = 4096u;            /* plat_usb_play_gain: no USB audio on the host; kept for a test */
 void plat_usb_play_gain(uint32_t q12) { usb_play_q12 = q12 > 4096u ? 4096u : q12; }
-#if FM1B_UAC_CH > 2
+#define HOST_USB_CH (FM1B_UAC_CH > 2 && !FM1B_UAC_CAPTURE)
+#if HOST_USB_CH
 static int16_t usb_ch[APP_BLOCK][FM1B_UAC_CH];      /* plat_usb_ch: the block's frames (1 and 2 the master, after it) */
 int16_t *plat_usb_ch(uint32_t off, uint32_t *run)
 {
@@ -2201,6 +2266,111 @@ static void wav_close(void)
     wav = 0;
 }
 
+/* the USB audio files: a WAV of nch channels, bits 16 or 24, at 44.1 kHz (usb_rec); a stereo WAV read whole (usb_play) */
+static void wav_header(FILE *f, uint32_t nch, uint32_t bits, uint32_t frames)
+{
+    uint32_t ba = nch * bits / 8u, bytes = frames * ba, v;
+    uint16_t h2[2];
+    fwrite("RIFF", 1, 4, f);
+    v = 36 + bytes;
+    fwrite(&v, 4, 1, f);
+    fwrite("WAVEfmt ", 1, 8, f);
+    v = 16;
+    fwrite(&v, 4, 1, f);
+    h2[0] = 1, h2[1] = (uint16_t)nch;
+    fwrite(h2, 2, 2, f);
+    v = 44100;
+    fwrite(&v, 4, 1, f);
+    v = 44100 * ba;
+    fwrite(&v, 4, 1, f);
+    h2[0] = (uint16_t)ba, h2[1] = (uint16_t)bits;
+    fwrite(h2, 2, 2, f);
+    fwrite("data", 1, 4, f);
+    fwrite(&bytes, 4, 1, f);
+}
+static void usb_rec_close(void)
+{
+    if (!usb_rec_f)
+        return;
+    fseek(usb_rec_f, 0, SEEK_SET);
+    wav_header(usb_rec_f, FM1B_UAC_CH, FM1B_UAC_24 ? 24u : 16u, usb_rec_frames);
+    fclose(usb_rec_f);
+    usb_rec_f = 0;
+}
+static int usb_rec_open(const char *path)
+{
+    usb_rec_close();
+    usb_rec_f = fopen(path, "wb");
+    if (!usb_rec_f)
+        return -1;
+    wav_header(usb_rec_f, FM1B_UAC_CH, FM1B_UAC_24 ? 24u : 16u, 0);
+    usb_rec_frames = 0;
+    return 0;
+}
+/* n frames of FM1B_UAC_CH samples (24-bit, as the render's; 0: silence) into the recording: 16-bit rounded as felucca-bsp
+ * sends them (uac_in16), or the 24 bits */
+static void usb_rec_put(const int32_t *x, uint32_t n)
+{
+    uint32_t i, c;
+    for (i = 0; i < n; i++, usb_rec_frames++)
+        for (c = 0; c < FM1B_UAC_CH; c++) {
+            int32_t v = x ? x[i * FM1B_UAC_CH + c] : 0;
+            uint8_t b[3];
+            v = v > 8388607 ? 8388607 : v < -8388608 ? -8388608 : v;
+            if (!FM1B_UAC_24) {
+                v = (v + 128) >> 8;
+                v = v > 32767 ? 32767 : v;
+            }
+            b[0] = (uint8_t)v, b[1] = (uint8_t)(v >> 8), b[2] = (uint8_t)(v >> 16);
+            fwrite(b, 1, FM1B_UAC_24 ? 3u : 2u, usb_rec_f);
+        }
+}
+static uint32_t rd16(const uint8_t *p) { return p[0] | (uint32_t)p[1] << 8; }
+static uint32_t rd32(const uint8_t *p) { return rd16(p) | rd16(p + 2) << 16; }
+static int usb_play_open(const char *path)          /* 0, or -1: no stereo 44.1 kHz PCM WAV of 16 or 24 bits there */
+{
+    FILE *f = fopen(path, "rb");
+    uint8_t *w = 0;
+    long len = 0;
+    uint32_t at = 12, bits = 0, nch = 0, rate = 0, i;
+    free(usb_play_buf);
+    usb_play_buf = 0;
+    usb_play_n = usb_play_at = 0;
+    if (!f || fseek(f, 0, SEEK_END) || (len = ftell(f)) < 44 || fseek(f, 0, SEEK_SET) || !(w = malloc((size_t)len)) ||
+        fread(w, 1, (size_t)len, f) != (size_t)len || memcmp(w, "RIFF", 4) || memcmp(w + 8, "WAVE", 4)) {
+        if (f)
+            fclose(f);
+        free(w);
+        return -1;
+    }
+    fclose(f);
+    while (at + 8u <= (uint32_t)len) {                  /* the chunks: fmt, then data */
+        uint32_t sz = rd32(w + at + 4);
+        if (!memcmp(w + at, "fmt ", 4) && sz >= 16u) {
+            uint32_t fmt = rd16(w + at + 8);
+            nch = rd16(w + at + 10), rate = rd32(w + at + 12), bits = rd16(w + at + 22);
+            if (fmt != 1 && fmt != 0xFFFE)
+                nch = 0;
+        } else if (!memcmp(w + at, "data", 4) && nch == 2 && rate == 44100 && (bits == 16 || bits == 24)) {
+            const uint8_t *d = w + at + 8;
+            uint32_t ba = bits / 4u;                    /* (a frame: two samples) */
+            sz = sz < (uint32_t)len - at - 8u ? sz : (uint32_t)len - at - 8u;
+            usb_play_n = sz / ba;
+            usb_play_buf = malloc(sizeof(int32_t) * 2u * (usb_play_n ? usb_play_n : 1u));
+            for (i = 0; usb_play_buf && i < 2u * usb_play_n; i++) {
+                const uint8_t *q = d + i * (bits / 8u);
+                int32_t v = bits == 16 ? (int32_t)(int16_t)rd16(q) * 256
+                                       : (int32_t)((uint32_t)q[0] << 8 | (uint32_t)q[1] << 16 | (uint32_t)q[2] << 24) >> 8;
+                usb_play_buf[i] = FM1B_UAC_OUT_24 ? v : (int32_t)((uint32_t)v & ~0xFFu);   /* (16 bits on the wire) */
+            }
+            break;
+        }
+        at += 8u + sz + (sz & 1u);
+    }
+    free(w);
+    return usb_play_buf ? 0 : -1;
+}
+
 /* --------------------------------------------------------- the device --- */
 static double audio_due_ms, render_ns_total, render_budget_ns_total;
 static uint32_t ui_due;
@@ -2280,11 +2450,21 @@ static void sim_render(int32_t *blk)            /* one APP_BLOCK-frame block, as
 {
     double t0 = now_ns(), dt;
     uint32_t k;
-#if FM1B_UAC_CH > 2
+    usb_rec_now = usb_rec_f != 0;               /* (the device reads it at the render's start) */
+#if HOST_USB_CH
     memset(usb_ch, 0, sizeof usb_ch);
 #endif
     app_render(blk, APP_BLOCK, uac_full ? 4096u : APP_GAIN(master));
-#if FM1B_UAC_CH > 2
+#ifndef APP_USB_PLAY
+    if (FM1B_UAC_OUT && usb_play_buf) {         /* the computer's audio at MASTER and plat_usb_play_gain, as uac_mix.h */
+        static int32_t pl[2 * APP_BLOCK];
+        const float g = (float)(uac_full ? 4096u : master * master >> 12) * (float)usb_play_q12 * (1.0f / (4096.0f * 4096.0f));
+        if (usb_play_take(pl, APP_BLOCK))
+            for (k = 0; k < 2u * APP_BLOCK; k++)
+                blk[k] += (int32_t)((float)pl[k] * g);
+    }
+#endif
+#if HOST_USB_CH
     usb_ch_master(blk);
     if (uwav) {
         fwrite(usb_ch, sizeof usb_ch, 1, uwav);
@@ -2301,6 +2481,13 @@ static void sim_render(int32_t *blk)            /* one APP_BLOCK-frame block, as
         uwav_frames += APP_BLOCK;
     }
 #endif
+    if (FM1B_UAC && usb_rec_f && !usbh_port()) {   /* the USB audio input: the app's channels, or the master */
+#ifdef APP_USB_CAPTURE
+        usb_rec_put(app_usb_capture(blk, APP_BLOCK), APP_BLOCK);
+#else
+        usb_rec_put(blk, APP_BLOCK);
+#endif
+    }
     {   /* (the USB audio input took it at full level) the speaker: MASTER, slid from the last block's (uac_mix.h) */
         static float last = -1.0f;
         const float g = (float)APP_GAIN(master) * (1.0f / 4096.0f);
@@ -2564,6 +2751,10 @@ static int expect(const char *what, const char *val)
 #endif
     else if (!strcmp(what, "midi_in_usb"))          /* plat_midi_count: messages in from USB */
         got = (int)plat_midi_count(PORT_USB, 0);
+    else if (!strcmp(what, "usb_rec_frames"))       /* frames the computer recorded (usb_rec), and played (usb_play) */
+        got = (int)usb_rec_frames;
+    else if (!strcmp(what, "usb_play_frames"))
+        got = (int)usb_play_frames;
     else if (!strcmp(what, "headphones"))           /* plat_headphones: the script's jack (1 in, 0 out) */
         got = plat_headphones();
     else if (!strcmp(what, "peak_db_max") || !strcmp(what, "peak_db_min")) {
@@ -3036,6 +3227,22 @@ int main(int argc, char **argv)
             wav_open(out);
         } else if (!strcmp(cmd, "wavstop"))
             wav_close();
+        else if (!strcmp(cmd, "usb_rec") || !strcmp(cmd, "usb_play")) {
+            int rec = cmd[4] == 'r', rc;
+            snprintf(out, sizeof out, "%s/%s", dir, a);
+            if (!rec && !strcmp(a, "off")) {
+                free(usb_play_buf);
+                usb_play_buf = 0;
+                rc = 0;
+            } else
+                rc = rec ? (FM1B_UAC ? usb_rec_open(out) : -1) : (FM1B_UAC_OUT ? usb_play_open(a[0] == '/' ? a : out) : -1);
+            if (rc) {
+                printf("FAIL %s %s (%s)\n", cmd, a, rec ? "not written" : "no stereo 44.1 kHz WAV of 16 or 24 bits");
+                fails++;
+            } else if (!rec)
+                usb_play_frames = 0;
+        } else if (!strcmp(cmd, "usb_recstop"))
+            usb_rec_close();
         else if (!strcmp(cmd, "usbwav")) {
             snprintf(out, sizeof out, "%s/%s", dir, a);
             if (uwav)
@@ -3338,6 +3545,7 @@ int main(int argc, char **argv)
         wav_end(uwav, uwav_frames, FM1B_UAC_CH);
     if (hsx_log)
         fclose(hsx_log);
+    usb_rec_close();
     if (midi_log)
         fclose(midi_log);
 #ifdef APP_HOST_FAILS
