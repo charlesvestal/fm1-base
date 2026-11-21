@@ -20,7 +20,10 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   usb_manufacturer = "..."   the USB names (felucca-bsp FELUCCA_USB_MANUFACTURER / FELUCCA_USB_PRODUCT)
   usb_product = "..."
   usb_serial = true          a USB serial number from the FM-1's chip ID (felucca-bsp FELUCCA_USB_SERIAL_FN): a computer then tells
-                             FM-1s apart whichever port they are in (without one, macOS's MIDI setup names a device by its port)
+                             FM-1s apart whichever port they are in (without one, macOS's MIDI setup names a device by its port).
+                             With any USB audio option (usb_audio_*, usb_midi_last, usb_iad) off its default, a digest of the
+                             configuration and id_prefix is mixed into it (FM1B_USB_SERIAL_MIX; usb_serial_mix below), so Windows
+                             sees a new device when the descriptors change; with all at their defaults, the chip's alone as before
   usb_name_fn = "fn"         the name of the app's function `const char *fn(void)` the USB product name is asked of each time a
                              host reads it (FELUCCA_USB_NAME_FN; usb_product is the fallback, the audio devices' names follow it
                              unless usb_audio_in_name / usb_audio_out_name are set): a name with something of this FM-1 in it
@@ -980,6 +983,44 @@ def usb_audio_names():
     return flags
 
 
+USB_DESCRIPTOR_KEYS = {      # fm1.toml keys that change the USB descriptors -> the value that leaves them as before
+    "usb_audio_in": True, "usb_audio_out": True, "usb_audio_first": False, "usb_iad": False, "usb_audio_channels": 2,
+    "usb_audio_in_channels": None, "usb_audio_in_host_clock": False, "usb_audio_out_feedback": False,
+    "usb_audio_out_24bit": False, "usb_audio_split": False, "usb_audio_in_name": None, "usb_audio_out_name": None,
+    "usb_audio_in_channel_names": None}
+
+
+def usb_serial_mix(conf):
+    """the digest of fm1.toml's USB audio configuration and id_prefix for the USB serial number: 24 hex digits (the
+    12 bytes device/usb_serial_mix.h mixes into the chip's ID), or None when every option is at its default (the serial
+    is then the chip's alone, as before). The same for the same configuration and id_prefix, whatever the order of the
+    keys; a key set to its default counts as not set (usb_midi_last's default is true, false with usb_audio_split)"""
+    on = {}
+    for key, default in USB_DESCRIPTOR_KEYS.items():
+        if key in conf and conf[key] != default:
+            on[key] = list(conf[key]) if isinstance(conf[key], (list, tuple)) else conf[key]
+    split_default = int(not conf.get("usb_audio_split"))
+    if "usb_midi_last" in conf and int(conf["usb_midi_last"]) != split_default:
+        on["usb_midi_last"] = int(conf["usb_midi_last"])
+    on = {k: (int(v) if isinstance(v, bool) else v) for k, v in on.items()}
+    if not on:
+        return None
+    text = json.dumps({"id_prefix": conf.get("id_prefix", "FM-1_0"), "usb": on}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(("fm1-usb-serial-1:" + text).encode()).hexdigest()[:24].upper()
+
+
+def usb_serial_flags():
+    """fm1.toml usb_serial -> flags: the bsp's serial function, and with USB audio options set the digest of the
+    configuration it mixes in (usb_serial_mix; none: the flag of the firmwares out there, alone)"""
+    if not CONF.get("usb_serial"):
+        return []
+    flags = ["-DFELUCCA_USB_SERIAL_FN=fm1_usb_serial"]
+    digest = usb_serial_mix(CONF)
+    if digest:
+        flags.append(f'-DFM1B_USB_SERIAL_MIX="{digest}"')
+    return flags
+
+
 def cache_ram_ways():
     """fm1.toml cache_ram_ways: the data cache's ways used as RAM, 0 (none: off), 2, 4 or 7 (FM1B_CACHE_RAM=N in the
     environment over it)"""
@@ -1073,8 +1114,7 @@ def build_app():
     for key, macro in (("usb_manufacturer", "FELUCCA_USB_MANUFACTURER"), ("usb_product", "FELUCCA_USB_PRODUCT")):
         if CONF.get(key):
             flags.append(f'-D{macro}="{CONF[key]}"')
-    if CONF.get("usb_serial"):                    # a serial number from the chip's ID (device/plat_fm1.c)
-        flags.append("-DFELUCCA_USB_SERIAL_FN=fm1_usb_serial")
+    flags += usb_serial_flags()                   # a serial number from the chip's ID (device/plat_fm1.c)
     if VERSION:
         flags.append(f'-DAPP_VERSION="{VERSION}"')
     flags.append(f"-DFM1B_BUILD={build_id():#010x}u")   # (the crash history's records carry it: device/crashlog.c)
