@@ -1139,7 +1139,11 @@ static void fm1_fault(const fm1_crash_t *c)
     t0 = fm1_ticks();
     while ((uint32_t)(fm1_ticks() - t0) < 4000u * 1000u * FM1_TICKS_PER_US)
         ;
-    fm1_clock_restore();                            /* (a soft reset keeps the PLL: stock for what starts next) */
+    {
+        uint32_t f = irq_save();
+        fm1_clock_restore();                        /* (a soft reset keeps the PLL: stock for what starts next) */
+        irq_restore(f);
+    }
     fm1_reboot();
 }
 
@@ -1155,7 +1159,11 @@ void plat_restart(void)
     fm1_delay_ms(30);
     bootguard.pending = 0;                          /* intentional reset: not a failed boot */
     radio_clean_exit();
-    fm1_clock_restore();                            /* (a soft reset keeps the PLL: stock for what starts next) */
+    {
+        uint32_t f = irq_save();
+        fm1_clock_restore();                        /* (a soft reset keeps the PLL: stock for what starts next) */
+        irq_restore(f);
+    }
     fm1_reboot();
 }
 #endif
@@ -1181,7 +1189,11 @@ static int update_ready(void)
 
 static void enter_uboot(const char *why)
 {
-    fm1_clock_restore();                            /* (the chip's update mode at the stock clock) */
+    {
+        uint32_t f = irq_save();
+        fm1_clock_restore();                        /* (the chip's update mode at the stock clock) */
+        irq_restore(f);
+    }
     fm1_audio_stop();
     lcd_fill(0, 0, 240, 240, C_BLACK);              /* (lcd_sync: an SD card's open transfer ended, the card idle) */
     sys_box(0, 110, 240, SYS_S, why, C_WHITE, 1);
@@ -1237,8 +1249,12 @@ static void safe_main(void)
             sys_box(0, 172, 240, SYS_S, "STARTING " APP_NAME "...", C_HI, 1);
             usb_detach();
             fm1_delay_ms(30);
-            fm1_clock_restore();                            /* (a soft reset keeps the PLL: stock for what starts next) */
-    fm1_reboot();
+            {
+                uint32_t f = irq_save();
+                fm1_clock_restore();                /* (a soft reset keeps the PLL: stock for what starts next) */
+                irq_restore(f);
+            }
+            fm1_reboot();
         }
         {   /* the log readout works here too: what crashed is the question safe mode raises */
             const uint8_t *p;
@@ -1519,7 +1535,11 @@ static void fm1_main(void)
         if (usb.ota_req && update_ready()) {        /* (the app stopped cleanly first, or its time is up) */
             usb.ota_req = 0;
             app_panic();                            /* silence: the update rewrites the flash */
-            fm1_clock_restore();                    /* (the update loader at the stock clock) */
+            {
+                uint32_t f = irq_save();
+                fm1_clock_restore();                /* (the update loader at the stock clock) */
+                irq_restore(f);
+            }
 #if FM1B_SD
             sd_bus_release();                       /* the card's open transfer (the USB drive's) ended: the next
                                                      * firmware finds it idle (a reset restarts the chip, not the card);
