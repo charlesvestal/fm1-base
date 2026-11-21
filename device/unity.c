@@ -25,9 +25,9 @@
  *   FM1B_UAC_OUT 1          USB audio output: the computer plays through the FM-1, mixed after the app and after the
  *                           USB recording's tap, at MASTER and plat_usb_play_gain (device/uac_mix.h)
  *                           (an app with APP_USB_PLAY mixes it itself: plat_usb_audio_play)
- *   FM1B_UAC_CH 2           the USB audio input's channels (fm1.toml usb_audio_in_channels, 1..8): 2 the master; any
+ *   FM1B_UAC_CH 2           the USB audio input's channels (fm1.toml usb_audio_in_channels, 2, 4 or 8): 2 the master; any
  *                           other count the app's own (APP_USB_CAPTURE: app_usb_capture), 2 may be too
- *   FM1B_UAC_24 0           1: the USB audio input in 24-bit too (fm1.toml usb_audio_in_24bit: its alt setting 2)
+ *   FM1B_UAC_24 0           1: the USB audio input in 24-bit too (follows fm1.toml usb_audio_in_channels: up to 4 channels; its alt setting 2)
  *   FM1B_UAC_HOST_CLOCK 0   1: the USB audio input on the computer's clock (fm1.toml usb_audio_in_host_clock):
  *                           resampled to the host's 44.1 kHz, a synchronous endpoint; 0 the FM-1's own (asynchronous)
  *   FM1B_UAC_OUT_FEEDBACK 0 1: the USB audio output asynchronous (fm1.toml usb_audio_out_feedback): the computer sends

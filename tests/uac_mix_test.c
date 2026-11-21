@@ -21,6 +21,12 @@ static void fm1_delay_ms(uint32_t ms) { (void)ms; }
 #define FELUCCA_UAC_CLOCK() 0u                  /* (the packets' clock: no packets here) */
 #include "usb.c"
 #include "../device/uac_mix.h"
+#ifndef UA_RING                         /* (the default input, as it was: a static ring, no pointer to take once) */
+#define UA_RING()
+#endif
+#ifndef UO_RING
+#define UO_RING()
+#endif
 
 #define N 32u
 #define APP 500000                      /* the app's render, 24-bit */

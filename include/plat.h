@@ -706,7 +706,7 @@ void plat_host_patience(uint32_t try_ms, uint32_t total_ms);   /* each try's wai
 /* USB audio full (FM1B_UAC): 1, the USB audio input at full level (the app's render at gain 4096), MASTER for the
  * speaker and headphones only; 0, both at MASTER (the default) */
 void plat_usb_audio_full(int on);
-/* USB audio, an app's own channels and mixing (fm1.toml usb_audio_in_channels / usb_audio_in_24bit; app.h
+/* USB audio, an app's own channels and mixing (fm1.toml usb_audio_in_channels; app.h
  * APP_USB_CAPTURE, APP_USB_PLAY, below). plat_usb_audio_rec: 1, the computer takes the USB audio input this render
  * (read at the render's start: an app makes its stems only then); 0 without FM1B_UAC (the simulator: while its script's
  * usb_rec records, and its usb_play plays the computer's audio).
