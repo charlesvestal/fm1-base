@@ -27,7 +27,15 @@
 #define SD_LSB_KHZ 60000u                  /* SPI1's source: LSB, 60 MHz at the stock 360 MHz */
 #endif
 #define SD_BAUD_SLOW ((SD_LSB_KHZ + 399u) / 400u - 1u)          /* 400 kHz at most: the start */
+#ifndef FM1B_SD_FINE
+#define FM1B_SD_FINE 0
+#endif
+#if FM1B_SD_FINE                           /* fm1.toml sd_clock_fine: every step SPI1 has between 20 and 5 MHz (20 15 12
+                                            * 10 8.57 7.5 6.67 6 5), for a board whose ceiling falls between the four */
+static const uint16_t SD_BAUDS[] = {2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 11u, SD_BAUD_SLOW};
+#else
 static const uint16_t SD_BAUDS[] = {2u, 3u, 5u, 11u, SD_BAUD_SLOW};   /* LSB / (b + 1) */
+#endif
 #define SD_NBAUDS (sizeof SD_BAUDS / sizeof SD_BAUDS[0])
 #define SD_ACMD 0x80u
 #define SD_R1_IDLE 0x01u
@@ -67,6 +75,8 @@ enum { SDS_NONE, SDS_READ, SDS_WRITE };
 static struct {
     uint8_t mode, dma, busy;               /* busy: a written block being programmed */
     uint8_t wabort;                        /* a written block refused: the write ends by CMD12, not the stop token */
+    uint8_t parked;                        /* an app's write between two blocks, its CMD25 left open, the bus lent to
+                                            * the LCD (sd_bus_lend) */
     int8_t werr;                           /* a write stream closed by someone else, and how it ended */
     uint16_t crc;                          /* the write in flight's */
     uint32_t next, wnext, busy_t;          /* the read's next block; the write's (every block before it written) */
@@ -173,17 +183,12 @@ static uint8_t sd_cmd(uint32_t c, uint32_t arg)
     return r;
 }
 
-/* one data block in: the start token, n bytes to p (by DMA if asked and p allows it, else byte by byte; through
+/* a data block's n bytes after its start token, to p (by DMA if asked and p allows it, else byte by byte; through
  * sd_blk if DMA is asked for a buffer it can't use), its CRC16 checked */
-static int sd_data_in(uint8_t *p, uint32_t n, int dma)
+static int sd_data_body(uint8_t *p, uint32_t n, int dma)
 {
-    uint32_t t0 = plat_ms(), i;
-    uint8_t t, *q = p;
-    while ((t = fm1_sd_xfer(0xFFu)) == 0xFFu)
-        if (plat_ms() - t0 > 250u || sd_late())   /* (a read takes 100 ms at most) */
-            return SD_E_TIMEOUT;
-    if (t != 0xFEu)
-        return SD_E_READ;                  /* an error token */
+    uint32_t i;
+    uint8_t *q = p;
     if (dma) {
         if (!fm1_sd_dma_ok(p))
             q = sd_blk;
@@ -201,6 +206,18 @@ static int sd_data_in(uint8_t *p, uint32_t n, int dma)
     if (q != p)
         memcpy(p, q, n);
     return 0;
+}
+
+static int sd_data_in(uint8_t *p, uint32_t n, int dma)   /* one data block in: its start token, then sd_data_body */
+{
+    uint32_t t0 = plat_ms();
+    uint8_t t;
+    while ((t = fm1_sd_xfer(0xFFu)) == 0xFFu)
+        if (plat_ms() - t0 > 250u || sd_late())   /* (a read takes 100 ms at most) */
+            return SD_E_TIMEOUT;
+    if (t != 0xFEu)
+        return SD_E_READ;                  /* an error token */
+    return sd_data_body(p, n, dma);
 }
 
 /* CMD12's answer: none, or an error bit, and the card can't be trusted to have stopped (it may stream on) */
@@ -463,6 +480,25 @@ static void sd_recover(void)
 }
 
 /* ---- streams ---- */
+#ifndef SD_TICKS
+#define SD_TICKS() fm1_ticks()             /* the fine clock an app's read waits on (plat_sd_read_next's wait_us) */
+#define SD_TICKS_PER_US FM1_TICKS_PER_US
+#endif
+#define SD_SILENT_MS 250u                  /* an app's read with no block this long: SD_E_TIMEOUT (100 ms the spec) */
+#ifndef SD_AHEAD_WAIT
+#define SD_AHEAD_WAIT() ((void)0)          /* (the host test: its interrupt run here) */
+#endif
+#ifndef FM1B_SD_AHEAD
+#define FM1B_SD_AHEAD 0
+#endif
+#if FM1B_SD_AHEAD
+#include "sd_ahead.h"                      /* an app's read read ahead in SPI1's interrupt (fm1.toml sd_read_ahead) */
+#else
+#define sd_ahead_on() 0
+static void sd_ahead_begin(uint32_t limit) { (void)limit; }
+static void sd_ahead_end(void) {}
+static int sd_ahead_take(uint8_t *p) { (void)p; return SD_E_STATE; }
+#endif
 static int sd_stream_mode(void) { return sds.mode; }
 static uint32_t sd_rs_next(void) { return sds.next; }
 static uint32_t sd_ws_next(void) { return sds.wnext; }
@@ -479,6 +515,7 @@ static int sd_stream_close(void)
     old = sd_budget(SD_CLOSE_MS);
     sds.mode = SDS_NONE;
     if (mode == SDS_READ) {
+        sd_ahead_end();                    /* (an app's read ahead stopped first: the bus the polled path's) */
         if (sds.dma) {
             fm1_sd_dma_end(512u);
             fm1_sd_xfer(0xFFu);
@@ -538,14 +575,20 @@ static int sd_stream_fail(int rc)
     return rc;
 }
 
-/* closed for another user of the bus (the LCD: lcd_sync; sd_begin): a write's end kept for its owner (sds.werr) */
-static void sd_bus_release(void)
+/* A stream's end for another user of the bus, through a pointer set when a stream opens: a build whose app opens
+ * none (the card unused, or plain calls only) links none of the closing below into lcd_sync */
+static void sd_streams_end(int lend);
+static void (*volatile sd_streams)(int lend);
+static void sd_bus_release(void)           /* sd_begin; main_fm1.c before an update: ended, a write's error kept for
+                                            * its owner (sds.werr) */
 {
-    if (sds.mode) {
-        int w = sds.mode == SDS_WRITE, rc = sd_stream_close();
-        if (w && rc && !sds.werr)
-            sds.werr = (int8_t)rc;
-    }
+    if (sd_streams)
+        sd_streams(0);
+}
+static void sd_bus_lend(void)              /* the LCD (lcd_sync): ended, an app's write parked */
+{
+    if (sd_streams)
+        sd_streams(1);
 }
 
 static int sd_rs_open(uint32_t lba)        /* a read from lba on (only with DMA: else SD_E_STATE) */
@@ -559,6 +602,7 @@ static int sd_rs_open(uint32_t lba)        /* a read from lba on (only with DMA:
         return SD_E_READ;
     }
     sds.mode = SDS_READ;
+    sd_streams = sd_streams_end;
     sds.next = lba;
     sds.dma = 0;
     return 0;
@@ -610,6 +654,7 @@ static int sd_ws_open(uint32_t lba)        /* a write from lba on */
         return SD_E_WRITE;
     }
     sds.mode = SDS_WRITE;
+    sd_streams = sd_streams_end;
     sds.wnext = lba;
     sds.dma = 0;
     sds.busy = 0;
@@ -693,6 +738,8 @@ int plat_sd_read(uint32_t lba, void *buf, uint32_t n)
 {
     int rc = 0, t;
     uint32_t old;
+    fm1_wdt_feed();                        /* (one FatFs call may be thousands of these: a big card's free space, a
+                                            * long file's cluster map. Each is bounded by its budget) */
     if (sd.state != 1)
         return SD_E_STATE;
     if (lba >= sd.sectors || n > sd.sectors - lba)
@@ -722,6 +769,7 @@ int plat_sd_write(uint32_t lba, const void *buf, uint32_t n)
 {
     int rc = 0, t;
     uint32_t old;
+    fm1_wdt_feed();
     if (sd.state != 1)
         return SD_E_STATE;
     if (lba >= sd.sectors || n > sd.sectors - lba)
@@ -744,6 +792,236 @@ int plat_sd_write(uint32_t lba, const void *buf, uint32_t n)
     sd_end();
     sd_lost(rc);
     sd_due = old;
+    return rc;
+}
+
+/* ---- an app's streams (plat.h plat_sd_read_open ... plat_sd_close) ----
+ * On the streams above, one at a time. A read's wait for its next block is the caller's (wait_us, on the chip's fine
+ * clock), never longer: SD_E_BUSY, the bus kept the card's. The LCD (lcd_sync: sd_bus_lend) ends a read, which the
+ * next plat_sd_read_next opens again where it was; a write it keeps (parked): its last block's busy waited for, the
+ * card deselected with its CMD25 open (the state sd_init ends after a restart), so a recording goes on as the screen
+ * draws, without a stop and a new CMD25 every frame. Any other card call ends either first (sd_begin) */
+static struct {
+    uint8_t mode;                          /* SDS_READ, SDS_WRITE: the app's stream (sds.mode: whether it's open) */
+    uint8_t planned;                       /* a read of a known length (plat_sd_read_open's n) */
+    uint8_t waiting;                       /* a read's wait for its next block begun, at t0 */
+    uint32_t next, left;                   /* a read: the next block; the blocks planned still to come */
+    uint32_t t0;                           /* plat_ms the wait for the read's next block began */
+} sda;
+
+static void sd_unpark(void)                /* a parked write's session again (the LCD's transfer finished first) */
+{
+    lcd_sync();                            /* (sd_bus_lend: nothing, it's parked) */
+    sds.parked = 0;
+    fm1_sd_open(SD_BAUDS[sd.step]);
+    fm1_sd_select(1);
+}
+
+static void sd_streams_end(int lend)       /* sd_bus_release (lend 0), sd_bus_lend (1) */
+{
+    int w, rc;
+    if (sds.parked) {
+        if (lend)
+            return;
+        sd_unpark();
+    }
+    if (lend && sds.mode == SDS_WRITE && sda.mode == SDS_WRITE && !sds.dma && !sds.wabort &&
+        (!sds.busy || sd_ready(SD_BUSY_MS))) {   /* (a busy card selected between the LCD's transfers would hold its
+                                                  * DO, the panel's D/C, low against it) */
+        sds.busy = 0;
+        sds.parked = 1;
+        sd_end();
+        return;
+    }
+    if (sds.mode) {
+        w = sds.mode == SDS_WRITE;
+        rc = sd_stream_close();
+        if (w && rc && !sds.werr)
+            sds.werr = (int8_t)rc;
+    }
+}
+
+static int sd_app_open(void)               /* the app's stream open (again) on the card: 0 or SD_E_* */
+{
+    uint32_t old = sd_budget(SD_CALL_MS);
+    int rc = 0;
+    if (sda.mode == SDS_WRITE) {
+        rc = sd_ws_open(sds.wnext);
+    } else {
+        sd_bus_release();
+        sd_begin();
+        if (sd_cmd(18u, sd.hc ? sda.next : sda.next << 9)) {
+            sd_end();
+            rc = SD_E_READ;
+        } else {
+            sds.mode = SDS_READ;
+            sd_streams = sd_streams_end;
+            sds.next = sda.next;
+            sds.dma = 0;
+            sd_ahead_begin(sda.planned ? sda.left : sd.sectors - sda.next);
+        }
+    }
+    sd_due = old;
+    return rc;
+}
+
+static int sd_app_fail(int rc)             /* the app's stream over (the card's side ended already): rc */
+{
+    sd_bus_release();
+    sda.mode = SDS_NONE;
+    return rc;
+}
+
+int plat_sd_read_open(uint32_t sector, uint32_t n)
+{
+    int rc;
+    plat_sd_close();
+    if (sd.state != 1)
+        return SD_E_STATE;
+    if (sector >= sd.sectors || n > sd.sectors - sector)
+        return SD_E_RANGE;
+    sda.mode = SDS_READ;
+    sda.next = sector;
+    sda.planned = n != 0;
+    sda.left = n;
+    sda.waiting = 0;
+    rc = sd_app_open();
+    if (rc)
+        sda.mode = SDS_NONE;
+    return rc;
+}
+
+static int sd_app_got(void)                /* an app's read: its block in */
+{
+    sda.waiting = 0;
+    sd.stepped = 0;
+    sds.next++;
+    sda.next++;
+    if (sda.planned)
+        sda.left--;
+    return 0;
+}
+
+static int sd_app_bad(int rc)              /* an app's read: its block damaged or refused: the stream ended (the block
+                                            * read again at the next call), a step slower after a second in a row */
+{
+    sda.waiting = 0;
+    sd.retries++;
+    sd_slower();
+    sd_bus_release();
+    return rc;
+}
+
+static int sd_ahead_next(uint8_t *p, uint32_t t0, uint32_t wait_us)   /* plat_sd_read_next, read ahead */
+{
+    int rc;
+    do {
+        rc = sd_ahead_take(p);
+        if (!rc)
+            return sd_app_got();
+        if (rc == SD_E_CRC)
+            return sd_app_bad(rc);
+        if (rc != SD_E_BUSY)               /* (an error token, or the card silent: the engine's own SD_SILENT_MS) */
+            return plat_ms() - sda.t0 >= SD_SILENT_MS ? sd_app_fail(SD_E_TIMEOUT) : sd_app_bad(SD_E_READ);
+        SD_AHEAD_WAIT();
+    } while (SD_TICKS() - t0 < wait_us * SD_TICKS_PER_US);
+    if (plat_ms() - sda.t0 >= SD_SILENT_MS + 20u)   /* (the engine itself silent) */
+        return sd_app_fail(SD_E_TIMEOUT);
+    return SD_E_BUSY;
+}
+
+int plat_sd_read_next(void *buf, uint32_t wait_us)
+{
+    uint32_t t0 = SD_TICKS();
+    uint8_t t;
+    int rc;
+    if (sda.mode != SDS_READ)
+        return SD_E_STATE;
+    if (sd.state != 1)
+        return sd_app_fail(SD_E_STATE);
+    if (sda.next >= sd.sectors || (sda.planned && !sda.left))
+        return SD_E_RANGE;                 /* (past the card's end, or the run planned) */
+    if (sds.mode != SDS_READ && (rc = sd_app_open()) != 0)
+        return sd_app_fail(rc);
+    if (!sda.waiting) {
+        sda.waiting = 1;
+        sda.t0 = plat_ms();
+    }
+    if (sd_ahead_on())
+        return sd_ahead_next((uint8_t *)buf, t0, wait_us);
+    do {
+        t = fm1_sd_xfer(0xFFu);
+        if (t == 0xFEu) {
+            rc = sd_data_body((uint8_t *)buf, 512u, sd.dma);
+            return rc ? sd_app_bad(rc) : sd_app_got();
+        }
+        if (t != 0xFFu)                    /* an error token */
+            return sd_app_bad(SD_E_READ);
+    } while (SD_TICKS() - t0 < wait_us * SD_TICKS_PER_US);
+    if (plat_ms() - sda.t0 >= SD_SILENT_MS) {
+        sda.waiting = 0;
+        return sd_app_fail(SD_E_TIMEOUT);
+    }
+    return SD_E_BUSY;
+}
+
+int plat_sd_write_open(uint32_t sector)
+{
+    plat_sd_close();
+    if (sd.state != 1)
+        return SD_E_STATE;
+    if (sector >= sd.sectors)
+        return SD_E_RANGE;
+    sda.mode = SDS_WRITE;
+    sds.wnext = sector;
+    if (sd_app_open()) {
+        sda.mode = SDS_NONE;
+        return SD_E_WRITE;
+    }
+    return 0;
+}
+
+int plat_sd_write_next(const void *buf)
+{
+    int rc;
+    if (sda.mode != SDS_WRITE)
+        return SD_E_STATE;
+    if (sd.state != 1)
+        return sd_app_fail(SD_E_STATE);
+    if (sds.werr)                          /* ended by another call with an error (sd_bus_release) */
+        return sd_app_fail(sd_ws_err());
+    if (sds.wnext >= sd.sectors)
+        return sd_app_fail(SD_E_RANGE);
+    if (sds.parked)
+        sd_unpark();
+    else if (sds.mode != SDS_WRITE && (rc = sd_app_open()) != 0)   /* (ended cleanly by another call) */
+        return sd_app_fail(rc);
+    rc = sd_ws_ready();
+    if (rc < 0)
+        return sd_app_fail(rc);
+    if (!rc)
+        return SD_E_BUSY;
+    if (!buf)
+        return 0;
+    sd_ws_start((const uint8_t *)buf);
+    rc = sd_ws_finish();                   /* (its DMA waited for: ~0.2 ms at 20 MHz; its busy is the next call's) */
+    if (rc)
+        sda.mode = SDS_NONE;               /* (refused: the stream ended by CMD12; the app knows which block) */
+    return rc;
+}
+
+int plat_sd_close(void)
+{
+    int rc = 0, mode = sda.mode;
+    if (mode == SDS_NONE)
+        return 0;
+    sda.mode = SDS_NONE;
+    if (sds.parked)
+        sd_unpark();
+    if (sds.mode == mode)
+        rc = sd_stream_close();
+    else if (mode == SDS_WRITE && sds.werr)
+        rc = sd_ws_err();
     return rc;
 }
 

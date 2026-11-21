@@ -617,14 +617,17 @@ enum { SD_E_NOCARD = -1,                               /* nothing answers */
        SD_E_READ = -6, SD_E_WRITE = -7,                /* the card refused */
        SD_E_RANGE = -8,                                /* sectors past the card's end */
        SD_E_STATE = -9,                                /* not started (plat_sd_start) */
-       SD_E_NOFS = -10 };                              /* started, but no FAT file system: sectors only */
+       SD_E_NOFS = -10,                                /* started, but no FAT file system: sectors only */
+       SD_E_BUSY = -11 };                              /* a stream's block not ready yet: call again */
 int plat_sd_start(void);           /* find the card, start it, mount its file system: 0, or SD_E_* (SD_E_NOFS: the
                                     * sectors work, the files don't). Again for a card changed or after an error */
 void plat_sd_stop(void);           /* files closed or not, the card let go (unmounted): plat_sd_start for it again */
 int plat_sd_state(void);           /* 1 started (with or without files), 0 not, < 0 the last start's SD_E_* */
 const char *plat_sd_what(int e);   /* an SD_E_* (or 0, 1) in a few words, for a screen: "no card", "ready", ... */
 uint32_t plat_sd_sectors(void);    /* the card's 512-byte sectors (0: not started) */
-int plat_sd_read(uint32_t sector, void *buf, uint32_t n);         /* n sectors into buf (RAM): 0 or SD_E_* */
+int plat_sd_read(uint32_t sector, void *buf, uint32_t n);         /* n sectors into buf (RAM): 0 or SD_E_*. This and
+                                                                    * plat_sd_write feed the watchdog: one FatFs call
+                                                                    * may be thousands of them */
 int plat_sd_write(uint32_t sector, const void *buf, uint32_t n);  /* n sectors from buf: 0 or SD_E_* */
 typedef struct {
     uint32_t sectors, khz;          /* the size; SPI1's clock for the card now (it steps down after errors) */
@@ -632,6 +635,29 @@ typedef struct {
     uint8_t hc, dma, ver;           /* SDHC / SDXC; reads by DMA (else byte by byte); the card's spec, 1 or 2 */
 } plat_sd_info_t;
 void plat_sd_info(plat_sd_info_t *i);
+/* streams, for an app that moves many blocks a few at a time from its main loop (samples played from the card, a
+ * recording): one open at a time; any other card call (plat_sd_read, FatFs) ends it first. A read keeps the bus the
+ * card's between its calls (the screen waits) until the LCD's next transfer, which ends it: the next
+ * plat_sd_read_next opens it again where it was. A write's blocks go one per call, each call returning once its block
+ * is sent (the card's busy is the next call's); the LCD may draw between them (the write is kept open, the card
+ * deselected). Host: plain sector calls */
+int plat_sd_read_open(uint32_t sector, uint32_t n);    /* a read from sector, n blocks (0: up to the card's end) */
+int plat_sd_read_next(void *buf, uint32_t wait_us);    /* the next block into buf: 0; SD_E_BUSY (not begun within
+                                                        * wait_us: call again; nothing waits longer, but a block begun
+                                                        * is read whole, ~0.2 ms at 20 MHz); SD_E_CRC, SD_E_READ
+                                                        * (damaged, refused: the same block at the next call);
+                                                        * SD_E_RANGE (past n or the card's end); SD_E_TIMEOUT (no
+                                                        * block for 250 ms: the read is over) */
+int plat_sd_write_open(uint32_t sector);               /* a write from sector on */
+int plat_sd_write_next(const void *buf);               /* the next block sent: 0; SD_E_BUSY (the card still writes
+                                                        * the one before: nothing sent); buf 0: only asks (0: it
+                                                        * would take one). An error ends the write (that block not
+                                                        * written) */
+int plat_sd_close(void);                               /* the stream ended (a write's last block on the card): 0 or
+                                                        * SD_E_* */
+/* fm1.toml sd_read_ahead = N: a read's blocks taken in SPI1's interrupt, up to N ahead of plat_sd_read_next, so the
+ * card streams on while the render holds the main loop up (the calls above unchanged). For a console: */
+void plat_sd_ahead(uint32_t *c);                       /* c[4]: interrupts, blocks, runs, runs ended by an error */
 /* the card as a USB drive (with fm1.toml msc = true: disk mode): plat_disk_mode(plat_sd_disk()) (0: not started), then
  * plat_sd_disk_poll() from the main loop (APP_LOOP) in place of plat_disk_poll, with the same answers. Its files are
  * unmounted meanwhile (the computer owns them): plat_disk_mode(0) and plat_sd_start() to have them back. Reads run

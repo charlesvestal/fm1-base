@@ -87,6 +87,7 @@ const char *plat_sd_what(int e)
     case SD_E_RANGE: return "past the card's end";
     case SD_E_STATE: return "card not started";
     case SD_E_NOFS: return "no FAT file system";
+    case SD_E_BUSY: return "busy";
     }
     return "error";
 }

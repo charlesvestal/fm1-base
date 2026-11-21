@@ -5379,6 +5379,38 @@ FRESULT f_rename (
 	LEAVE_FF(fs, res);
 }
 
+/*-----------------------------------------------------------------------*/
+/* fm1-base: a File's Entry Removed, its Cluster Chain Kept              */
+/*-----------------------------------------------------------------------*/
+/* The other half of a rename a power loss cut: f_rename writes the new entry, then removes the old one, so a cut
+   between leaves one chain under two names, and f_unlink of either frees the clusters the other still names.
+   Files only (FR_DENIED for a folder or a read-only file). */
+
+FRESULT f_unlink_entry (
+	const TCHAR* path		/* Pointer to the file path */
+)
+{
+	FRESULT res;
+	FATFS *fs;
+	DIR dj;
+	DEF_NAMEBUFF
+
+
+	res = mount_volume(&path, &fs, FA_WRITE);
+	if (res == FR_OK) {
+		dj.obj.fs = fs;
+		INIT_NAMEBUFF(fs);
+		res = follow_path(&dj, path);
+		if (res == FR_OK && (dj.fn[NSFLAG] & (NS_DOT | NS_NONAME))) res = FR_INVALID_NAME;
+		if (res == FR_OK && (dj.obj.attr & (AM_RDO | AM_DIR))) res = FR_DENIED;
+		if (res == FR_OK) res = dir_remove(&dj);	/* The entry only: the chain is the other name's */
+		if (res == FR_OK) res = sync_fs(fs);
+		FREE_NAMEBUFF();
+	}
+
+	LEAVE_FF(fs, res);
+}
+
 #endif /* !FF_FS_READONLY */
 #endif /* FF_FS_MINIMIZE == 0 */
 #endif /* FF_FS_MINIMIZE <= 1 */
@@ -5784,6 +5816,10 @@ FRESULT f_expand (
 				if (++ncl == tcl) break;	/* Break if a contiguous cluster block is found */
 			} else {
 				scl = clst; ncl = 0;		/* Not a free cluster */
+			}
+			if (clst == 2) {		/* fm1-base: wrapped round the volume's end: a run starts again at 2 (R0.16 counted the free
+									   clusters at the end and those from 2 as one run: FR_INT_ERR, a chain past the FAT's end) */
+				scl = 2; ncl = 0;
 			}
 			if (clst == stcl) {		/* No contiguous cluster? */
 				res = FR_DENIED; break;

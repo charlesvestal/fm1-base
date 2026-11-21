@@ -1365,6 +1365,9 @@ static void fm1_main(void)
 #endif
     /* above ALNK0 (3): the key / encoder / LED matrix is scanned one column per tick and must keep
      * its rhythm through a render (X0X's finding: below the audio, turns lost steps and LEDs flickered) */
+#if FM1B_SD && FM1B_SD_AHEAD
+    sd_ahead_attach();                              /* SPI1's vector, before the guard write-protects them (sd_ahead.h) */
+#endif
     fm1_timer5_start(isr_timer5, 4);
     fm1_guard_lock_top();
     fm1_irq_enable_all();

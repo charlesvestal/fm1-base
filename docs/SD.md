@@ -94,6 +94,33 @@ answered), `work` (called while disk mode waits on USB), `read_fails` (a read's 
 `present` (the medium there or not, and which). Disk mode also moves its USB packets from the main loop while it waits on them
 (felucca-bsp `usb_msc_pump`), not only at the 2 kHz poll, which alone allowed ~128 KB/s.
 
+## Streams for an app
+
+For an app that moves many blocks a few at a time from its main loop (samples played from the card, a recording),
+on sectors it found through FatFs (a contiguous file: `f_expand`, then its first sector):
+
+```c
+plat_sd_read_open(sector, n);                /* n blocks planned (0: to the card's end) */
+r = plat_sd_read_next(buf, 50);              /* 0; SD_E_BUSY: not begun within 50 us, call again later */
+plat_sd_close();
+plat_sd_write_open(sector);
+r = plat_sd_write_next(buf);                 /* 0 sent; SD_E_BUSY: the card still writes the last one */
+plat_sd_close();                             /* the last block on the card */
+```
+
+A read never waits past `wait_us` for its block to begin, so the main loop keeps its rhythm; the bus stays the card's
+between calls until the LCD draws, which ends the read (the next call opens it again where it was). A write sends one
+block per call and asks the card's busy without waiting on it; the LCD may draw between blocks (the write stays open,
+the card deselected, its busy waited for first so its DO never pulls against D/C). A damaged block: `SD_E_CRC`, the
+same block at the next call. Any other card call ends a stream first.
+
+Options (fm1.toml, all off by default):
+- `sd_read_ahead = N`: a read's blocks taken in SPI1's interrupt, up to N ahead (~544 B of the pool each), so the
+  card streams on while the render holds the main loop up (felucca-bsp `fm1_sd_rx_irq_*`, `isr_spi1`).
+- `sd_clock_fine = true`: the clock search through 20, 15, 12, 10, 8.57, 7.5, 6.67, 6 and 5 MHz, for a board whose
+  ceiling falls between the usual steps.
+- `sd_sck_hd = true`: SCK driven hard during the card's sessions (felucca-bsp `FM1_SD_SCK_HD`).
+
 ## How it works
 
 `device/sd.c` is the protocol, `lib/sd_fs.c` the file system's glue and the USB drive, felucca-bsp's
@@ -136,6 +163,11 @@ answered), `work` (called while disk mode waits on USB), `read_fails` (a read's 
   the middle of a read or a write by a restart (between blocks, inside one, after a refused one: no command to a
   busy card). Its
   FAT32 image is checked with mtools when they're installed.
+- `tests/sd_stream_test.c`: an app's streams on the same model, with and without `sd_read_ahead` (the interrupt run
+  by the test): waits within their budget while the card is slow, the LCD between blocks, damaged and refused blocks,
+  the run's end and the card's, a card pulled or stuck; the clock a 9 MHz card ends at with `sd_clock_fine`.
+- `tests/fatfs_test.c`: lib/fatfs's changes on a volume in memory (`f_expand` round the volume's end,
+  `f_unlink_entry` after a rename cut by a power loss).
 - `examples/sd`: on the device, the test of a mod. It shows the card's size, clock, DMA and error counts, lists the
   top folder, runs a speed test (REC: a 1 MiB contiguous file written, read back, checked) and shows the card to a
   computer as a USB drive (SAVE). The buttons also come as USB MIDI notes (60 PLAY, 62 REC, 64 SEL, 65 SAVE) for

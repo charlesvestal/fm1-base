@@ -1565,6 +1565,7 @@ static FILE *host_sd;
 static int host_sd_state;
 static uint32_t host_sd_n;
 static uint8_t host_sd_out;                     /* "sd out": taken out while started */
+static uint32_t host_sd_reads, host_sd_writes;  /* blocks, since the start (expect sd_reads, sd_writes) */
 static int sd_card_start(void)
 {
     const char *p = host_sd_path[0] ? host_sd_path : getenv("FM1B_SD_IMAGE");
@@ -1615,6 +1616,7 @@ static int host_sd_io(uint32_t lba, void *buf, uint32_t n, int write)
     if (!n)
         return 0;
     fseek(host_sd, (long)lba * 512, SEEK_SET);
+    *(write ? &host_sd_writes : &host_sd_reads) += n;
     if (write) {
         if (fwrite(buf, 512, n, host_sd) != n || fflush(host_sd))
             return SD_E_WRITE;
@@ -1632,6 +1634,65 @@ void plat_sd_info(plat_sd_info_t *i)
     i->hc = host_sd_n > 4194304u;
     i->dma = host_sd_state == 1;
     i->ver = 2;
+}
+/* an app's streams (plat_sd_read_open ...): plain sector calls, never busy */
+static uint8_t host_sda;                        /* 1 a read, 2 a write */
+static uint32_t host_sda_next, host_sda_end;
+int plat_sd_close(void) { host_sda = 0; return 0; }
+#if FM1B_SD_AHEAD
+void plat_sd_ahead(uint32_t *c) { c[0] = c[1] = c[2] = c[3] = 0; }   /* (no interrupt here: nothing read ahead) */
+#endif
+int plat_sd_read_open(uint32_t sector, uint32_t n)
+{
+    host_sda = 0;
+    if (host_sd_state != 1)
+        return SD_E_STATE;
+    if (sector >= host_sd_n || n > host_sd_n - sector)
+        return SD_E_RANGE;
+    host_sda = 1;
+    host_sda_next = sector;
+    host_sda_end = n ? sector + n : host_sd_n;
+    return 0;
+}
+int plat_sd_read_next(void *buf, uint32_t wait_us)
+{
+    int rc;
+    (void)wait_us;
+    if (host_sda != 1)
+        return SD_E_STATE;
+    if (host_sda_next >= host_sda_end)
+        return SD_E_RANGE;
+    rc = host_sd_io(host_sda_next, buf, 1, 0);
+    if (rc)
+        host_sda = 0;
+    else
+        host_sda_next++;
+    return rc;
+}
+int plat_sd_write_open(uint32_t sector)
+{
+    host_sda = 0;
+    if (host_sd_state != 1)
+        return SD_E_STATE;
+    if (sector >= host_sd_n)
+        return SD_E_RANGE;
+    host_sda = 2;
+    host_sda_next = sector;
+    return 0;
+}
+int plat_sd_write_next(const void *buf)
+{
+    int rc;
+    if (host_sda != 2)
+        return SD_E_STATE;
+    if (!buf)
+        return 0;
+    rc = host_sd_io(host_sda_next, (void *)buf, 1, 1);
+    if (rc)
+        host_sda = 0;
+    else
+        host_sda_next++;
+    return rc;
 }
 #define SD_NO_STREAMS                                  /* (disk mode's streams as plain sector calls: lib/sd_fs.c) */
 #include "sd_fs.c"                              /* the files: FatFs on these sectors, plat_sd_start */
@@ -2374,6 +2435,14 @@ static int expect(const char *what, const char *val)
         got = data_cmd_rc;
     else if (!strcmp(what, "sx_held"))             /* streams left open, let go after PLAT_SYSEX_HOLD_MS */
         got = (int)hsx_held;
+#if FM1B_SD
+    else if (!strcmp(what, "sd_present"))          /* the card started (plat_sd_state 1) */
+        got = plat_sd_state() == 1;
+    else if (!strcmp(what, "sd_reads"))            /* blocks read from the card image, writes to it */
+        got = (int)host_sd_reads;
+    else if (!strcmp(what, "sd_writes"))
+        got = (int)host_sd_writes;
+#endif
 #ifdef APP_BATTERY_RAW
     else if (!strcmp(what, "battery_raw"))          /* plat_battery_raw: the battery's reading (the host's: full) */
         got = (int)plat_battery_raw();
