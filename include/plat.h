@@ -303,7 +303,7 @@ int32_t plat_bta_latency_us(void);     /* what the stream adds on the FM-1's sid
                                         * An app that follows a clock may play that much earlier (the device's own
                                         * buffer comes on top and is not known) */
 /* the stream's SBC encoding as the app's render jobs (an app with a second core; fm1.toml bt_audio_jobs = true: FM1B_BTA_JOBS,
- * 1,280 B more of the pool; without it these do nothing). With keep on, the frames a render's output completes are kept and
+ * 1,280 B more of the pool, and not with cpu2_fallback; without it these do nothing). With keep on, the frames a render's output completes are kept and
  * not encoded at the feed; the next render encodes them, one a plat_bta_job call (either core, from the render: not the
  * main loop), and the next feed sends them (one half later, the same bytes). One frame is encoded at a time: a call that
  * finds one being encoded by the other core, or none left, does nothing. Those the render did not encode, the feed

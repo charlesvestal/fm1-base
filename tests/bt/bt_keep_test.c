@@ -8,7 +8,9 @@
  *     in flight out; the frames are encoded one each, in order, once
  *   - a frame kept needs the keep switched on and a free slot; the PCM is copied at once (the caller's buffer is free)
  *   - the claim's lock: the two cores' flags (Peterson's) let one in at a time, and a core's own flag is released
- *   - the kept PCM is 4-aligned (bt_sbc.c reads it as words) */
+ *   - the kept PCM is 4-aligned (bt_sbc.c reads it as words)
+ *   - the lock's flags, turn, busy and done: a 32-bit word each on a line of its own (BA_LINE 32), a flag written by its core only
+ *   - a count misread above BA_KEEP never indexes past the slots */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -76,8 +78,9 @@ static void fill(void)                              /* tone, tone, silence, tone
 static void fresh(void)                             /* the encoder and the kept state from scratch */
 {
     bt_sbc_init(&ba_sbc, 44100, 46, 1);
-    ba_keep_n = ba_keep_done = ba_keep_busy = 0;
-    ba_keep_flag[0] = ba_keep_flag[1] = 0;
+    ba_keep_n = 0;
+    ba_keep_done.v = ba_keep_busy.v = 0;
+    ba_keep_flag[0].v = ba_keep_flag[1].v = ba_keep_turn.v = 0;
     ba_feed_enc = 0;
     sent_n = 0;
     encodes = in_flight = max_in_flight = 0;
@@ -95,13 +98,16 @@ static int sent_is_want(uint32_t n)
     return 1;
 }
 
+static uint32_t rival_flag0_before, rival_flag0_after;
 static void rival(void)                             /* the second core calls a job while the first one's frame is encoded */
 {
     uint32_t c = core;
     core = 1;
     rival_calls++;
     rival_pending = ba_keep_pending();
+    rival_flag0_before = ba_keep_flag[0].v;
     rival_did += (uint32_t)ba_keep_one();
+    rival_flag0_after = ba_keep_flag[0].v;
     core = c;
 }
 
@@ -114,6 +120,22 @@ int main(void)
         want_len[f] = bt_sbc_encode(&ba_sbc, pcm[f], want[f]);
 
     check("the kept PCM is 4-aligned", ((uintptr_t)ba_keep_pcm & 3u) == 0 && ((uintptr_t)ba_keep_pcm[1] & 3u) == 0);
+    {                                               /* the lock's words: each a 32-bit word alone on its own cache line */
+        const uintptr_t at[5] = { (uintptr_t)&ba_keep_flag[0], (uintptr_t)&ba_keep_flag[1], (uintptr_t)&ba_keep_turn,
+                                  (uintptr_t)&ba_keep_busy, (uintptr_t)&ba_keep_done };
+        const size_t sz[5] = { sizeof ba_keep_flag[0], sizeof ba_keep_flag[1], sizeof ba_keep_turn, sizeof ba_keep_busy,
+                               sizeof ba_keep_done };
+        uint32_t a, b;
+        int ok_align = 1, ok_alone = 1;
+        for (a = 0; a < 5u; a++) {
+            ok_align &= (at[a] % BA_LINE) == 0;     /* (starts on a line) */
+            ok_alone &= sz[a] == BA_LINE;           /* (and fills it: nothing else on the line) */
+            for (b = a + 1u; b < 5u; b++)
+                ok_alone &= at[a] / BA_LINE != at[b] / BA_LINE;
+        }
+        check("the lock's flags, turn, busy and done each start on a 32-byte line", ok_align);
+        check("  and fill it: no two of them on one line", ok_alone);
+    }
 
     fresh();                                        /* not on: nothing kept */
     check("keep off: a frame is not kept", !ba_keep_add(pcm[0]) && ba_keep_n == 0 && ba_keep_pending() == 0);
@@ -127,7 +149,7 @@ int main(void)
     check("  pending 2", ba_keep_pending() == 2u);
     ba_keep_flush();
     check("flush with no job: the two frames' bytes, in order, as the encoder alone gives them", sent_is_want(2) && ba_feed_enc == 2u);
-    check("  the kept state is clear", ba_keep_n == 0 && ba_keep_done == 0 && ba_keep_busy == 0 && ba_keep_pending() == 0);
+    check("  the kept state is clear", ba_keep_n == 0 && ba_keep_done.v == 0 && ba_keep_busy.v == 0 && ba_keep_pending() == 0);
     fill();
 
     fresh();                                        /* every frame a job */
@@ -161,6 +183,8 @@ int main(void)
     check("  the second core's call meanwhile did nothing", rival_calls == 1 && rival_did == 0);
     check("  its pending count left out the frame in flight (1 of 2)", rival_pending == 1u);
     check("  the first frame was encoded once, the encoder never ran twice at a time", encodes == 1u && max_in_flight == 1u);
+    check("  core 1's call left core 0's flag as it was (a flag has the one writer that is its core)",
+          rival_flag0_before == 0u && rival_flag0_after == rival_flag0_before && ba_keep_flag[1].v == 0u);
     check("  the second core's job then takes the second frame", (core = 1, ba_keep_one() == 1) && encodes == 2u && max_in_flight == 1u);
     core = 0;
     ba_keep_flush();
@@ -168,11 +192,24 @@ int main(void)
 
     fresh();                                        /* the lock: one core in, the other waits; a core's own flag is released */
     ba_keep_lock(0);
-    check("lock: core 0 in, its flag set, the other's not", ba_keep_flag[0] == 1 && ba_keep_flag[1] == 0);
+    check("lock: core 0 in, its flag set, the other's not", ba_keep_flag[0].v == 1 && ba_keep_flag[1].v == 0);
     ba_keep_unlock(0);
     ba_keep_lock(1);
     ba_keep_unlock(1);
-    check("  both released", ba_keep_flag[0] == 0 && ba_keep_flag[1] == 0);
+    check("  both released", ba_keep_flag[0].v == 0 && ba_keep_flag[1].v == 0);
+
+    fresh();                                        /* a count misread from the shared RAM (some units do): kept within the slots */
+    ba_keep_on = 1;
+    ba_keep_n = 200;                                /* (BA_KEEP slots; the PCM of the others is not there) */
+    check("a count above BA_KEEP: pending is BA_KEEP", ba_keep_pending() == BA_KEEP);
+    check("  jobs take BA_KEEP frames and no more, none beyond the slots", ba_keep_one() == 1 && ba_keep_one() == 1 && ba_keep_one() == 0 && encodes == BA_KEEP);
+    ba_keep_flush();
+    check("  the flush ends, sends BA_KEEP frames, and clears the state", sent_n == BA_KEEP && ba_keep_n == 0 && ba_keep_done.v == 0);
+    fresh();
+    ba_keep_on = 1;
+    ba_keep_n = 2;
+    ba_keep_done.v = 200;                           /* (the encoded count misread too) */
+    check("  an encoded count above BA_KEEP: a job takes nothing, the flush ends", ba_keep_one() == 0 && encodes == 0 && (ba_keep_flush(), ba_keep_done.v == 0));
 
     printf(fails ? "BT KEEP TEST FAILED\n" : "bt keep test passed\n");
     return fails != 0;

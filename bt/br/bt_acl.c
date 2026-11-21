@@ -387,7 +387,8 @@ int bt_audio_feed(const int32_t *q15_pcm, uint32_t n)   /* 1: it streams (audio.
         ba_pcm_cnt = 0;
         ba_live = 0;
 #if BA_KEEP
-        ba_keep_n = ba_keep_done = 0;              /* (the frames of a stream that stopped: not sent) */
+        ba_keep_n = 0;                             /* (the frames of a stream that stopped: not sent) */
+        ba_keep_done.v = 0u;
 #endif
         return 0;
     }
@@ -401,7 +402,7 @@ int bt_audio_feed(const int32_t *q15_pcm, uint32_t n)   /* 1: it streams (audio.
         ba_sbc_init_done = 1;
     }
 #if BA_KEEP
-    if (ba_keep_n && ba_keep_done == ba_keep_n)    /* the last half's frames, encoded by the render's jobs: sent */
+    if (ba_keep_n && ba_keep_done.v == ba_keep_n)    /* the last half's frames, encoded by the render's jobs: sent */
         ba_keep_flush();
 #endif
     for (i = 0; i < n; i++) {

@@ -229,8 +229,6 @@ uint32_t plat_keys(void);
 #if FM1B_MIRROR
 #define MRQ 4096u                               /* (felucca-bsp usb.c's mirror ring) */
 #include "mirror.c"
-
-
 #else
 static uint32_t mirror_in_buttons(void) { return 0; }
 static uint32_t mirror_in_keys(void) { return 0; }
