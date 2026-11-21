@@ -361,6 +361,15 @@ int main(void)
             check(jn_count(&u[i].n, (uint32_t)(t_now / 1000)) == n - 1u, "  the unit counts the others");
     }
 
+    /* two units 40 ppm apart (the crystals' spread), nothing lost: the session clock follows the drift between
+     * measurements; Link's own method (the median, every 30 s) ramps 1.2 ms over 30 s and steps back */
+    reset();
+    unit_on(0, 1, -20, 1000, 9000);
+    unit_on(1, 1, 20, 1000, 9000);
+    t = ms_until_one(2, 30000);
+    run_ms(90000);                                /* (the drift learned: 8 measurements over 20 s or more) */
+    phase("2 units 40 ppm apart, settled", 2, 240, 500);
+
     /* a third unit comes late, one leaves, it plays on */
     reset();
     unit_on(0, 1, 5, 1000, 9000);
@@ -458,6 +467,25 @@ int main(void)
     lk_set_addr(&u[1].k, u[1].ip.ip, LK_MCAST_PORT);
     run_ms(6000);
     check(conflicts && u[0].ip.ip != u[1].ip.ip && all_one(2), "one address on two units: drawn again, one session");
+
+    /* the session clock's snap (a step of more than LK_SNAP_US, twice in a row): the drift AND the points it was learned
+     * from are forgotten, else the first measurement after the step is fitted to points from before it (a false drift,
+     * for LK_HIST measurements) */
+    {
+        static struct lk_node k;
+        int64_t t_us;
+        uint32_t i;
+        memset(&k, 0, sizeof k);
+        for (i = 0; i < 10u; i++) {                       /* 40 ppm, a measurement every 10 s */
+            t_us = (int64_t)i * 10000000;
+            clock_measured(&k, 1000 + t_us * 40 / 1000000, t_us);
+        }
+        check(k.drift_q30 > 40000 && k.drift_q30 < 46000, "the session clock learns 40 ppm");
+        t_us = 100000000;
+        clock_measured(&k, 1000 + t_us * 40 / 1000000 + 3000, t_us);              /* a step of 3 ms: set aside .. */
+        clock_measured(&k, 1000 + (t_us + 10000000) * 40 / 1000000 + 3000, t_us + 10000000);    /* .. and the next agrees */
+        check(k.drift_q30 == 0 && k.hist_n == 1u, "a snap forgets the drift and the points before the step");
+    }
 
     printf("%d failed\n", fails);
     return fails;

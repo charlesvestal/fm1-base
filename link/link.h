@@ -56,6 +56,8 @@ struct lk_peer {
     uint32_t mip;                          /* its measurement endpoint (mep4) */
     uint16_t mport;
     uint8_t noping;                        /* a measurement with it failed: the session's other members first */
+    uint16_t rtt;                          /* its fastest round trip in its last measurement, us; 0: not measured */
+    int64_t measured_at;                   /* host us of that measurement */
     int64_t dead;                          /* host us it is forgotten at (its ttl) */
 };
 
@@ -74,7 +76,9 @@ struct lk_meas {                           /* one measurement at a time (Link: o
     uint16_t port;
     int64_t due;                           /* host us of the next ping without an answer */
     uint32_t n;
+    int64_t t0;                            /* host us it started: the measurement stands for its middle */
     int64_t d2[LK_PTS];                    /* twice each offset ghost - host, us */
+    int16_t rtt[LK_PTS];                   /* each point's round trip, us (capped): the fastest are the cleanest */
 };
 
 struct lk_node {
@@ -84,8 +88,18 @@ struct lk_node {
     uint8_t sess[8];                       /* the session we are in */
     struct lk_tl tl;                       /* its timeline */
     struct lk_ss ss;                       /* its start / stop state */
-    int64_t icpt;                          /* ghost time = host + icpt */
-    int64_t remeasure;                     /* host us the session is measured again (Link: every 30 s) */
+    int64_t icpt;                          /* ghost time = host + icpt + drift x (host - icpt_t) */
+    int64_t icpt_t;                        /* host us icpt was measured for */
+    int64_t drift_q30;                     /* the session's clock against ours, (ghost - host) us a host us, Q30 */
+    int64_t prev_icpt, prev_t;             /* the measurement before; prev_t 0: none (a new clock) */
+    int64_t hist_icpt[8], hist_t[8];       /* the last measurements of our own session: the drift is their slope */
+    uint8_t hist_n, hist_at;
+    uint8_t settled;                       /* measurements since the clock was new: the filter's gains shrink with it */
+    uint8_t far;                           /* the last measurement was far off and set aside: a second one snaps */
+    int64_t last_err;                      /* the last measurement against the clock, us (for diagnostics) */
+    uint16_t last_rtt;                     /* the measured member's fastest round trip, us (for diagnostics) */
+    uint32_t measures;                     /* measurements of our own session, for the partner's re-check */
+    int64_t remeasure;                     /* host us the session is measured again (Link: every 30 s; here 10 s) */
     int64_t last_bc, next_bc;              /* the last broadcast; the next one due */
     uint32_t rnd;                          /* xorshift state (ids) */
     struct lk_peer peer[LK_PEERS];
@@ -112,6 +126,7 @@ void lk_set_tempo(struct lk_node *k, int32_t mpb, int64_t t);    /* the beat at 
 void lk_set_playing(struct lk_node *k, int play, int64_t ub, int64_t t);   /* play from session beat ub */
 
 /* helpers (exported for the tests) */
+int32_t lk_drift_ppb(const struct lk_node *k);                   /* the session's clock against ours, ppb (diagnostics) */
 int64_t lk_us_to_ub(int64_t us, int64_t mpb);                    /* llround(us / mpb * 1e6), as Link */
 int64_t lk_ub_to_us(int64_t ub, int64_t mpb);                    /* llround(ub / 1e6 * mpb) */
 int64_t lk_phase(int64_t ub, int64_t q_ub);                      /* ub mod q, in [0, q) */
