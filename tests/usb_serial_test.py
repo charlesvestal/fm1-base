@@ -92,5 +92,24 @@ ok(f == ["-DFELUCCA_USB_SERIAL_FN=fm1_usb_serial", f'-DFM1B_USB_SERIAL_MIX="{d}"
    "usb_serial with an option on: the old flag and the digest")
 ok(f[1] != flags({"usb_serial": True, "usb_audio_in_channels": 8})[1], "two configurations: two digest flags")
 
+# the note: USB audio options on without usb_serial = true: a computer keeps treating the firmware as the same device
+# (Windows binds drivers by VID/PID/serial); a text only, no flag, nothing in the image
+NOTE = ("note: fm1.toml turns on USB audio options without usb_serial = true: a computer keeps treating this firmware as the "
+        "same device as before (Windows binds drivers by VID/PID/serial); set usb_serial = true so the configuration is "
+        "part of the serial")
+ok(build.usb_serial_note({"usb_audio_in_channels": 4}) == NOTE, "an option on, no usb_serial: the note, its exact text")
+ok(build.usb_serial_note({"usb_audio_split": True, "usb_serial": False}) == NOTE, "usb_serial = false: the note")
+ok(build.usb_serial_note({"usb_midi_last": False}) == NOTE, "usb_midi_last off its default: the note")
+ok(build.usb_serial_note({"usb_audio_in_channels": 4, "usb_serial": True}) is None, "usb_serial = true: no note")
+ok(build.usb_serial_note({}) is None, "the defaults: no note")
+ok(build.usb_serial_note({"usb_audio_in": True, "usb_audio_out": True, "usb_iad": False}) is None,
+   "every option at its default: no note")
+ok(build.usb_serial_note({"usb_audio_mem": "app", "usb_product": "x"}) is None, "keys that change no descriptor: no note")
+ok(build.usb_serial_note({"usb_serial": True}) is None, "usb_serial alone: no note")
+conf = {"usb_audio_in_channels": 4, "usb_audio_out_feedback": True}
+before = dict(conf)
+ok(flags(conf) == [] and conf == before, "the note changes no flag, and leaves the configuration as it was")
+ok(flags({**conf, "usb_serial": True}) == flags({**conf, "usb_serial": True}), "the flags with usb_serial are as before")
+
 print("usb-serial: " + ("FAILED" if failed else "all passed"))
 sys.exit(1 if failed else 0)
