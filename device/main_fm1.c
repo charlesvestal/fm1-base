@@ -1266,8 +1266,20 @@ static int update_ready(void)
 #endif
 }
 
+/* an app's SysEx stream left open when an update or UBOOT starts: ended, else the ring stays held (sx_busy) and the update's
+ * own requests never leave (the FM-1 silent until a cold boot). The card's open read is ended by the update's
+ * sd_bus_release and, before UBOOT, by lcd_fill (lcd_sync: sd_bus_lend) */
+static void update_sysex_end(void)
+{
+#ifdef APP_SYSEX
+    if (sxs.on)
+        (void)plat_sysex_end();
+#endif
+}
+
 static void enter_uboot(const char *why)
 {
+    update_sysex_end();
     {
         uint32_t f = irq_save();
         fm1_clock_restore();                        /* (the chip's update mode at the stock clock) */
@@ -1620,6 +1632,7 @@ static void fm1_main(void)
         if (usb.ota_req && update_ready()) {        /* (the app stopped cleanly first, or its time is up) */
             usb.ota_req = 0;
             app_panic();                            /* silence: the update rewrites the flash */
+            update_sysex_end();
             {
                 uint32_t f = irq_save();
                 fm1_clock_restore();                /* (the update loader at the stock clock) */
