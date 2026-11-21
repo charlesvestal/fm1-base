@@ -24,7 +24,6 @@
  *                           (fm1.toml usb_audio_mem = "app": plat.h plat_usb_audio_mem), not static RAM
  *   FM1B_UAC_OUT 1          USB audio output: the computer plays through the FM-1, mixed after the app and after the
  *                           USB recording's tap, at MASTER and plat_usb_play_gain (device/uac_mix.h)
- *                           (an app with APP_USB_PLAY mixes it itself: plat_usb_audio_play)
  *   FM1B_UAC_CH 2           the USB audio input's channels (fm1.toml usb_audio_in_channels, 2, 4 or 8): 2 the master; any
  *                           other count the app's own (APP_USB_CAPTURE: app_usb_capture), 2 may be too
  *   FM1B_UAC_24 0           1: the USB audio input in 24-bit too (follows fm1.toml usb_audio_in_channels: up to 4 channels; its alt setting 2)
@@ -34,7 +33,7 @@
  *                           at the FM-1's own rate (explicit feedback on EP3 IN), played as sent, nothing resampled;
  *                           0 adaptive (resampled to the FM-1's clock). Not with FM1B_CDC (EP3)
  *   FM1B_UAC_OUT_24 0       1: the USB audio output in 24-bit too (fm1.toml usb_audio_out_24bit: its alt setting 2;
- *                           alt 1 stays 16-bit): the computer's 24 bits reach the app whole (plat_usb_audio_play)
+ *                           alt 1 stays 16-bit): the computer's 24 bits played whole
  *   FM1B_UAC_SPLIT 0        1: the USB audio input and output as two audio functions of their own, named (fm1.toml
  *                           usb_audio_split, usb_audio_in_name, usb_audio_out_name, usb_audio_in_channel_names): two
  *                           devices on a computer, each on its own clock, MIDI apart. Not with FM1B_CDC

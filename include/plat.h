@@ -706,16 +706,11 @@ void plat_host_patience(uint32_t try_ms, uint32_t total_ms);   /* each try's wai
 /* USB audio full (FM1B_UAC): 1, the USB audio input at full level (the app's render at gain 4096), MASTER for the
  * speaker and headphones only; 0, both at MASTER (the default) */
 void plat_usb_audio_full(int on);
-/* USB audio, an app's own channels and mixing (fm1.toml usb_audio_in_channels; app.h
- * APP_USB_CAPTURE, APP_USB_PLAY, below). plat_usb_audio_rec: 1, the computer takes the USB audio input this render
+/* USB audio, an app's own channels (fm1.toml usb_audio_in_channels; app.h
+ * APP_USB_CAPTURE, below). plat_usb_audio_rec: 1, the computer takes the USB audio input this render
  * (read at the render's start: an app makes its stems only then); 0 without FM1B_UAC (the simulator: while its script's
- * usb_rec records, and its usb_play plays the computer's audio).
- * plat_usb_audio_play (an app with APP_USB_PLAY, from app_render, once a render with its n): the computer's audio, n
- * stereo frames into lr at unity (24-bit as the render's: a 16-bit sample << 8, a 24-bit one as it is with
- * usb_audio_out_24bit), resampled to the FM-1's clock (as sent with usb_audio_out_feedback); 1 =
- * there is some, 0 = none (lr silent). Without APP_USB_PLAY (the platform mixes it at MASTER) it is always 0 */
+ * usb_rec records, and its usb_play plays the computer's audio) */
 int plat_usb_audio_rec(void);
-int plat_usb_audio_play(int32_t *lr, uint32_t n);
 /* USB audio's counters since the start (an app with APP_USB_STATS: its own page of them; felucca-bsp's uac / uo): the
  * input (the computer records: packets sent, ring run dry, ring full, an IN token that found nothing, the computer
  * stopped reading) and the output (it plays: packets and frames in, ring run dry, ring full), the last feedback sent
@@ -1085,8 +1080,6 @@ int app_stats_quiet(void);
  *                   what Bluetooth should get. Audio interrupt, after each render (Bluetooth audio built). Without it
  *                   Bluetooth takes the output
  *   APP_USB_STATS   (no function) plat_usb_audio_stats is built (the app shows USB audio's counters)
- *   APP_USB_PLAY    (no function) the app mixes the computer's audio itself (plat_usb_audio_play in its render: a
- *                   mixer track) instead of the platform adding it at MASTER after the render
  *   APP_FAULT       void app_fault(const fm1_crash_t *c)   a crash, before the crash screen (c: the record): an app's
  *                   own second core given up; or the crash is on that core (c->sp on its stacks): it stops there
  *   APP_LOG         void app_log(void (*line)(const char *t))   the development readout over USB-MIDI (F0 7D 4C 47 F7,

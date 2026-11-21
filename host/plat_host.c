@@ -30,8 +30,7 @@
  *                                master, as the device's platform takes them
  *   usb_play FILE | usb_play off (FM1B_UAC_OUT) a computer plays FILE (a stereo WAV at 44.1 kHz, 16- or 24-bit; 24 sent
  *                                as 16 without FM1B_UAC_OUT_24) through the FM-1 from the next render, then silence:
- *                                plat_usb_audio_play's frames (APP_USB_PLAY), or added to the output at MASTER after the
- *                                render, as the device's platform does. One clock: the simulator's frames are the
+ *                                added to the output at MASTER after the render, as the device's platform does. One clock: the simulator's frames are the
  *                                computer's one for one (the device's clocks and resampling: felucca-bsp's
  *                                tests/uac_test.c); expect usb_rec_frames / usb_play_frames count them
  *   usbwav FILE | usbwavstop     start / stop recording the USB audio input as a computer gets it: usb_audio_channels
@@ -1490,17 +1489,6 @@ void plat_usb_audio_stats(plat_usb_audio_stats_t *s)
 }
 uint32_t plat_usb_audio_mem_bytes(void) { return 0u; }   /* (the simulator: no rings, one clock) */
 void plat_usb_audio_mem(void *p) { (void)p; }
-int plat_usb_audio_play(int32_t *lr, uint32_t n)
-{
-#ifdef APP_USB_PLAY
-    return usb_play_take(lr, n);
-#else
-    uint32_t i;                                 /* the platform mixes it at MASTER (run_ms) */
-    for (i = 0; i < 2u * n; i++)
-        lr[i] = 0;
-    return 0;
-#endif
-}
 static uint32_t usb_play_q12 = 4096u;            /* plat_usb_play_gain: no USB audio on the host; kept for a test */
 void plat_usb_play_gain(uint32_t q12) { usb_play_q12 = q12 > 4096u ? 4096u : q12; }
 #define HOST_USB_CH (FM1B_UAC_CH > 2 && !FM1B_UAC_CAPTURE)
@@ -2506,7 +2494,6 @@ static void sim_render(int32_t *blk)            /* one APP_BLOCK-frame block, as
     memset(usb_ch, 0, sizeof usb_ch);
 #endif
     app_render(blk, APP_BLOCK, uac_full ? 4096u : APP_GAIN(master));
-#ifndef APP_USB_PLAY
     if (FM1B_UAC_OUT && usb_play_buf) {         /* the computer's audio at MASTER and plat_usb_play_gain, as uac_mix.h */
         static int32_t pl[2 * APP_BLOCK];
         const float g = (float)(uac_full ? 4096u : master * master >> 12) * (float)usb_play_q12 * (1.0f / (4096.0f * 4096.0f));
@@ -2514,7 +2501,6 @@ static void sim_render(int32_t *blk)            /* one APP_BLOCK-frame block, as
             for (k = 0; k < 2u * APP_BLOCK; k++)
                 blk[k] += (int32_t)((float)pl[k] * g);
     }
-#endif
 #if HOST_USB_CH
     usb_ch_master(blk);
     if (uwav) {

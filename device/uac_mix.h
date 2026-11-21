@@ -9,8 +9,7 @@
  *   3. with USB AUDIO full (plat_usb_audio_full; the render came at 4096), MASTER for the speaker after the tap, over
  *      both: the computer's audio was added at plat_usb_play_gain's level alone, MASTER here, slid across the block
  *      from the last block's.
- * An app with APP_USB_CAPTURE gives the recording its own channels (app_usb_capture), one with APP_USB_PLAY takes the
- * computer's audio itself (plat_usb_audio_play): step 2 is then not done here.
+ * An app with APP_USB_CAPTURE gives the recording its own channels (app_usb_capture).
  * The includer has uac_tap and uac_play (bsp/chip/usb.c) when FELUCCA_UAC / FELUCCA_UAC_OUT are on. */
 #ifndef FM1B_UAC_MIX_H
 #define FM1B_UAC_MIX_H
@@ -29,7 +28,7 @@ static inline void uac_mix(int32_t *o, uint32_t n, uint32_t gain, uint32_t maste
     uac_tap(o, n);                                  /* the USB audio input: the app's output, before the computer's */
 #endif
 #endif
-#if FELUCCA_UAC_OUT && !defined APP_USB_PLAY        /* (an app with APP_USB_PLAY mixes the computer's audio itself) */
+#if FELUCCA_UAC_OUT
     uac_play(o, n, full ? play_q12 : (master * master >> 12) * play_q12 >> 12);   /* the computer's audio, at MASTER */
 #else
     (void)master, (void)play_q12;

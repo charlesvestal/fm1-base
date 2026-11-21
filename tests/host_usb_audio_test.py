@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 henri (hdavid)
 """The host simulator's USB audio (host/plat_host.c usb_play, usb_rec) with the template, which mixes the computer's
-audio at MASTER and records the master (no APP_USB_PLAY, no APP_USB_CAPTURE): a computer plays a known stereo signal
+audio at MASTER and records the master (no APP_USB_CAPTURE): a computer plays a known stereo signal
 (16-bit: a sine on L, a ramp on R) while it records; with MASTER at full and the template silent, the recording is
 the signal, every frame, bit for bit, from the render that started after usb_play. Then MASTER at half: the
 recording the signal at master^2 (main_fm1.c's uac_play gain), within a rounding.
