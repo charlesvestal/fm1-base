@@ -113,8 +113,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              app area [0x4000, app_end) instead of [0x4000, 0x93000), on a 4 KiB boundary up to 0xE0000;
                              the code may then reach past the old end, plat.h's data window starts at app_end
                              (PLAT_DATA_LO; XDATA0 goes) and the update loader (felucca-bsp's, FL_APP_END) writes the
-                             bigger area. Any app_end (0x93000 too) builds the loader that compares slots before an
-                             install (LDR_SLOT_SWITCH): after a bigger app, the old code above app_end is erased
+                             bigger area. Every loader, with app_end or without, compares slots before an install
+                             (LDR_SLOT_SWITCH): over an app whose area ends higher, that app's code above this one's
+                             end is erased first (it would read as this app's data)
   app_clear_end = 0xDA000    with app_end: what an install over an app with a smaller slot erases first, [app_end,
                              app_clear_end) (the data the other app kept where this one keeps its own)
   mirror = true              the screen and panel mirrored over USB (FM1B_MIRROR: device/mirror.c; web/mirror/,
@@ -655,8 +656,10 @@ def build_loader():
     LDR.mkdir(parents=True, exist_ok=True)
     src = BSP / "loader"
     flags = [*CFLAGS, *inc(BSP / "chip", BSP / "boards" / "fm1")]
-    if app_end():                 # the app's slot: the loader writes it, and compares it with the installed app's
-        flags += [f"-DFL_APP_END={app_end():#x}u", "-DLDR_SLOT_SWITCH=1",
+    flags.append("-DLDR_SLOT_SWITCH=1")   # every loader compares the installed app's slot with this one's: after an
+                                          # app with a bigger slot, its code above this one's end is erased
+    if app_end():                 # the app's slot: the loader writes it
+        flags += [f"-DFL_APP_END={app_end():#x}u",
                   *([f"-DLDR_CLEAR_END={CONF['app_clear_end']:#x}u"] if CONF.get("app_clear_end") else [])]
     tc_all(("cc", "-c", src / "crt0_ldr.S", "-o", LDR / "crt0_ldr.o"),
            ("cc", *flags, "-c", src / "loader.c", "-o", LDR / "loader.o"))

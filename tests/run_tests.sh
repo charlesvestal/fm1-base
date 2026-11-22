@@ -197,11 +197,13 @@ if [ -f "$PKG" ]; then
     run ota-entry sh -c "$CC -w -o $OUT/ota_test tests/ota_test.c && $OUT/ota_test $PKG web/m-bootloader/fm1-uboot-2.4.fwsc"
     run update-loader sh -c "head -c 60000 template/build/template.bin > $OUT/old_app.bin && \
         $PY tools/fm1pkg_make.py $OUT/old_app.bin template/build/loader/ota.bin $OUT/old.fwsc >/dev/null && \
-        $CC -w -o $OUT/ldr_test tests/ldr_test.c && $OUT/ldr_test $OUT/old.fwsc $PKG"
+        $CC -w -DLDR_SLOT_SWITCH=1 -o $OUT/ldr_test tests/ldr_test.c && $OUT/ldr_test $OUT/old.fwsc $PKG"
     # a bigger app slot (tools/build.py app_end): the template's app in a package with the slot to 0xCE000, installed
-    # over the normal one (the loader built with that slot clears [0xCE000, 0xDA000) first) and back (the old code above
-    # 0x93000 erased)
-    run update-loader-slot sh -c "$PY tools/fm1pkg_make.py template/build/template.bin template/build/loader/ota.bin \
+    # over the normal one (the loader built with that slot clears [0xCE000, 0xDA000) first) and back with the
+    # template's own package (every loader has the slot check, tools/build.py build_loader: the old code above 0x93000
+    # erased). The template's loader is checked for it first (its ldr_slot_switch in loader.dis)
+    run update-loader-slot sh -c "grep -q '^ldr_slot_switch:' template/build/loader/loader.dis && \
+        $PY tools/fm1pkg_make.py template/build/template.bin template/build/loader/ota.bin \
         $OUT/big.fwsc --app-end 0xCE000 >/dev/null && \
         $CC -w -DFL_APP_END=0xCE000u -DLDR_SLOT_SWITCH=1 -DLDR_CLEAR_END=0xDA000u -o $OUT/ldr_slot_up tests/ldr_slot_test.c && \
         $CC -w -DLDR_SLOT_SWITCH=1 -o $OUT/ldr_slot_down tests/ldr_slot_test.c && \
