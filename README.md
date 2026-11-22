@@ -195,6 +195,36 @@ template (October 2026), in KB:
   calibration, the splash): `#define APP_SYS_TEXT` in app.h and its `app_sys_h`, `app_sys_w`, `app_sys_text`
   (`device/sys_text.c`); fm1-base's faces are then left out (LOOM-8: 18 KB).
 
+### A bigger app slot
+
+When 581 KB isn't enough, give the app area a later end with `app_end` in fm1.toml (a 4 KiB boundary from 0x93000 up
+to 0xE0000). The app area is then [0x4000, app_end) and app.bin may be app_end − 0x5044 bytes long: 0xCE000 gives
+823,228 B. What lies above the app area moves with it:
+
+- The data area starts at app_end when that is above 0x97000 (`PLAT_DATA_LO`). `PLAT_XDATA0` is what is left of
+  [0x93000, 0x97000) above app_end, and it is gone from 0x97000 on.
+- The store's objects (`APP_STORE_MAP`), its pool (`APP_STORE_POOL_BASE`) and the resource region (`APP_RES_BASE`)
+  must lie at or above `PLAT_DATA_LO`, or at Felucca's pairs at 0xFC000 and 0xE5000. The build stops when they don't.
+- The package's update loader writes the whole bigger area.
+
+Changing app_end from one release to the next moves these too. An install of the bigger slot writes code over what
+the app kept below the new end (saves, `PLAT_XDATA0`, its data), before the new app runs, so it can't carry them
+over: give them places above the new end, and expect saves that were below it to start from their defaults.
+
+Another firmware may have kept data where your app now keeps its own. Use `app_clear_end` (above app_end) to erase
+[app_end, app_clear_end) whenever your package is installed over an app with a smaller area. The store's records
+tell its own objects apart without it, but raw data in `plat_data*` sectors doesn't.
+
+Going the other way, every fm1-base update loader compares the installed app's area with its own before it writes,
+and erases the old app's code above its own end. Loaders from fm1-base before this, Felucca's and M-VAVE's don't, so
+after them that code stays in the next app's `PLAT_XDATA0` and data area until it is overwritten.
+
+m-bootloader's MIDI mode (its recovery menu, or by itself when a firmware won't start) installs a package without
+running the package's loader: it writes flash.bin's whole length, [0x4000, app_end), so a bigger slot installs that
+way too. It doesn't compare slots or erase up to `app_clear_end`, so after it, the old code above a smaller app's end
+stays as it does after the loaders above. It doesn't write the resource region either; the installer sends that to
+the running firmware afterwards.
+
 ## Development over USB
 
 `tools/fm1_remote.py` drives an FM-1 running any fm1-base firmware as a player would: buttons, keys, encoders,
