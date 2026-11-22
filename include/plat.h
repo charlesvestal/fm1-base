@@ -369,12 +369,14 @@ void plat_yield(void);
  * millisecond, a "reboot"). Built for an app whose app.h defines APP_RESTART */
 void plat_restart(void);
 void plat_log(const char *line);
-/* the flash's data area, 0x97000..0xDFFFF, for an app's own big data (a table it builds, samples): its store objects
- * live there too, at the offsets it gave them (APP_STORE_MAP), so it keeps to the rest. Main loop only; a write stops
- * everything for a moment (no flash reads meanwhile: a 256-byte page at a time). An erase (here and the store's) runs in
- * windows of about 1 ms, the interrupts and the sound on between them, the sector reading anything until it is done
- * (felucca-bsp's sliced erase; FM1B_ERASE_SLICED 0 in app.h or the environment: one window of 8-17 ms, the sound
- * silenced, as for a flash part that does not suspend an erase: plat_flash_held counts those).
+/* the flash's data area, 0x97000..0xDFFFF (from app_end with a bigger slot, below), for an app's own big data (a table
+ * it builds, samples): its store objects live there too, at the offsets it gave them (APP_STORE_MAP), so it keeps to
+ * the rest. Main loop only; a write stops everything for a moment (no flash reads meanwhile: a 256-byte page at a
+ * time). An erase (here and the store's) is one window of 8-17 ms with the sound silenced first. An app may ask for
+ * felucca-bsp's sliced erase instead (#define FM1B_ERASE_SLICED 1 in app.h, or FM1B_ERASE_SLICED=1 in the environment
+ * for one build): windows of about 1 ms, the interrupts and the sound on between them, the sector reading anything
+ * until it is done; a flash part that does not suspend an erase is still waited out in one window, the sound silenced
+ * (plat_flash_held counts those).
  * Two more windows for big data, outside the store: PLAT_XDATA0 (16 KiB, just above the app area) and PLAT_XDATA1
  * (92 KiB, above the update's staging). The update loader clears an update record it finds in the last 256 bytes of
  * a sector there (bsp/loader/ldr_core.c: "AT" at bytes 0xF06..0xF07, a nonzero CRC-16 at 0xF00 over the 78 bytes
@@ -388,8 +390,9 @@ void plat_log(const char *line);
  * looks for records below 0xFC000 only, so no 0xF00 rule here. Store objects may sit there too (the template's
  * settings pair is 0xFC000 / 0xFD000): with the window on, plat_data_erase and plat_data_write refuse a store
  * object's sectors in it, so an app with this window puts its objects elsewhere (or keeps to the rest) */
-/* An app with a bigger slot (fm1.toml app_end: FM1B_APP_END, its code past 0x93000): the data area starts at its end,
- * and XDATA0 is what is left of 0x93000..0x96FFF above it (none from 0x97000 on) */
+/* An app with a bigger slot (fm1.toml app_end: FM1B_APP_END, its code past 0x93000): the data area starts at its end
+ * when that is above 0x97000, and XDATA0 is what is left of 0x93000..0x96FFF above it (none from 0x97000 on); the
+ * store's objects and pool and APP_RES_BASE stay at or above PLAT_DATA_LO (the build checks) */
 #ifndef FM1B_APP_END
 #define FM1B_APP_END 0x93000u
 #endif

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Charles Vestal
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
+ * Copyright (C) 2026 Henri David
  * Changed for X0X and fm1-base: the object map is the app's (see below). */
 /* Persistent storage on the SPI NOR.
  *

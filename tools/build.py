@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Charles Vestal
 # Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
+# Copyright (C) 2026 Henri David
 """Build an fm1-base firmware: the app, the update loader (felucca-bsp's) and an installable .fwsc package.
 
   tools/build.py APP_DIR [--release X.Y[.Z][-suffix]] [--no-ble]
@@ -110,13 +111,17 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   conf_gen = "x.py args"     a script of the app (cwd APP_DIR) whose output, fm1.toml lines (ble = false), replaces the
                              file's own before the build: a setting the app's configuration chooses
   app_end = 0xCE000          a bigger app slot (FM1B_APP_END; FM1B_APP_END=0x... in the environment for one build): the
-                             app area [0x4000, app_end) instead of [0x4000, 0x93000), on a 4 KiB boundary up to 0xE0000;
-                             the code may then reach past the old end, plat.h's data window starts at app_end
-                             (PLAT_DATA_LO; XDATA0 goes) and the update loader (felucca-bsp's, FL_APP_END) writes the
-                             bigger area. Every loader, with app_end or without, compares slots before an install
-                             (LDR_SLOT_SWITCH): over an app whose area ends higher, that app's code above this one's
-                             end is erased first (it would read as this app's data)
-  app_clear_end = 0xDA000    with app_end: what an install over an app with a smaller slot erases first, [app_end,
+                             app area [0x4000, app_end) instead of [0x4000, 0x93000), on a 4 KiB boundary up to 0xE0000
+                             (app.bin up to app_end - 0x5044 B); the code may then reach past the old end, plat.h's data
+                             area starts at app_end when that is above 0x97000 (PLAT_DATA_LO), XDATA0 is what is left of
+                             [0x93000, 0x97000) above it, the store (APP_STORE_MAP, the pool) and APP_RES_BASE stay at
+                             or above PLAT_DATA_LO (checked here), and the update loader (felucca-bsp's, FL_APP_END)
+                             writes the bigger area. Every loader, with app_end or without, compares slots before an
+                             install (LDR_SLOT_SWITCH): over an app whose area ends higher, that app's code above this
+                             one's end is erased first (it would read as this app's data). An app whose app_end grows
+                             loses what it kept below the new end (the install writes code there): README.md, "A bigger
+                             app slot", also for m-bootloader's MIDI mode, which writes the area without the loader
+  app_clear_end = 0xDA000    with app_end only: what an install over an app with a smaller slot erases first, [app_end,
                              app_clear_end) (the data the other app kept where this one keeps its own)
   mirror = true              the screen and panel mirrored over USB (FM1B_MIRROR: device/mirror.c; web/mirror/,
                              tools/fm1_mirror.py), the panel played from the host; FM1B_MIRROR=1 in the environment
@@ -589,10 +594,13 @@ def res_base():
         raise SystemExit("build: fm1.toml resources needs app.h's APP_RES_BASE as a number (#define APP_RES_BASE "
                          "0xAB000u)")
     base, end = int(m[1], 0), app_end() or APP_END
-    if base < end:    # (the update loader refuses it at run time: felucca-bsp ldr_res, base < LDR_DATA_LO)
-        raise SystemExit(f"build: app.h's APP_RES_BASE {base:#x} is inside the app area, which ends at {end:#x}"
-                         + (" (fm1.toml app_end)" if app_end() else "") + ": the update loader would not write the "
-                         "resources; put the region at or above it")
+    lo = max(end, 0x97000)            # the data area's start (plat.h PLAT_DATA_LO, felucca-bsp's LDR_DATA_LO)
+    if base < lo:     # (the update loader refuses it at run time: felucca-bsp ldr_res, base < LDR_DATA_LO; and so
+                      # does fm1pkg_make.py ufw below 0x97000)
+        raise SystemExit(f"build: app.h's APP_RES_BASE {base:#x} is below the data area, which starts at {lo:#x}"
+                         + (" (fm1.toml app_end)" if lo > 0x97000 else f" (the app area ends at {end:#x}, XDATA0 "
+                            "up to 0x97000)") + ": the update loader would not write the resources; put the region at or "
+                         "above it")
     return base
 
 
@@ -1033,7 +1041,7 @@ def write_sizes(img, syms):
         mm = re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M)
         return int(mm.group(1), 16) if mm else 0
     sizes = {"flash": len(img), "ram": sym("_bss_end") - sym("_data_start"), "pool": sym("_pool_end") - sym("_pool_start"),
-             "ramtext": sym("_rt_end") - sym("_rt_start"), "app_slot": APP_SLOT}
+             "ramtext": sym("_rt_end") - sym("_rt_start"), "app_slot": app_slot()}
     (OUT / "sizes.json").write_text(json.dumps(sizes, indent=1) + "\n")
 
 
@@ -1595,6 +1603,9 @@ def app_end():
     """the app area's end: fm1.toml app_end, or FM1B_APP_END in the environment; None when neither sets it (0x93000)"""
     v = os.environ.get("FM1B_APP_END") or CONF.get("app_end")
     if v in (None, ""):
+        if CONF.get("app_clear_end") is not None:
+            raise SystemExit("fm1.toml app_clear_end needs app_end (it is what an install of this app's bigger slot "
+                             "erases above it)")
         return None
     end = int(v, 0) if isinstance(v, str) else int(v)
     if end % 0x1000 or not APP_END <= end <= 0xE0000:
