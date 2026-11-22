@@ -4,8 +4,11 @@
  * or the "LW" SysEx of device/main_fm1.c) and Ableton Link. On the screen: the Wi-Fi state and address, the session's
  * tempo, its peers, the beat in the bar (a quantum of 4) and whether it plays. A click on each beat, louder on the
  * bar's first: its time is the session's (plat_link_time_at), given to the tick as a plat_ticks24 value, not the
- * arrival of anything. PLAY starts and stops the session; K1 turns its tempo; SEL switches Link on and off.
+ * arrival of anything. PLAY stops the session; while it is stopped and the session has peers, PLAY waits for the next
+ * bar and counts the beats left (PLAY again cancels; countdown.h), alone it starts at once; K1 turns its tempo; SEL
+ * switches Link on and off.
  * Part of the unity build (device/unity.c, host/plat_host.c), after the platform: gfx.c is in scope. */
+#include "countdown.h"
 #define Q_UB 4000000                             /* the quantum: 4 beats, in micro-beats */
 
 static struct {
@@ -14,7 +17,8 @@ static struct {
     uint8_t redraw;
     int64_t next_ub;                             /* the next beat to click, micro-beats */
     uint32_t beats;                              /* clicks given (the host's checks) */
-} ui = {1, 0, 1, -1, 0};
+    int64_t arm_ub;                              /* a start waiting for this bar line, micro-beats; -1 none */
+} ui = {1, 0, 1, -1, 0, -1};
 
 /* ---- the click: the main loop sets its time, the tick starts it, the render plays it */
 static volatile uint32_t click_t24, click_due, click_accent;
@@ -66,6 +70,23 @@ static void schedule(void)                       /* the next beat's time to the 
 }
 
 void app_init(void) {}
+
+static int64_t session_beat(void)                /* the session's beat; -1 when there is no session with a peer in it */
+{
+    return plat_link_on() && plat_link_peers() ? plat_link_beat_at(plat_link_now()) : -1;
+}
+static void countdown(void)                      /* an armed start: given up with the session, done at the bar line */
+{
+    int64_t ub = session_beat();
+    if (ui.arm_ub < 0)
+        return;
+    if (ub < 0 || plat_link_playing())           /* (the session is gone, or a peer started it) */
+        ui.arm_ub = -1;
+    else if (cd_left(ub, ui.arm_ub) == 0) {
+        ui.arm_ub = -1;
+        plat_link_set_playing(1);
+    }
+}
 
 static void text_cat(char *d, const char *s)
 {
@@ -133,7 +154,14 @@ static void draw(void)
         int lit = ub >= 0 && (int32_t)plat_link_phase(ub, Q_UB) / 1000000 == (int32_t)i;
         cv_rect(60 + (int32_t)i * 40, 40, 32, 24, lit ? C_HI : C_LINE);
     }
-    cv_text(60, 76, &FONT_XS, plat_link_playing() ? "PLAYING" : "STOPPED", plat_link_playing() ? C_HI : C_DIM);
+    if (ui.arm_ub >= 0 && ub >= 0) {             /* PLAY waits for the bar */
+        t[0] = 0;
+        num_text(t, cd_left(ub, ui.arm_ub));
+        text_cat(t, " BEATS TO START");
+        cv_text(60, 76, &FONT_XS, t, C_HI);
+    } else {
+        cv_text(60, 76, &FONT_XS, plat_link_playing() ? "PLAYING" : "STOPPED", plat_link_playing() ? C_HI : C_DIM);
+    }
     cv_blit(0, 120);
 }
 
@@ -142,8 +170,15 @@ static void input(void)
     uint32_t btn = plat_buttons(), down = btn & ~ui.btn;
     int e;
     ui.btn = btn;
-    if (down >> B_PLAY & 1u)
-        plat_link_set_playing(!plat_link_playing());
+    if (down >> B_PLAY & 1u) {
+        int64_t ub = session_beat();
+        if (ui.arm_ub >= 0)                      /* PLAY again cancels the wait */
+            ui.arm_ub = -1;
+        else if (ub >= 0 && !plat_link_playing())
+            ui.arm_ub = cd_bar(ub, plat_link_phase(ub, Q_UB), Q_UB);   /* with peers: at the next bar */
+        else
+            plat_link_set_playing(!plat_link_playing());
+    }
     if (down >> B_SEL & 1u) {
         ui.link_on = (uint8_t)!ui.link_on;
         plat_link_enable(ui.link_on);
@@ -166,6 +201,7 @@ void app_frame(void)
 {
     static uint32_t last;
     input();
+    countdown();
     schedule();
     if (plat_ms() - last >= 100u) {              /* the screen ten times a second */
         last = plat_ms();
@@ -178,6 +214,8 @@ int app_expect(const char *what, int *got)
 {
     if (!strcmp(what, "beats"))
         *got = (int)ui.beats;
+    else if (!strcmp(what, "arm_left"))          /* the beats left of a start waiting for the bar; 0 none */
+        *got = ui.arm_ub >= 0 && session_beat() >= 0 ? (int)cd_left(session_beat(), ui.arm_ub) : 0;
     else
         return 0;
     return 1;

@@ -126,3 +126,32 @@ reboot
 wait 12000
 expect wifi_state 5
 expect link_peers 1
+# PLAY with a peer in the session waits for the next bar and counts the beats left (a bar is 2.7 s at 90 BPM); PLAY again
+# cancels; the start comes within the bar; PLAY while it plays stops at once
+link play 0
+wait 1500
+expect link_playing 0
+tap PLAY
+expect arm_left >0
+expect link_playing 0
+tap PLAY
+expect arm_left 0
+wait 3000
+expect link_playing 0
+tap PLAY
+wait 3000
+expect arm_left 0
+expect link_playing 1
+expect peer_playing 1
+tap PLAY
+wait 200
+expect link_playing 0
+# alone (the peer gone): PLAY starts at once, as before
+link_peer off
+wait 20000
+expect link_peers 0
+tap PLAY
+expect arm_left 0
+expect link_playing 1
+tap PLAY
+expect link_playing 0
