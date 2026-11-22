@@ -82,5 +82,30 @@ got = end({"app_clear_end": 0xDA000})
 ok(isinstance(got, str) and "app_clear_end" in got and "app_end" in got,
    f"app_clear_end without app_end: stops ({got})")
 
+
+def steps(conf):
+    """-> app_steps() for fm1.toml conf, or the stop message"""
+    build.CONF = conf
+    old = build.os.environ.pop("FM1B_APP_END", None)
+    try:
+        return build.app_steps()
+    except SystemExit as e:
+        return f"stop: {e}"
+    finally:
+        if old is not None:
+            build.os.environ["FM1B_APP_END"] = old
+
+
+ROWS = [[0x93000, 0, 0x93000], [0xB5000, 3, 0xD8000], [0xCE000, 1, 0xDA000]]
+ok(steps({}) == [], "no app_steps: none")
+ok(steps({"app_end": 0xB5000, "app_steps": ROWS, "app_clear_top": 0xDA000}) == [tuple(r) for r in ROWS],
+   "app_end 0xB5000 one of the steps' ends, app_clear_top 0xDA000: passes")
+got = steps({"app_steps": ROWS, "app_clear_top": 0xDA000})
+ok(isinstance(got, str) and "app_steps" in got and "app_end" in got, f"app_steps without app_end: stops ({got})")
+got = steps({"app_end": 0xA0000, "app_steps": ROWS, "app_clear_top": 0xDA000})
+ok(isinstance(got, str) and "none of app_steps' ends" in got, f"app_end 0xA0000, none of the steps' ends: stops ({got})")
+got = steps({"app_end": 0xB5000, "app_steps": ROWS})
+ok(isinstance(got, str) and "app_clear_top" in got, f"app_steps without app_clear_top: stops ({got})")
+
 print("res-base: " + ("FAILED" if failed else "all passed"))
 sys.exit(1 if failed else 0)

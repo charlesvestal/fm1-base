@@ -1635,6 +1635,8 @@ def app_steps():
     steps = CONF.get("app_steps") or []
     if not steps:
         return []
+    if app_end() is None:
+        raise SystemExit("fm1.toml app_steps needs app_end (the steps are what an install of this app's slot compares)")
     out = []
     for row in steps:
         if len(row) != 3:
@@ -1648,8 +1650,8 @@ def app_steps():
     top = CONF.get("app_clear_top")
     if top is None or top % 0x1000 or not max(r for _, _, r in out) <= top <= 0xE0000:
         raise SystemExit("app_steps needs app_clear_top: a 4 KiB boundary at or above every step's R, up to 0xe0000")
-    if (app_end() or APP_END) not in {e for e, _, _ in out}:
-        raise SystemExit(f"app_end {app_end() or APP_END:#x} is none of app_steps' ends")
+    if app_end() not in {e for e, _, _ in out}:
+        raise SystemExit(f"app_end {app_end():#x} is none of app_steps' ends")
     return out
 
 
@@ -1658,7 +1660,7 @@ def ldr_step_flags():
     steps = app_steps()
     if not steps:
         return []
-    end = app_end() or APP_END
+    end = app_end()
     step, reloc = next((s, r) for e, s, r in steps if e == end)
     lst = " ".join(f"X({e:#x}u,{s},{r:#x}u)" for e, s, r in steps)
     return [f"-DLDR_STEPS(X)={lst}", f"-DLDR_STEP={step}", f"-DLDR_RELOC_HI={reloc:#x}u",
