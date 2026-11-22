@@ -57,6 +57,7 @@ fi
 t jank_air jank_air_test.c -Ilink         # MODE JANK on a model of the air: 2, 3, 4 units, joins, leaves, loss, two groups, the phase
 t link link_test.c                    # Ableton Link (link/, GPL-3.0-only): wire format, join, tempo, phase, start / stop
 t link_mem link_mem_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_LINK=1 -DFM1B_BLE=1 -DFM1B_WIFI_MEM=1 -Ilink   # Link's node lent by the app
+t countdown countdown_test.c               # the Link example's start countdown (examples/link/countdown.h): the bar line, the beats left
 # the Link example on its simulated network: join, DHCP, the session's tempo and phase, both ways, start / stop, the
 # network lost and back, a reboot
 if "$PY" tools/build.py examples/link --host > "$OUT/link_host_build.log" 2>&1 &&
