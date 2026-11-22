@@ -102,6 +102,9 @@ run sd-example sh -c "$PY tools/build.py examples/sd --host >/dev/null && \
     FM1B_SD_IMAGE=$OUT/sd_card.img examples/sd/build/host/sd_host examples/sd/tests/sd.txt $OUT"
 run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts
+# the same with app.h APP_STORE_BOUNCE: the boot's move, the placeholders and the previous copy through the one page
+run storage-pool-bounce sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -DAPP_STORE_BOUNCE=1 \
+    -o $OUT/storage_pool_bounce_test tests/storage_pool_test.c && $OUT/storage_pool_bounce_test"
 # plat_headphones' debounce (device/plat_hp.c) over a simulated jack: a plug's bounce gives one change, 100 ms on
 run hp sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/hp_test tests/hp_test.c && $OUT/hp_test"
 run fastmath sh -c "$CC -O2 -w -o $OUT/fastmath_test tests/fastmath_test.c -lm && $OUT/fastmath_test"

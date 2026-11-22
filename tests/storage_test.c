@@ -107,6 +107,33 @@ int main(void)
         }
         bad += check("objects in data regions, clear of the sample slots", (int)ok);
     }
+    {   /* the copy before the current one (st_load_prev: LOOM-8's torn stream) and a part of the current one
+         * (st_load_at: the companion's file read, unity.c cp_obj_read), payloads longer than APP_STORE_BOUNCE's page */
+        static uint8_t p0[1500], p1[1200], back[1600];
+        uint32_t k, ok = 1;
+        for (k = 0; k < sizeof p0; k++)
+            p0[k] = (uint8_t)(k * 3u + 1u + (k >> 8));
+        for (k = 0; k < sizeof p1; k++)
+            p1[k] = (uint8_t)~(k * 5u + (k >> 8));
+        memset(nor, 0xFF, sizeof nor);
+        ok &= st_save(OBJ_PROJECT0, p0, sizeof p0) == 0 && st_save(OBJ_PROJECT0, p1, sizeof p1) == 0;
+        memset(back, 0x5A, sizeof back);
+        ok &= st_load_prev(OBJ_PROJECT0, back, sizeof back) == (int)sizeof p0 && !memcmp(back, p0, sizeof p0) &&
+              back[sizeof p0] == 0x5A;
+        memset(back, 0x5A, sizeof back);
+        ok &= st_load_prev(OBJ_PROJECT0, back, 700) == 700 && !memcmp(back, p0, 700) && back[700] == 0x5A;
+        ok &= st_load(OBJ_PROJECT0, back, sizeof back) == (int)sizeof p1 && !memcmp(back, p1, sizeof p1);
+        bad += check("the previous copy, longer than a page", (int)ok);
+        ok = 1;
+        memset(back, 0x5A, sizeof back);
+        ok &= st_load_at(OBJ_PROJECT0, 0, back, sizeof p1) == 0 && !memcmp(back, p1, sizeof p1) && back[sizeof p1] == 0x5A;
+        ok &= st_load_at(OBJ_PROJECT0, 300, back + 1, 700) == 0 && !memcmp(back + 1, p1 + 300, 700);
+        ok &= st_load_at(OBJ_PROJECT0, sizeof p1 - 1u, back, 1) == 0 && back[0] == p1[sizeof p1 - 1u];
+        ok &= st_load_at(OBJ_PROJECT0, sizeof p1, back, 0) == 0;
+        ok &= st_load_at(OBJ_PROJECT0, 1000, back, 201) < 0 && st_load_at(OBJ_PROJECT0, sizeof p1 + 1u, back, 0) < 0;
+        ok &= st_load_at(OBJ_PANEL, 0, back, 1) < 0;
+        bad += check("a part of the current copy (the file read)", (int)ok);
+    }
     {   /* every payload length a page boundary can meet, loaded whole, cut short and by its head; then the flash's
          * hash: the same with and without APP_STORE_BOUNCE (run_tests.sh compares the two builds' lines) */
         static const uint32_t LENS[] = {1, 31, 255, 256, 257, 511, 512, 600, 1000, ST_PAYLOAD_MAX - 1u, ST_PAYLOAD_MAX};

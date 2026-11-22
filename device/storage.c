@@ -47,8 +47,10 @@ static int st_prog(uint32_t off, const void *src, uint32_t n);
 /* app.h APP_STORE_BOUNCE 1: the store's RAM is one 256-byte page for the driver instead of a whole payload (3,584 B
  * less: an app whose objects are small, or whose RAM is short). The same flash and the same results: a load checks the
  * payload's CRC page by page, then reads it again straight into the caller's buffer; a save copies each page into the
- * page before programming it, and its CRC is the written pages'. Not with backup.c (it keeps a payload in st_buf).
- * Without it this file builds as before, byte for byte */
+ * page before programming it, and its CRC is the written pages'. The previous copy (st_load_prev), a part of the
+ * current one (st_load_at: the companion's file read) and the pool's move at boot go page by page too; the pool asks
+ * APP_STORE_POOL_EMPTY only of copies of a page or less (a longer one is never a placeholder). Not with backup.c (it
+ * keeps a payload in st_buf). Without it this file builds as before */
 #if defined APP_STORE_BOUNCE && APP_STORE_BOUNCE
 #define ST_BOUNCED 1
 #if FM1B_BACKUP
@@ -193,11 +195,11 @@ static int st_current(uint32_t obj, st_hdr_t *h)
 }
 
 #if ST_BOUNCED
-/* the first n bytes of copy (the one st_current found and checked) into dst, page
- * by page through st_buf: 0, or -1 (a read failed) */
-static int st_copy_out(uint32_t obj, uint32_t copy, void *dst, uint32_t n)
+/* n bytes of copy's payload from byte from (a copy st_current or st_pool_find found and checked) into dst, page by
+ * page through st_buf: 0, or -1 (a read failed) */
+static int st_copy_out(uint32_t obj, uint32_t copy, uint32_t from, void *dst, uint32_t n)
 {
-    uint32_t off, k, m, base = st_sector(obj, copy) + ST_PAYLOAD_OFF;
+    uint32_t off, k, m, base = st_sector(obj, copy) + ST_PAYLOAD_OFF + from;
     for (off = 0; off < n; off += m) {
         m = n - off > ST_BOUNCE ? ST_BOUNCE : n - off;
         if (st_read(base + off, st_buf, m))
@@ -216,7 +218,7 @@ static int st_load(uint32_t obj, void *dst, uint32_t max)   /* as below, through
         return -1;
     if (h.len > max)
         h.len = max;
-    if (st_copy_out(obj, (uint32_t)cur, dst, h.len))
+    if (st_copy_out(obj, (uint32_t)cur, 0, dst, h.len))
         return -1;
     return (int)h.len;
 }
@@ -253,7 +255,7 @@ static int st_load_head(uint32_t obj, void *dst, uint32_t n)   /* as below, thro
     int cur = st_current(obj, &h);
     if (cur < 0 || !h.len || h.len < n)
         return -1;
-    if (st_copy_out(obj, (uint32_t)cur, dst, n))
+    if (st_copy_out(obj, (uint32_t)cur, 0, dst, n))
         return -1;
     return (int)n;
 }
@@ -444,24 +446,45 @@ static int st_save(uint32_t obj, const void *src, uint32_t len)
  * falls back to the save before (LOOM-8's project.c). Its length, -1 none */
 static int st_load_prev(uint32_t obj, void *dst, uint32_t max)
 {
-    uint32_t i;
     st_hdr_t h;
-    int cur = st_current(obj, &h);
+    int cur = st_current(obj, &h), prev = !cur;
     if (cur < 0)
         return -1;
 #ifdef APP_STORE_POOL
     if (st_pooled(obj)) {
-        if (st_pool_find(obj, &h, h.seq) < 0)
+        if ((prev = st_pool_find(obj, &h, h.seq)) < 0)
             return -1;
     } else
 #endif
-    if (st_head(obj, (uint32_t)!cur, &h) || st_body(obj, (uint32_t)!cur, &h))
+    if (st_head(obj, (uint32_t)prev, &h) || st_body(obj, (uint32_t)prev, &h))
         return -1;
     if (h.len > max)
         h.len = max;
-    for (i = 0; i < h.len; i++)
+#if ST_BOUNCED
+    if (st_copy_out(obj, (uint32_t)prev, 0, dst, h.len))   /* (st_buf holds a page: the payload again, page by page) */
+        return -1;
+#else
+    for (uint32_t i = 0; i < h.len; i++)
         ((uint8_t *)dst)[i] = st_buf[i];
+#endif
     return (int)h.len;
+}
+
+/* bytes [off, off + n) of the object's current copy (the companion's file read: unity.c cp_obj_read): 0, or -1 (none,
+ * or past its end) */
+static int st_load_at(uint32_t obj, uint32_t off, void *dst, uint32_t n)
+{
+    st_hdr_t h;
+    int cur = st_current(obj, &h);
+    if (cur < 0 || off > h.len || n > h.len - off)
+        return -1;
+#if ST_BOUNCED
+    return st_copy_out(obj, (uint32_t)cur, off, dst, n);
+#else
+    for (uint32_t i = 0; i < n; i++)                  /* (st_current leaves the current copy in st_buf, checked) */
+        ((uint8_t *)dst)[i] = st_buf[off + i];
+    return 0;
+#endif
 }
 
 #ifdef APP_STORE_POOL
@@ -475,7 +498,9 @@ static int st_pool_boot(void)
     for (uint32_t o = APP_STORE_POOL_OBJ0; o < ST_POOL_LAST; o++) {   /* the empty ones dropped, the current copy last */
         st_hdr_t h;                                   /* (a power cut between: the next boot drops it again, never an */
         int c = st_pool_find(o, &h, 0);               /* older copy left current) */
-        if (c < 0 || st_body(o, (uint32_t)c, &h) || !APP_STORE_POOL_EMPTY(o, st_buf, h.len))
+        if (c < 0 || (ST_BOUNCED && h.len > sizeof st_buf) || st_body(o, (uint32_t)c, &h) ||
+            !APP_STORE_POOL_EMPTY(o, st_buf, h.len))      /* (APP_STORE_BOUNCE: st_buf holds a payload of a page or
+                                                           * less, read by st_body; a longer copy is never empty) */
             continue;
         for (uint32_t i = 0; i < st_pool_scan; i++)
             if (i != (uint32_t)c && st_head(o, i, &h) == 0 && st_erase(APP_STORE_POOL_BASE + i * ST_SECTOR))
@@ -508,8 +533,13 @@ static int st_pool_boot(void)
         }
         for (off = 0; off < c.len; off += 256u) {
             uint32_t n = c.len - off > 256u ? 256u : c.len - off;
+#if ST_BOUNCED
+            if (st_read(at + ST_PAYLOAD_OFF + off, st_buf, n) || st_prog(to + ST_PAYLOAD_OFF + off, st_buf, n))
+                break;                                /* (one page at a time, as checked by st_body above) */
+#else
             if (st_prog(to + ST_PAYLOAD_OFF + off, st_buf + off, n))
                 break;
+#endif
         }
         c.slot = (uint16_t)k;
         c.hcrc = st_crc32(&c, sizeof c - 4u);

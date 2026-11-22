@@ -497,8 +497,18 @@ static int cp_room(uint32_t n)                      /* the SysEx ring takes it n
 static uint32_t cp_link(void) { return usb.config ? usb.resets + 1u : 0u; }
 static int cp_held(void) { return backup_streaming(); }   /* (the app's saving held: no file written meanwhile) */
 #ifdef APP_FILE_OBJS
+#if ST_BOUNCED
+static int cp_obj_read(uint32_t obj, uint32_t off, uint8_t *dst, uint32_t n)   /* (storage.c st_load_at: the current
+                                                                                * copy, checked, page by page) */
+{
+    if (!flash_ok || obj >= OBJ_NOBJ)
+        return -1;
+    return st_load_at(obj, off, dst, n);
+}
+#else
 static int cp_obj_read(uint32_t obj, uint32_t off, uint8_t *dst, uint32_t n)   /* (from storage.c's buffer: st_current
-                                                                                * leaves the current copy there, checked) */
+                                                                                * leaves the current copy there, checked;
+                                                                                * st_load_at, as here) */
 {
     st_hdr_t h;
     if (!flash_ok || obj >= OBJ_NOBJ || st_current(obj, &h) < 0 || off > h.len || n > h.len - off)
@@ -506,6 +516,7 @@ static int cp_obj_read(uint32_t obj, uint32_t off, uint8_t *dst, uint32_t n)   /
     memcpy(dst, st_buf + off, n);
     return 0;
 }
+#endif
 #endif
 #endif
 #ifdef APP_TOUCH
