@@ -596,6 +596,73 @@ def res_base():
     return base
 
 
+STORE_PROBE = """/* tools/build.py store_probe: app.h's store places as the device's compiler sees them (store_values) */
+#include <stdint.h>
+#include "plat.h"
+#include "app.h"
+#ifdef APP_STORE_MAP
+const uint32_t fm1b_probe_map[] = APP_STORE_MAP;
+#endif
+const uint32_t fm1b_probe_area[] = {PLAT_DATA_LO, PLAT_DATA_HI,
+#ifdef APP_STORE_POOL
+    1u, APP_STORE_POOL_BASE, APP_STORE_POOL_N, APP_STORE_POOL_OLD, APP_STORE_POOL_OBJ0, APP_STORE_POOL_OBJN};
+#else
+    0u, 0u, 0u, 0u, 0u, 0u};
+#endif
+"""
+STORE_GLOB = (0xFC000, 0xFF000)     # felucca-bsp's FL_STORE_OK beside the data area: Felucca's globals, its AUTO pair
+STORE_AUTO = (0xE5000, 0xE7000)
+
+
+def store_probe():
+    """the probe's source (STORE_PROBE), compiled beside unity.c with its flags to LLVM IR"""
+    GEN.mkdir(parents=True, exist_ok=True)
+    f = GEN / "store_probe.c"
+    if not f.exists() or f.read_text() != STORE_PROBE:
+        f.write_text(STORE_PROBE)
+    return f
+
+
+def store_values(ir):
+    """the probe's IR -> (APP_STORE_MAP as a list, or None; (data_lo, data_hi, pool?, base, n, old, obj0, objn))"""
+    def arr(name):                # (an array, or a packed struct when it ends in zeros: "[2 x i32] zeroinitializer")
+        m = re.search(rf"^@fm1b_probe_{name} = .*$", ir, re.M)
+        if not m:
+            return None
+        return [v & 0xFFFFFFFF for t in re.finditer(r"\[(\d+) x i32\] zeroinitializer|\bi32 (-?\d+)", m[0])
+                for v in ([0] * int(t[1]) if t[1] else [int(t[2])])]
+    area = arr("area")
+    if not area:
+        raise SystemExit("build: the store probe (store_probe.ll) has no fm1b_probe_area")
+    return arr("map"), tuple(area)
+
+
+def store_errors(store_map, area):
+    """what app.h places in the flash for the store against where the store may be (felucca-bsp FL_STORE_OK, the
+    store's st_erase and st_prog): each A/B pair of APP_STORE_MAP (a pooled object's entry is not used) and the pool's
+    sectors, the old pairs it moves too, whole 4 KiB sectors in the data area [PLAT_DATA_LO, PLAT_DATA_HI) (above the
+    app area: app_end's, or 0x97000), the pair at 0xFC000 or the one at 0xE5000. A list of what is not"""
+    data_lo, data_hi, pooled, base, n, old, obj0, objn = area
+    def inside(lo, hi, regions):
+        return any(a <= lo and hi <= b for a, b in regions)
+    errors = []
+    store = [(data_lo, data_hi), STORE_GLOB, STORE_AUTO]
+    for i, at in enumerate(store_map or []):
+        if pooled and obj0 <= i < obj0 + objn:
+            continue
+        if at % 0x1000 or not inside(at, at + 0x2000, store):
+            errors.append(f"APP_STORE_MAP object {i} at {at:#x} (its pair [{at:#x}, {at + 0x2000:#x})): the store "
+                          f"keeps to [{data_lo:#x}, {data_hi:#x})" + (" (above the app area, fm1.toml app_end)"
+                          if data_lo > 0x97000 else "") + ", 0xfc000..0xfefff or 0xe5000..0xe6fff")
+    if pooled:
+        hi = base + max(n, old) * 0x1000
+        if base % 0x1000 or not inside(base, hi, [(data_lo, data_hi)]):
+            errors.append(f"APP_STORE_POOL_BASE {base:#x} (the pool and the pairs it moves, [{base:#x}, {hi:#x})): "
+                          f"the pool keeps to the data area [{data_lo:#x}, {data_hi:#x})"
+                          + (" (above the app area, fm1.toml app_end)" if data_lo > 0x97000 else ""))
+    return errors
+
+
 def res_file(payload):
     """NAME-res.bin: the region as the FM-1 holds it, its header (the commit record) then the payload"""
     import zlib
@@ -1069,7 +1136,8 @@ def build_app():
     units = [("cc", "-c", BSP / "chip" / "crt0.S", "-o", OUT / "crt0.o"),
              ("cc", "-c", BSP / "chip" / "fm1_vec.S", "-o", OUT / "fm1_vec.o"),
              ("cc", "-c", BSP / "chip" / "fm1_isr.S", "-o", OUT / "fm1_isr.o"),
-             ("cc", *flags, *ir_out, SRC / "device" / "unity.c", "-o", OUT / ("unity.ll" if ir else "unity.o"))]
+             ("cc", *flags, *ir_out, SRC / "device" / "unity.c", "-o", OUT / ("unity.ll" if ir else "unity.o")),
+             ("cc", *flags, "-S", "-emit-llvm", store_probe(), "-o", OUT / "store_probe.ll")]
     objs = [OUT / "crt0.o", OUT / "fm1_vec.o", OUT / "fm1_isr.o", OUT / "unity.o"]
     if CPU2:                                      # the second core's entry and stacks
         units.append(("cc", *cpu2_stack_flags(), "-c", BSP / "chip" / "fm1_cpu1.S", "-o", OUT / "fm1_cpu1.o"))
@@ -1091,6 +1159,9 @@ def build_app():
     jieli = (BLE and not OWN) or WIFI             # JieLi's libraries linked (the shim, LTO)
     b_units, b_objs, b_libs = radio_units() if jieli else ([], [], [])
     tc_all(*units, *b_units)
+    errors = store_errors(*store_values((OUT / "store_probe.ll").read_text()))
+    if errors:                                    # (the store refuses those sectors at run time: st_erase -8)
+        raise SystemExit("build: app.h's store is not where the store may be:\n  " + "\n  ".join(errors))
     if ir:                                        # the pass, then each unit's code from its IR at its own level
         def ir_pass(src, dst, unit=None):
             r = subprocess.run([sys.executable, str(APP / ir), str(src), str(dst), *([unit] if unit else [])],

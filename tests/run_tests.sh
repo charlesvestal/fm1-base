@@ -145,6 +145,8 @@ run cpu2-stack "$PY" tests/cpu2_stack_test.py
 run bta-jobs-flags "$PY" tests/bta_jobs_flags_test.py
 # app.h APP_RES_BASE against the app area's end (tools/build.py res_base): a region inside the app area stops the build
 run res-base "$PY" tests/res_base_test.py
+# app.h's store places (APP_STORE_MAP, the pool) against the data area above the app area (tools/build.py store_errors)
+run store-place "$PY" tests/store_place_test.py
 # the check on an app's RAM code (tools/ramcode.py, plat.h PLAT_RAM_CODE): RAM -> RAM passes, into XIP fails
 run ramcode "$PY" tests/ramcode_test.py
 # the web installer's m-bootloader step (web/fm1ota.js installBoot) against a simulated FM-1, and finding the FM-1 by
