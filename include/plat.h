@@ -16,6 +16,13 @@
 #else
 #define PLAT_POOL __attribute__((section(".pool")))
 #endif
+/* PLAT_SPARE: a buffer in NOINIT's room past the reset-kept records (about 13.8 KB: 15.7 KB less the crash and update
+ * records), outside the SRAM budget; zeroed at boot as .bss. The linker refuses what does not fit */
+#ifdef PLAT_HOST
+#define PLAT_SPARE
+#else
+#define PLAT_SPARE __attribute__((section(".spare")))
+#endif
 
 /* PLAT_RAM_CODE: a function that runs from RAM (section .app_ram, copied at boot with .ram_text, at the start of
  * the RAMTEXT region they share: 32 KiB, 24 KiB with WiFi; with fm1.toml ram_layout = "packed", device/app_packed.ld,

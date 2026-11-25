@@ -49,6 +49,9 @@ SECTIONS
     .bss (NOLOAD) : { _bss_start = .; *(.bss*) *(.sbss*) *(COMMON) *(.*_bss) *(.bd_base) . = ALIGN(4); _bss_end = .; } > RAM
     .pool (NOLOAD) : { _pool_start = .; *(.pool*) . = ALIGN(4); _pool_end = .; } > POOL
     .noinit (NOLOAD) : { *(.noinit*) } > NOINIT
+    /* NOINIT's room past the reset-kept records: zeroed by the boot as .bss (plat.h PLAT_SPARE), for an object that
+     * need not survive a reset; the records stay first, where they were */
+    .spare (NOLOAD) : { . = ALIGN(4); _spare_start = .; *(.spare .spare.*) . = ALIGN(4); _spare_end = .; } > NOINIT
     /* the cache RAM's objects (plat.h plat_cache_ram): zeroed by its test at the start, not by the boot; for an
      * object whose every user checks plat_cache_ram() first (without the test passed it is not RAM). Empty in
      * fm1-base itself; tools/build.py checks it fits the ways asked for (none: empty) */

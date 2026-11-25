@@ -6,6 +6,7 @@
  * 10 kHz), audio (ALNK0), USB; then the main loop: UI at ~60 frames/s, input polled in between. */
 extern uint32_t _data_start[], _data_end[], _data_load[], _bss_start[], _bss_end[];
 extern uint32_t _pool_start[], _pool_end[], _rt_start[], _rt_end[], _rt_load[];
+extern uint32_t _spare_start[], _spare_end[];
 extern uint8_t _app_xip_end[];
 #include "boot_lzma.h"
 
@@ -1706,6 +1707,8 @@ void fm1_cstart(void)
     p3 |= (bootguard.failed >= 2u) << 8;            /* two failed boots: safe mode (kept past the .bss clear) */
     fm1_irq_init();
     for (d = _bss_start; d < _bss_end; d++)
+        *d = 0;
+    for (d = _spare_start; d < _spare_end; d++)     /* (NOINIT's spare room: zeroed as .bss, the records kept) */
         *d = 0;
     uint32_t *pool_dirty_end = _pool_end;           /* (where the boot decoder's tables may have left the RAM dirty) */
     if (_rt_load[0] == BOOT_LZMA_MAGIC) {
