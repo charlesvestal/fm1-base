@@ -1379,6 +1379,7 @@ static void fm1_main(void)
     uint32_t supply_t = 0;                          /* (the supply's: plat_battery_charging) */
     uint32_t last_frame = 0;
     int took;                                       /* a SysEx frame taken this pass (not the updater's) */
+    int waiting;                                    /* a SysEx frame was waiting at this pass's look */
     {
         uint32_t f = irq_save();
 #if FM1B_CRASHLOG
@@ -1578,7 +1579,8 @@ static void fm1_main(void)
             const uint8_t *p;
             uint32_t n;
             took = 0;
-            if (ota_frame_get(&p, &n) && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || CL_REQUEST(p, n) ||
+            waiting = ota_frame_get(&p, &n);
+            if (waiting && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || CL_REQUEST(p, n) ||
                                           DS_REQUEST(p, n) || remote_frame(p, n)
 #if FM1B_WIFI
                                           || wifi_frame(p, n)
@@ -1598,7 +1600,8 @@ static void fm1_main(void)
             }
         }
         fm1b_dbg.stage = 4;
-        if (!took)
+        if (waiting && !took)                       /* (only the frame none took: with none waiting at the look above, one that
+                                                     * came in since would be the updater's and dropped, unseen by the app) */
             usb_cmd(ota_service());                 /* M-UPGRADE handshake; the commands in its framing (backup,
                                                      * mirror, the app's); other SysEx is dropped */
 #if FM1B_BACKUP
