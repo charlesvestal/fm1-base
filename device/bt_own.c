@@ -248,6 +248,7 @@ static void own_cal_log(void)                     /* what the calibration measur
     shim_log(b);
 }
 
+static uint8_t ble_off;                           /* switched off by the player (plat_ble_enable) */
 static void ble_start(void)
 {
     char b[40];
@@ -295,7 +296,8 @@ static void ble_start(void)
         shim_log(b);
     }
     own_held(1);
-    ble_enable(1);
+    ble_enable(!ble_off);                         /* (switched off by the player and started for WiFi or the audio: the
+                                                   * radio up, no advertising) */
     own_held(0);
     ble_state = BLE_READY;
 }
@@ -416,8 +418,8 @@ static void ble_poll(void)
 }
 
 /* ---- plat.h */
-static uint8_t ble_off;                           /* switched off by the player (plat_ble_enable) */
 int plat_ble_state(void) { return ble_off ? BLE_OFF : ble_state; }
+int plat_ble_radio(void) { return ble_state; }   /* (switched off or not: the radio stays up, WiFi's start reads it) */
 int plat_ble_connected(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_connected(); }
 int plat_ble_rssi(int link) { (void)link; return 0; }   /* (not yet: the own controller keeps no link's reading) */
 int plat_ble_linked(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_linked(); }
