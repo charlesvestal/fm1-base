@@ -5,7 +5,7 @@
  * included by plat_fm1.c (after its common part), before main_fm1.c. Not yet confirmed on a unit (it follows Melodee's
  * own SMK-37 port, which runs on an Elite).
  *
- * MASTER: the FM-1's pot is K5, an encoder, here: a virtual master, 0..4096 in steps of SMK_MASTER_STEP a detent,
+ * MASTER: normally K5 is a virtual master, 0..4096 in steps of SMK_MASTER_STEP a detent,
  * kept in the panel calibration object (OBJ_PANEL, saved SMK_MASTER_SAVE_MS after the last turn), so it survives
  * power-off; plat_master_set lets an app put its own saved level there at start.
  * Lights: the 18 buttons' LEDs by the panel map, PLAY's second colour on the spare line (LED_PLAY_GREEN); no key
@@ -76,10 +76,12 @@ int32_t plat_battery_raw(void) { return batt_raw; }   /* (mux C's divider, avera
 int plat_headphones(void) { return -1; }
 
 #include "smk37_master.h"   /* the virtual MASTER: K5's detents, kept in the panel object (plat_master_set) */
-static void smk_main_poll(void)                    /* the main loop: K5, the wheels, the pedal, the battery's average, the saved master */
+static void smk_main_poll(void)                    /* the main loop: K5 (unless APP_SMK_8ENC), wheels, pedal, battery, and saved master */
 {
     smk_analog_poll();
+#ifndef APP_SMK_8ENC
     smk_master_poll(fm1_enc_take(SMK_MASTER_ENC));
+#endif
     if (fm1_in.battery)
         batt_raw = batt_raw ? batt_raw + ((int32_t)fm1_in.battery - batt_raw) / 16 : (int32_t)fm1_in.battery;
 }

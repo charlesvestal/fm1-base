@@ -36,8 +36,8 @@
  *                           fm1_cache_ram.h; set and tested in fm1_cstart, main_fm1.c)
  *   FM1B_COMPANION 0        the companion services over USB (fm1.toml companion = true: companion.c) */
 #include <stdint.h>
-#include "plat.h"
 #include "app.h"                  /* first: the scan's hooks below may call the app */
+#include "plat.h"
 #ifdef APP_TOUCH
 #include "touch.h"                /* velocity and pressure from the keys (lib/touch.c) */
 #endif

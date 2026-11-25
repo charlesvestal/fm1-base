@@ -1556,7 +1556,7 @@ static void fm1_main(void)
             bootguard.failed = 0;
         }
 #if PLAT_SMK37
-        smk_main_poll();                            /* the virtual MASTER (K5), the battery's average */
+        smk_main_poll();                            /* the wheels and battery; K5 is MASTER unless APP_SMK_8ENC */
 #else
         {   /* MASTER: smoothed, 0..4092; with the keys' readings on, the scan owns the converter and reads it too */
             int32_t a = fm1_an.con || fm1_an.pend ? (int32_t)fm1_an.master : fm1_adc_read(FM1_ADC_MASTER);

@@ -209,8 +209,8 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
         mirror_blit(x, y, w, h, px);
 #endif
 }
-#include "plat.h"
 #include "app.h"                       /* before gfx.c: the app may size the canvas (APP_CANVAS_PX), as on the device */
+#include "plat.h"
 #include "gfx.c"
 
 
@@ -316,7 +316,10 @@ uint32_t plat_keys(void) { return held_keys | mirror_in_keys(); }
 static uint32_t plat_remote_keys(void) { return 0; }   /* (the device's remote control: the script is this one's) */
 int32_t plat_enc(int role)
 {
-    int32_t v = enc_acc[role] + mirror_in_enc(role);
+    int32_t v;
+    if (role < 0 || role >= NE)
+        return 0;
+    v = enc_acc[role] + mirror_in_enc(role);
     enc_acc[role] = 0;
     if (v)
         mirror_enc(role, v);
@@ -2524,7 +2527,13 @@ static const char *const BTN_N[NB] = {"FX", "SEL", "ENV", "LFO", "EDIT", "GLO", 
                                       , "KBANK", "FBANK", "LEFT", "RIGHT"
 #endif
 };
-static const char *const ENC_N[NE] = {"SELECT", "ALGO", "PRESET", "K1", "K2", "K3", "K4"};
+static const char *const ENC_N[NE] = {
+#if PLAT_SMK37 && defined(APP_SMK_8ENC)
+    "K1", "K2", "K3", "K4", "K5", "K6", "K7", "K8"
+#else
+    "SELECT", "ALGO", "PRESET", "K1", "K2", "K3", "K4"
+#endif
+};
 
 static int find_name(const char *const *t, int n, const char *s)
 {
