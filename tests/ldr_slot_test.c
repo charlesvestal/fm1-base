@@ -9,7 +9,8 @@
  * erased, the data above the old end kept; then the same package again: nothing erased.
  *   cc -DFL_APP_END=0xCE000u -DLDR_SLOT_SWITCH=1 -DLDR_CLEAR_END=0xDA000u -o ldr_slot_test tests/ldr_slot_test.c
  *   ldr_slot_test OLD.fwsc NEW.fwsc OLD_END
- */
+ * With LDR_STEPS (an app's app_steps: tools/build.py ldr_step_flags), --steps: the switch matrix of those steps;
+ * --range END...: the range erased after each installed END, for the app's own test of its rule */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -147,12 +148,115 @@ static int all(uint32_t lo, uint32_t hi, uint8_t v)  /* nor[lo, hi) all v */
     return 1;
 }
 
+#ifdef LDR_STEPS
+/* --steps: an app with steps (fm1.toml app_steps; this test's build: an app's steps, N 0x93000, S0 0xB5000,
+ * the release's L1 0xCE000, and the classic build's L1 0xD0000 an FM-1 may have) against the switch matrix written
+ * out, not computed: for this build's step, what an install over each kind of installed app erases first */
+typedef struct { const char *what; uint32_t end, lo[3], hi[3]; } sw_case_t;   /* by the new step: N, S0, L1 (0xCE000) */
+static const sw_case_t SW[] = {
+    {"after N (0x93000)", 0x93000u, {0, 0xB5000u, 0xCE000u}, {0, 0xD8000u, 0xDA000u}},
+    {"after S0 (0xB5000)", 0xB5000u, {0x93000u, 0, 0xCE000u}, {0xD8000u, 0, 0xDA000u}},
+    {"after L1 (0xCE000)", 0xCE000u, {0x93000u, 0xB5000u, 0}, {0xDA000u, 0xDA000u, 0}},
+    {"after the classic L1 (0xD0000: the same step)", 0xD0000u, {0x93000u, 0xB5000u, 0xCE000u}, {0xDA000u, 0xDA000u, 0xD0000u}},
+    {"after no head of that format", 0, {0, 0xB5000u, 0xCE000u}, {0, 0xD8000u, 0xDA000u}},
+    {"after a head ending below normal's (0x5000)", 0x5000u, {0, 0xB5000u, 0xCE000u}, {0, 0xD8000u, 0xDA000u}},
+    {"after an end no step has (0xC0000)", 0xC0000u, {0x93000u, 0xB5000u, 0xCE000u}, {0xDA000u, 0xDA000u, 0xDA000u}},
+};
+
+static int steps_test(void)
+{
+    static const uint32_t KEY = 0x980Fu;
+    const int col = FL_APP_END == 0x93000u ? 0 : FL_APP_END == 0xB5000u ? 1 : FL_APP_END == 0xCE000u ? 2 : -1;
+    uint8_t buf[32];
+    uint32_t k;
+    int bad = 0, rc, pass;
+    bad += check("this build's app end is one of the matrix's steps", col >= 0);
+    if (col < 0)
+        return bad;
+    for (k = 0; k < sizeof SW / sizeof SW[0]; k++)
+        for (pass = 0; pass < 2; pass++) {               /* the second: resumed, the old head still there */
+            const uint32_t lo = SW[k].lo[col], hi = SW[k].hi[col];
+            char what[128];
+            memset(nor, 0xFF, sizeof nor);
+            memset(nor + 0x5000, 0xA5, 0xE0000u - 0x5000u);
+            if (SW[k].end) {                             /* the installed app area's head, its block ending in the slot's
+                                                          * last sector (fm1pkg_make.py) */
+                uint8_t e[32];
+                uint32_t blk = SW[k].end - 0x4000u - 0xD70u, c;
+                memset(e, 0xFF, sizeof e);
+                e[4] = 0x20; e[5] = 0x01; e[6] = 0x00; e[7] = 0x02;
+                e[8] = (uint8_t)blk; e[9] = (uint8_t)(blk >> 8); e[10] = (uint8_t)(blk >> 16); e[11] = (uint8_t)(blk >> 24);
+                c = ota_crc16(e + 2, 30, 0);
+                e[0] = (uint8_t)c; e[1] = (uint8_t)(c >> 8);
+                ldr_sfc(e, 32, 0, KEY);
+                memcpy(nor + 0x4000, e, sizeof e);
+            }
+            if (pass)
+                memset(nor + lo, 0xFF, hi - lo);
+            erases = 0; bad_range = 0;
+            rc = ldr_slot_switch(KEY, buf);
+            snprintf(what, sizeof what, "app end %#x, %s%s: [%#x, %#x)", (unsigned)FL_APP_END, SW[k].what,
+                     pass ? ", resumed" : "", (unsigned)lo, (unsigned)hi);
+            bad += check(what, rc == 0 && erases == (hi - lo) / 0x1000u && all(0x5000u, lo ? lo : 0x5000u, 0xA5) &&
+                         all(lo, hi, 0xFF) && all(hi > lo ? hi : 0x5000u, 0xE0000u, 0xA5) && bad_range == 0);
+        }
+    return bad;
+}
+
+/* --range END...: for any app's steps (its own LDR_STEPS), what this
+ * build's loader erases after an installed app ending at each END (0: no head): "END LO HI" per line, [LO, HI) the
+ * erased sectors as read back from the flash (0 0: none), so a host test compares them with the app's own rule */
+static int range_test(int n, char **ends)
+{
+    static const uint32_t KEY = 0x980Fu;
+    uint8_t buf[32];
+    int i, bad = 0;
+    for (i = 0; i < n; i++) {
+        uint32_t end = (uint32_t)strtoul(ends[i], NULL, 0), s, lo = 0, hi = 0;
+        memset(nor, 0xFF, sizeof nor);
+        memset(nor + 0x5000, 0xA5, 0xE0000u - 0x5000u);
+        if (end) {
+            uint8_t e[32];
+            uint32_t blk = end - 0x4000u - 0xD70u, c;
+            memset(e, 0xFF, sizeof e);
+            e[4] = 0x20; e[5] = 0x01; e[6] = 0x00; e[7] = 0x02;
+            e[8] = (uint8_t)blk; e[9] = (uint8_t)(blk >> 8); e[10] = (uint8_t)(blk >> 16); e[11] = (uint8_t)(blk >> 24);
+            c = ota_crc16(e + 2, 30, 0);
+            e[0] = (uint8_t)c; e[1] = (uint8_t)(c >> 8);
+            ldr_sfc(e, 32, 0, KEY);
+            memcpy(nor + 0x4000, e, sizeof e);
+        }
+        erases = 0; bad_range = 0;
+        if (ldr_slot_switch(KEY, buf) != 0 || bad_range)
+            bad++;
+        for (s = 0x5000u; s < 0xE0000u; s += 0x1000u)
+            if (all(s, s + 0x1000u, 0xFF)) {
+                if (!hi) lo = s;
+                hi = s + 0x1000u;
+            }
+        if (hi && (!all(lo, hi, 0xFF) || erases != (hi - lo) / 0x1000u))
+            bad++;                                       /* (not one contiguous range) */
+        printf("%#x %#x %#x\n", (unsigned)end, (unsigned)lo, (unsigned)hi);
+    }
+    return bad;
+}
+#endif
+
 int main(int argc, char **argv)
 {
     size_t olen;
     uint8_t *old, head[0x4000];
     uint32_t ofo, nfo, old_end, top;
     int bad = 0, rc;
+#ifdef LDR_STEPS
+    if (argc == 2 && !strcmp(argv[1], "--steps")) {
+        bad = steps_test();
+        printf("ldr_slot_test --steps %s\n", bad ? "FAILED" : "passed");
+        return bad ? 1 : 0;
+    }
+    if (argc >= 2 && !strcmp(argv[1], "--range"))
+        return range_test(argc - 2, argv + 2) ? 1 : 0;
+#endif
     if (argc < 4) { printf("usage: ldr_slot_test OLD.fwsc NEW.fwsc OLD_END\n"); return 2; }
     old = load_logical(argv[1], &olen);
     logical = load_logical(argv[2], &logical_len);

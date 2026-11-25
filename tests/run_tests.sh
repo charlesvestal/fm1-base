@@ -213,6 +213,14 @@ if [ -f "$PKG" ]; then
 else
     echo "  skip update path (no template package: tools/build.py template)"
 fi
+# an app with steps (fm1.toml app_steps, tools/build.py ldr_step_flags; an app's steps here: N, S0, the release's
+# L1 and the classic L1 an FM-1 may have had): each step's loader against the switch matrix, every installed end
+STEPS='-DLDR_STEPS(X)=X(0x93000u,0,0x93000u) X(0xB5000u,3,0xD8000u) X(0xCE000u,1,0xDA000u) X(0xD0000u,1,0xDA000u)'
+for S in 0x93000:0:0x93000 0xB5000:3:0xD8000 0xCE000:1:0xDA000; do
+    E=${S%%:*}; R=${S##*:}; L=${S#*:}; L=${L%%:*}
+    run update-loader-steps-$E sh -c "$CC -DFL_APP_END=${E}u -DLDR_SLOT_SWITCH=1 '$STEPS' -DLDR_STEP=$L -DLDR_RELOC_HI=${R}u \
+        -DLDR_CLEAR_TOP=0xDA000u -o $OUT/ldr_steps_$E tests/ldr_slot_test.c && $OUT/ldr_steps_$E --steps"
+done
 run host-build "$PY" tools/build.py template --host
 # the screen mirrored over USB (device/mirror.c; the fonts: the template's build/gen): its pixel code on drawn bands,
 # rows not sent twice, drops and redraws, the input reports, off, the remote; then the viewer's own decoder
