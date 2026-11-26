@@ -280,7 +280,12 @@ app.h); the build prints what it has.
   wifi_jank = true           with wifi_stack = "own": MODE JANK (FM1B_WIFI_JANK, wifi/wifi_jank.h), the FM-1s of a group on
                              one channel with no access point. Its frames are open (no keys): anyone in range can read
                              them and send into the group, so it is off by default
-  wifi_mem = "app"          with wifi_stack = "own": Link's node (1.8 KB) and the access point's state (1.7 KB) lent by
+  usb_net = true             with wifi_stack = "own": a USB network adapter (FM1B_USB_NET: felucca-bsp's CDC-NCM
+                             function; wifi/wifi_usbnet.h): the IP layer and Link on the cable while the Wi-Fi is OFF or
+                             in MODE JANK, and in MODE JANK the computer on the group's air. It takes the console's
+                             endpoints and the audio output's feedback's: with usb_console or usb_audio_out_feedback it is
+                             presented only when the app asks (plat_usb_net_present), in their place
+  wifi_mem = "app"         with wifi_stack = "own": Link's node (1.8 KB) and the access point's state (1.7 KB) lent by
                              the app while they may run, not static RAM (FM1B_WIFI_MEM; plat.h plat_link_mem,
                              plat_wifi_ap_mem): an app whose arena gets them back while Wi-Fi is off. Default "static"
   gen = ["tools/places.py --out {gen}/places.h"]   the app's generators, run before the build (relative to APP_DIR;
@@ -1093,6 +1098,8 @@ def wifi_own_flags(host=False):
         f.append("-DFM1B_WIFI_AP=1")
     if CONF.get("wifi_jank"):                       # MODE JANK: open frames, no keys (plat.h FM1B_WIFI_JANK)
         f.append("-DFM1B_WIFI_JANK=1")
+    if CONF.get("usb_net"):                         # the USB network adapter (plat.h plat_usb_net_*)
+        f.append("-DFM1B_USB_NET=1")
     v = CONF.get("wifi_mem", "static")
     if v not in ("app", "static"):
         raise SystemExit(f'build: fm1.toml wifi_mem = "{v}": "app" or "static"')
@@ -2145,7 +2152,7 @@ def main():
             raise SystemExit("wifi_stack = \"own\" needs the own Bluetooth stack's radio: not with --no-ble")
         if CONF.get("net"):
             raise SystemExit("fm1.toml net: lwIP's sockets, not with wifi_stack = \"own\" (plat_net_udp_* instead)")
-    for key in ("link", "wifi_ap", "wifi_jank"):
+    for key in ("link", "wifi_ap", "wifi_jank", "usb_net"):
         if CONF.get(key) and not WIFI_OWN:
             raise SystemExit(f"fm1.toml {key} = true: with wifi = true and wifi_stack = \"own\"")
     LINK = WIFI_OWN and bool(CONF.get("link"))

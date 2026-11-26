@@ -667,6 +667,31 @@ void plat_console_present(int on);        /* the console presented (the default)
                                            * before USB starts; later, the FM-1 leaves the bus and comes back as the
                                            * other device */
 
+/* the USB network (fm1.toml usb_net = true: FM1B_USB_NET; felucca-bsp's CDC-NCM function, device/wifi_own.c): the
+ * computer sees an Ethernet adapter. The FM-1's own IP layer and Link run on it (an address 169.254.x.y, as MODE JANK's)
+ * while the Wi-Fi is OFF or in MODE JANK; in MODE JANK the computer is also on the group's air, one more unit (the
+ * computer's own Link: Live and the FM-1s of the group in one session). In the other Wi-Fi modes the adapter carries
+ * nothing. It uses the console's endpoints, and those of the audio output's feedback (usb_audio_out_feedback): in a
+ * build with either, it is presented only when asked (plat_usb_net_present), and they are not then. Main loop only */
+#ifndef FM1B_USB_NET
+#define FM1B_USB_NET 0
+#endif
+enum { USB_NET_NONE = 0, USB_NET_OFF = 1, USB_NET_WAIT = 2, USB_NET_UP = 3 };
+#if FM1B_USB_NET
+int plat_usb_net(void);                   /* NONE: not built; OFF: built, not presented; WAIT: presented, the computer's
+                                           * link not up yet; UP: the computer's adapter is on */
+int plat_usb_net_shared(void);            /* 1: presenting it takes another function's place (a choice for a setting) */
+void plat_usb_net_present(int on);        /* the adapter presented or not (the default: presented unless shared), as
+                                           * plat_console_present: in app_init before USB starts; later the FM-1 leaves
+                                           * the bus and comes back as the other device */
+uint32_t plat_usb_net_addr(void);         /* the FM-1's address on the cable (host order; 0: none) */
+#else
+static inline int plat_usb_net(void) { return USB_NET_NONE; }
+static inline int plat_usb_net_shared(void) { return 0; }
+static inline void plat_usb_net_present(int on) { (void)on; }
+static inline uint32_t plat_usb_net_addr(void) { return 0; }
+#endif
+
 /* the app's own commands in the update's SysEx framing (F0 pack7(00 59 cmd len24 body ~sum) F7: felucca-bsp ota.c),
  * an app with APP_USB_CMD: app_usb_cmd(d, n) gets each frame whose cmd the platform does not take (d: the decoded
  * frame, cmd d[2], the body from d + 6). The platform's cmds are not the app's: 0x11 and 0x30 (the update), 0x41..0x44

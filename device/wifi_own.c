@@ -340,18 +340,115 @@ static uint32_t wa_udp_srv(struct wifi_ip *wip, const uint8_t *src_mac, const ui
 #endif
 #define JN_WCID 8u                                /* MODE JANK's frames: a WCID that is never keyed (MODE AP's WA_PLAIN: its beacons,
                                                    * its EAPOL data frames, acknowledged by a station it has no entry for yet) */
+#if FM1B_USB_NET
+/* ---- the USB network (fm1.toml usb_net; wifi/wifi_usbnet.h, felucca-bsp's FELUCCA_NCM): the IP layer's frames go to the
+ * cable too, the cable's to the IP layer and to MODE JANK's air. The service (wl) runs on the cable alone (un.usb) while
+ * the Wi-Fi is OFF, or in MODE JANK before its air is up; with the air, the cable joins it (un_poll). Frames for the
+ * computer wait in un.q: the adapter sends one block at a time (about 0.5 ms a 64-byte packet) */
+#include "wifi_usbnet.c"
+#include "usb_ncm.h"                              /* (felucca-bsp's: the blocks' reader) */
+#define UN_Q 1536u                                /* frames waiting for the cable: each its length (2 bytes), then it */
+#define UN_F 600u                                 /* a frame of the computer's, as the IP layer reads it (Link's: 572) */
+#define OWN_FRAME_MAX (sizeof wifi_txb - FM1_WIFI_TX_HDR)
+#ifdef PLAT_HOST                                  /* (no USB device on the host: a stand-in a test drives, tests/wifi/
+                                                   * usbnet_own_test.c; left alone, the computer's link never comes up) */
+#define FELUCCA_NCM_TX_MAX 1024u
+static struct {
+    uint8_t ready, presented;                     /* the computer's link up; the adapter presented */
+    const uint8_t *rx;                            /* a block from the computer, rx_n bytes (0: none) */
+    uint32_t rx_n, tx_n, tx_frames;
+    uint8_t tx[FELUCCA_NCM_TX_MAX];               /* the last frame to the computer, tx_n bytes (the test clears tx_n) */
+} un_fake = {0, 1, 0, 0, 0, 0, {0}};
+static int usb_ncm_ready(void) { return un_fake.presented && un_fake.ready; }
+static uint32_t usb_ncm_rx(const uint8_t **p) { *p = un_fake.rx; return un_fake.rx_n; }
+static void usb_ncm_rx_done(void) { un_fake.rx_n = 0; }
+static uint8_t *usb_ncm_tx_frame(void) { return usb_ncm_ready() && !un_fake.tx_n ? un_fake.tx : 0; }
+static int usb_ncm_tx_send(uint32_t len) { un_fake.tx_n = len; un_fake.tx_frames++; return 1; }
+static void usb_ncm_switch(uint32_t on) { un_fake.presented = (uint8_t)(on != 0); }
+static int usb_ncm_presented(void) { return un_fake.presented; }
+static void usb_ncm_set_mac(const uint8_t mac[6]) { (void)mac; }
+#define UN_SHARED 0                               /* (nothing to share with) */
+#else
+#define UN_SHARED (FELUCCA_CDC || NCM_DROPS_OUT)  /* (the adapter takes the console's or the audio output's place) */
+#endif
+static struct {
+    struct un_hub hub;
+    uint8_t up;                                   /* the hub runs: the cable's link is up and the service (wl) on it */
+    uint8_t usb;                                  /* the service is the cable's alone (no air) */
+    uint32_t q_n, rx_blocks, rx_bad;
+    uint8_t q[UN_Q];
+    uint8_t f[UN_F];
+} un;
+static uint8_t *un_room(uint32_t *cap)            /* where the next frame for the cable goes, *cap bytes at most (0: full) */
+{
+    uint32_t used = un.q_n + 2u;
+    if (used >= UN_Q) {
+        *cap = 0;
+        return un.q;
+    }
+    *cap = UN_Q - used < FELUCCA_NCM_TX_MAX ? UN_Q - used : FELUCCA_NCM_TX_MAX;
+    return un.q + used;
+}
+static void un_put(uint32_t n)                    /* the frame written at un_room, n bytes, queued */
+{
+    if (!n)
+        return;
+    un.q[un.q_n] = (uint8_t)n;
+    un.q[un.q_n + 1u] = (uint8_t)(n >> 8);
+    un.q_n += 2u + n;
+}
+static void un_drain(void)                        /* the first frame waiting to the adapter, once its last block went */
+{
+    uint32_t n, i;
+    uint8_t *t;
+    if (!un.q_n || !(t = usb_ncm_tx_frame()))
+        return;
+    n = un.q[0] | (uint32_t)un.q[1] << 8;
+    memcpy(t, un.q + 2, n);
+    (void)usb_ncm_tx_send(n);
+    un.q_n -= 2u + n;
+    for (i = 0; i < un.q_n; i++)                  /* (the rest down to the start, front first: no memmove in the firmware) */
+        un.q[i] = un.q[i + 2u + n];
+}
+static int un_local(uint32_t len)                 /* the IP layer's frame at own_frame(): the cable's copy queued; 1: and the
+                                                   * air's (0: the computer's alone, or the cable is all there is) */
+{
+    uint32_t w, n, cap;
+    uint8_t *e;
+    if (!un.up)
+        return 1;
+    e = un_room(&cap);
+    w = un_from_local(&un.hub, own_frame(), len, e, cap, &n);
+    if (w & UN_USB)
+        un_put(n);
+    return !un.usb && (w & UN_AIR);
+}
+#endif
+static void jn_air(uint32_t len)                  /* MODE JANK: wifi_txb's frame out on the group's air, as it is */
+{
+    wt_prepare(len, JN_WCID, !(own_frame()[4] & 1u));   /* (no key, no client entry; unicast acknowledged, a group frame not) */
+    if (fm1_wifi_tx(wifi_txb) == 0)
+        wl.n_tx++;
+    else
+        wl.n_tx_err++;
+}
 static void wl_send(uint32_t len)                 /* what wifi_txb's frame holds, out */
 {
+#if FM1B_USB_NET
+    if (!un_local(len))
+        return;
+#endif
 #if FM1B_WIFI_AP
     if (wl.ap) {
         wa_send(len);
         return;
     }
 #endif
-    if (WL_JN)
-        wt_prepare(len, JN_WCID, !(own_frame()[4] & 1u));   /* (no key, no client entry; unicast acknowledged, a group frame not) */
-    else
-        wt_prepare(len, 1u, 1u);                  /* (WCID 1, the AP: the MAC encrypts what carries the Protected bit) */
+    if (WL_JN) {
+        jn_air(len);
+        return;
+    }
+    wt_prepare(len, 1u, 1u);                      /* (WCID 1, the AP: the MAC encrypts what carries the Protected bit) */
     if (fm1_wifi_tx(wifi_txb) == 0)
         wl.n_tx++;
     else
@@ -378,6 +475,9 @@ static void own_on_addr(void *ctx, uint32_t ip)
 static void own_ip_attach(void)                   /* the app's ports and the group into a fresh IP layer */
 {
     uint32_t i;
+#if FM1B_USB_NET
+    un.usb = 0;                                   /* (a service of the air's from here: un_start_usb says otherwise) */
+#endif
     wl.ip.send = wl_send;
     wl.ip.protect = 1;                            /* (keys are in: the MAC encrypts what carries the Protected bit) */
     wl.ip.udp_rx = own_udp_rx;
@@ -425,6 +525,11 @@ static void wl_poll(void)                         /* once a main-loop pass */
     int64_t now;
     if (!wl.on)
         return;
+#if FM1B_USB_NET
+    if (un.usb)
+        ;                                         /* (the cable's alone: no radio to read; un_poll reads the cable) */
+    else
+#endif
 #if FM1B_WIFI_AP
     if (wl.ap)
         own_rx(wa_rx, 24u);                       /* (the access point answers probes and joins among the neighbours' traffic) */
@@ -533,6 +638,13 @@ static void jn_rx(const uint8_t *f, uint32_t len, int8_t rssi, int64_t now)
     wl.n_rx++;
     if (!jn_heard(&jnk.n, f, len, rssi, own_ms()))
         return;
+#if FM1B_USB_NET
+    if (un.up) {                                  /* (the computer's share of the air) */
+        uint32_t cap;
+        uint8_t *e = un_room(&cap);
+        un_put(un_air_to_usb(&un.hub, f, len, wl.ip.ip, e, cap));
+    }
+#endif
     oq_signal(1u, rssi);                          /* (the quality's signal: as a client's in MODE AP) */
     ip = jn_sender_ip(f, len);
     if (ip == wl.ip.ip) {
@@ -588,6 +700,79 @@ static void jn_poll(void)                 /* after the manager and the access po
             jn_start();
     }
 }
+#if FM1B_USB_NET
+static void un_start_usb(void)                    /* the service on the cable alone: MODE JANK's address, its ad-hoc frames */
+{
+    uint8_t mac[6];
+    own_mac(mac);
+    wifi_ip_ibss_init(&wl.ip, mac, un.hub.bssid, jn_addr(mac + 4), own_rand);   /* (the address MODE JANK would take) */
+    own_ip_attach();
+    wl.ip.protect = 0;
+    wifi_ip_join(&wl.ip, own_group);
+    wl.n_rx = wl.n_kept = wl.n_tx = wl.n_tx_err = 0;
+    wl.on = 1;
+    un.usb = 1;
+    own_on_addr(0, wl.ip.ip);                     /* (Link starts on it) */
+}
+static void un_datagram(void *ctx, const uint8_t *eth, uint32_t len)   /* one frame the computer sent */
+{
+    uint32_t n, tl = 0, ip;
+    (void)ctx;
+    if (!un.usb && WL_JN) {                       /* the air's share first: own_frame() is then free for the IP layer */
+        n = un_usb_to_air(&un.hub, eth, len, &wl.ip.tx_seq, own_frame(), OWN_FRAME_MAX);
+        if (n)
+            jn_air(n);
+    }
+    n = un_usb_to_local(&un.hub, eth, len, un.f, sizeof un.f);
+    if (!n)
+        return;
+    ip = un_eth_src_ip(eth, len);
+    if (ip && ip != wl.ip.ip)
+        wifi_ip_arp_learn(&wl.ip, ip, un.hub.mac);   /* (the computer: where the IP layer's replies go) */
+    if (wifi_ip_early_filter(&wl.ip, un.f, n) && wifi_ip_rx_frame(&wl.ip, un.f, n, own_us(), own_frame(), &tl) == 1 && tl)
+        wl_send(tl);
+}
+/* once a pass, after the air's (jn_poll): the cable's service started or stopped, the computer's frames taken in */
+static void un_poll(void)
+{
+    const uint8_t *p;
+    uint32_t n;
+    int cable = usb_ncm_ready(), mode_ok = wn_st.mode == WN_MODE_OFF || own_jank();
+    if (!cable || !mode_ok) {                     /* nothing to carry: the computer's frames read and dropped */
+        if (un.usb) {
+            wl_stop();
+            un.usb = 0;
+        }
+        un.up = 0;
+        un.q_n = 0;
+        if (cable && usb_ncm_rx(&p))
+            usb_ncm_rx_done();
+        return;
+    }
+    if (!un.up) {
+        uint8_t mac[6];
+        struct jn_net g;
+        own_mac(mac);
+        jn_init(&g, mac, own_jank_group());       /* (the group's BSSID: the air's frames' addr3) */
+        un_init(&un.hub, mac, g.bssid);
+    }
+    if (!wl.on)
+        un_start_usb();
+    if (WL_JN)
+        memcpy(un.hub.bssid, jnk.n.bssid, 6);     /* (the group the air is on) */
+    un.up = (uint8_t)(wl.on && (un.usb || WL_JN));
+    if (!un.up)
+        return;
+    n = usb_ncm_rx(&p);
+    if (n) {
+        un.rx_blocks++;
+        if (ncm_ntb_each(p, n, un_datagram, 0) < 0)
+            un.rx_bad++;
+        usb_ncm_rx_done();
+    }
+    un_drain();
+}
+#endif
 static int wc_auto(void) { return wn_st.mode == WN_MODE_AUTO; }   /* (saved networks joined by themselves) */
 static int wc_mode_off(void) { uint8_t m = wn_st.mode; return m == WN_MODE_OFF || m == WN_MODE_AP || m == WN_MODE_AP_MAN || m == WN_MODE_JANK_AUTO; }
 static void wc_to(uint32_t st) { wc.st = (uint8_t)st; wc.t0 = own_ms(); }
@@ -931,7 +1116,13 @@ static void wifi_poll(void)
     wa_poll();
 #endif
     jn_poll();
+#if FM1B_USB_NET
+    un_poll();
+#endif
     wl_poll();
+#if FM1B_USB_NET
+    un_drain();                                   /* (what the IP layer just sent: on its way this pass) */
+#endif
     own_rx_second();
     wt_poll();                                    /* (the tuning; the quality counters' second) */
     own_store_poll();
@@ -1021,12 +1212,17 @@ const char *plat_wifi_ssid(void)
     s[n] = 0;
     return s;
 }
+#if FM1B_USB_NET
+#define WL_AIR (wl.on && !un.usb)                 /* the service is the Wi-Fi's (not the USB cable's alone: plat_usb_net_addr) */
+#else
+#define WL_AIR wl.on
+#endif
 uint32_t plat_wifi_ip(void)                      /* (first byte lowest: the IP layer's host order turned round) */
 {
-    uint32_t a = wl.on ? wl.ip.ip : 0u;
+    uint32_t a = WL_AIR ? wl.ip.ip : 0u;
     return a >> 24 | (a >> 8 & 0xFF00u) | (a << 8 & 0xFF0000u) | a << 24;
 }
-uint32_t plat_wifi_addr(void) { return wl.on ? wl.ip.ip : 0u; }
+uint32_t plat_wifi_addr(void) { return WL_AIR ? wl.ip.ip : 0u; }
 int plat_wifi_rssi(void) { return wc.st == WC_UP ? wc.ap.rssi : 0; }
 int plat_wifi_scan(void)
 {
@@ -1186,6 +1382,20 @@ void plat_net_join(uint32_t group)
         wifi_ip_join(&wl.ip, group);
 }
 int64_t plat_wifi_us(void) { return own_us(); }
+
+#if FM1B_USB_NET
+/* ---- the USB network for the app (plat.h plat_usb_net_*) and the start (main_fm1.c: before usb_start) */
+static void usb_net_boot(void) { uint8_t mac[6]; own_mac(mac); usb_ncm_set_mac(mac); }   /* (the computer takes the radio's) */
+int plat_usb_net(void)
+{
+    if (!usb_ncm_presented())
+        return USB_NET_OFF;
+    return usb_ncm_ready() ? USB_NET_UP : USB_NET_WAIT;
+}
+int plat_usb_net_shared(void) { return UN_SHARED; }
+void plat_usb_net_present(int on) { usb_ncm_switch((uint32_t)(on != 0)); }
+uint32_t plat_usb_net_addr(void) { return un.up && wl.on ? wl.ip.ip : 0u; }
+#endif
 
 #if FM1B_LINK
 #include "link_own.c"                             /* Ableton Link on it (link/: GPL-3.0-only, an opt-in part) */
