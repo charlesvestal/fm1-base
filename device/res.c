@@ -3,8 +3,10 @@
  * 909 samples), kept out of the image in sectors of the data area of the app's choosing (app.h APP_RES_BASE,
  * APP_RES_SECTORS) and read in place (plat_res). After Melodee's resource region (firmware/src/res.c, by Kerem Kilic,
  * Ellic Studio; used under MPL-2.0 with permission): the build knows its payload's length and CRC-32 (build.py writes
- * fm1_res.h from the file), so a firmware finds whether the region holds its own; the host writes it after an update
- * (tools/fm1_resources.py, fm1_install.py, the installer page), and an update that keeps the payload keeps the region.
+ * fm1_res.h from the file), so a firmware finds whether the region holds its own. The package carries it and the
+ * update loader writes it after the app (felucca-bsp loader/ldr_core.c ldr_res, as Melodee's), from any host; the host
+ * can also write it itself (tools/fm1_resources.py, fm1_install.py, the installer page: RES_REQ below), and an update
+ * that keeps the payload keeps the region.
  * Missing, torn or another build's: plat_res 0, and the app does without (its own words for it).
  *
  * The transfer is the restore's (backup.c): the host's RES_REQ (length, CRC-32), then the device pulls the payload
@@ -24,6 +26,7 @@
 typedef struct { uint32_t magic, len, crc, rsv[4], hcrc; } res_hdr_t;
 _Static_assert(sizeof(res_hdr_t) == RES_HEAD, "the resource commit record");
 _Static_assert(FM1B_RES_LEN && RES_HEAD + FM1B_RES_LEN <= APP_RES_SECTORS * ST_SECTOR, "the resources fit the region");
+_Static_assert(FM1B_RES_BASE == APP_RES_BASE, "the package's region (build.py reads app.h) is the one the app reads");
 _Static_assert(APP_RES_BASE >= PLAT_DATA_LO && APP_RES_BASE + APP_RES_SECTORS * ST_SECTOR <= PLAT_DATA_HI &&
                !(APP_RES_BASE & 0xFFFu), "the region: whole sectors of the data area");
 #ifdef APP_STORE_POOL

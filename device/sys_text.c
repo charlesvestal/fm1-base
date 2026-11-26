@@ -24,12 +24,18 @@ static void sys_text(int32_t x, int32_t y, int face, const char *s, uint16_t c) 
 static void sys_box(uint32_t x, uint32_t y, uint32_t w, int face, const char *s, uint16_t c, int align)
 {
     int32_t tw = sys_w(face, s), tx = 0;
-    cv_begin(w, (uint32_t)sys_h(face), C_BLACK);
+    uint32_t r0, n, h = (uint32_t)sys_h(face), rows = CV_MAX / w;
     if (align == 1)
         tx = ((int32_t)w - tw) / 2;
     else if (align == 2)
         tx = (int32_t)w - tw;
-    sys_text(tx, 0, face, s, c);
-    cv_blit(x, y);
+    for (r0 = 0; r0 < h; r0 += n) {         /* (in passes when the face is taller than the canvas: an app's small one) */
+        n = h - r0 < rows ? h - r0 : rows;
+        cv_begin(w, n, C_BLACK);
+        cv_oy = -(int32_t)r0;
+        sys_text(tx, 0, face, s, c);
+        cv_oy = 0;
+        cv_blit(x, y + r0);
+    }
     lcd_sync();
 }

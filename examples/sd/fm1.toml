@@ -1,0 +1,10 @@
+# The SD card example's build settings (tools/build.py)
+name = "SD"                    # APP_NAME is in app.h; this names the build's files
+id_prefix = "FM-1_13"          # package identity: dev FM-1_1300
+usb_manufacturer = "fm1-base"
+usb_product = "SD FM-1"
+sd = true                      # the microSD card (a card mod: m-card on the FM-1) and its files
+msc = true                     # SAVE: the card as a USB drive
+usb_audio_in = false           # (no sound)
+usb_audio_out = false
+words = "words.tsv"

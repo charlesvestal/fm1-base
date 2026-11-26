@@ -64,6 +64,8 @@
  *   mr_busy()         nothing to send now (the bus suspended, a backup streaming): rects dropped (dirty), no input
  *   mr_ctl_send(p, n) one whole F0..F7 frame into the SysEx ring if it fits now: 0, else -1 (nothing sent)
  *   mr_redraw()       the app draws everything again at its next frame (APP_REDRAW)
+ *   mr_pump()         the frame ring's next packet to the host now, if the last has gone (the 2 kHz poll sends two a
+ *                     millisecond at most; a full ring is drained at the host's own pace for up to MR_PUMP_MS)
  *   mr_test(on)       a test session on (1) / off (0): 1 done, 0 refused (APP_MIRROR_TEST)
  * and plat_ms, plat_buttons, plat_keys, plat_master (plat.h). The flag mirror_on is the includer's (lcd.c). */
 #define MR_REQ 0x50u
@@ -71,8 +73,11 @@
 #define MR_FILL 0x52u
 #define MR_INPUT 0x53u
 #define MR_REMOTE 0x54u
-#define MR_VERSION 4u                                 /* 2: the remote (cmd 0x54); 3: its test session (op 5); 4: the dim
-                                                       * lights in the input report */
+#define MR_MIDI 0x55u                                 /* events mode: the MIDI that came in, 4-byte USB-MIDI packets */
+#define MR_SIG 0x56u                                  /* events mode: the app's state, a 32-bit signature */
+#define MR_STATE 0x57u                                /* events mode: the app's state, a chunk: offset u16, total u16, bytes */
+#define MR_VERSION 5u                                 /* 2: the remote (cmd 0x54); 3: its test session (op 5); 4: the dim
+                                                       * lights in the input report; 5: the events mode (op 3, 4) */
 #define MR_W 240u
 #define MR_H 240u
 #define MR_CAP 256u                                   /* a rect frame's pixel code, about (one row more at most) */
@@ -98,7 +103,64 @@ static int mr_link(void);
 static int mr_busy(void);
 static int mr_ctl_send(const uint8_t *p, uint32_t n);
 static void mr_redraw(void);
+static void mr_pump(void);
+#ifndef MR_PUMP_MS
+#define MR_PUMP_MS 4u                                 /* a frame waits this long at most for room (app.h may change it) */
+#endif
 static int mr_test(int on);
+
+/* The events mode (version 5; request op 3, op 4 for the state): no pixels. A viewer that runs the same build of the
+ * app (its emulator, web/emu/live.html) is given the state once (MR_STATE chunks, the app's APP_MIRROR_STATE), then
+ * what happens: the input report with each held key's velocity and pressure after it, the MIDI that comes in (MR_MIDI),
+ * and twice a second the state's signature (MR_SIG), so it can ask for the state again when it has drifted. It draws
+ * the screen itself, whole, at its own frame rate */
+#define MR_SIG_MS 500u
+#define MR_MIDIQ 64u
+#ifdef APP_MIRROR_STATE
+uint32_t app_state_get(uint8_t *buf, uint32_t max);   /* the app's state (what the screen shows comes from) written into
+                                                       * buf (4-byte aligned): its length, 0 when it does not fit */
+void app_state_set(const uint8_t *buf, uint32_t n);   /* (the viewer's emulator: that state taken) */
+#ifndef MR_STATE_MAX
+#define MR_STATE_MAX 6144u                            /* (app.h may change it) */
+#endif
+static uint32_t mr_state_w[MR_STATE_MAX / 4u] PLAT_POOL;
+#define mr_state ((uint8_t *)mr_state_w)
+/* the state's signature (FNV-1a), the state written into mr_state (not while a copy is being sent) */
+static uint32_t mr_state_sig(void)
+{
+    uint32_t n = app_state_get(mr_state, MR_STATE_MAX), h = 2166136261u, i;
+    for (i = 0; i < n; i++)
+        h = (h ^ mr_state[i]) * 16777619u;
+    return h;
+}
+#endif
+static uint32_t mr_midi_q[MR_MIDIQ];
+static volatile uint32_t mr_midi_w, mr_midi_r;
+static volatile uint8_t mr_events;                     /* the events mode on (read by the MIDI tap) */
+static struct {
+    uint32_t sig_t, state_n, state_at;                /* the signature's last time; the state being sent: its length,
+                                                       * the next chunk's offset (state_n 0: none) */
+    uint8_t vel[32], prs[32];                         /* the keys' velocity and pressure as last reported */
+    uint8_t kv[32];                                   /* each key's velocity as it landed (touch.c's presses) */
+    uint32_t held;                                    /* the sensed keys held (touch.c's presses and releases) */
+} mrv;
+/* lib/touch.c: a press (its velocity) or a release it gave the app (the main loop) */
+static void mirror_touch_tap(uint32_t key, uint32_t vel, int press)
+{
+    if (key >= 32u)
+        return;
+    mrv.kv[key] = (uint8_t)vel;
+    mrv.held = press ? mrv.held | 1u << key : mrv.held & ~(1u << key);
+}
+/* any context (the audio interrupt takes MIDI in): a packet the app is given, for the viewer */
+static void mirror_midi_tap(uint32_t pkt)
+{
+    uint32_t w = mr_midi_w;
+    if (!mr_events || w - mr_midi_r >= MR_MIDIQ)
+        return;
+    mr_midi_q[w % MR_MIDIQ] = pkt;
+    mr_midi_w = w + 1u;
+}
 
 static struct {
     uint8_t seq, ask_redraw;
@@ -227,7 +289,17 @@ static void mr_rows_dirty(uint32_t y, uint32_t h)
 /* the frame in mr_wire (w bytes) to the ring: 1 sent, 0 no room */
 static int mr_send(uint32_t w)
 {
-    if (mr_busy() || mr_free() < w)
+    if (mr_busy())
+        return 0;
+#if MR_PUMP_MS                                        /* (0: no pump, a frame finding the ring full is dropped at once) */
+    {
+        uint32_t t0;
+        for (t0 = plat_ms(); mr_free() < w && plat_ms() - t0 < MR_PUMP_MS;)
+            mr_pump();                                /* (no room: the ring sent at the host's pace a moment, before
+                                                       * the frame is dropped) */
+    }
+#endif
+    if (mr_free() < w)
         return 0;
     mr_put(mr_wire, w);
     mr.bytes += w;
@@ -259,6 +331,8 @@ static int mr_span(const uint16_t *row, uint32_t yr, int full, uint32_t *sh, uin
  * that changed since the viewer had them (a frame: rows whose changes fall in the same span) */
 static void mirror_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint16_t *px)
 {
+    if (mr_events)
+        return;                                       /* (the events mode: the viewer draws the screen itself) */
     uint32_t r = 0, sh[MR_NSEG], s0, s1, have = 0, ch = 0;
     int full = x == 0 && w == MR_W, drop = 0;
     if (!w || !h || x >= MR_W || y >= MR_H || w > MR_W)
@@ -412,6 +486,8 @@ static void mr_in_letgo(void)
 static void mirror_off(void)
 {
     mirror_on = 0;
+    mr_events = 0;
+    mrv.state_n = 0;
     memset(mr.enc, 0, sizeof mr.enc);
     mr_in_letgo();                                    /* the host's buttons and keys up: the UI sees them let go */
     mr_in.have = 0;
@@ -479,9 +555,36 @@ static void mirror_cmd(uint32_t op)
     if (link < 0)
         return;
     mr.heard = plat_ms();
+    if (op == 4u) {                                   /* the state, again (the viewer drifted) */
+#ifdef APP_MIRROR_STATE
+        if (mirror_on && mr_events) {
+            mrv.state_n = app_state_get(mr_state, MR_STATE_MAX);
+            mrv.state_at = 0;
+        }
+#endif
+        return;
+    }
     if (op == 0) {
         mirror_off();
-    } else if (!mirror_on || op == 2u || link != mr.link) {
+    } else if (op == 3u && !mr_events) {              /* the events mode: the state first, then what happens */
+        if (mirror_on && link != mr.link)
+            mirror_off();
+        mirror_on = 1;
+        mr_events = 1;
+        mr.link = link;
+        memset(mr.last, 0xFF, sizeof mr.last);
+        memset(mrv.vel, 0xFF, sizeof mrv.vel);
+        mr.input_t = plat_ms() - MR_INPUT_IDLE_MS;
+        mr_midi_r = mr_midi_w;
+        mrv.sig_t = plat_ms() - MR_SIG_MS;
+#ifdef APP_MIRROR_STATE
+        mrv.state_n = app_state_get(mr_state, MR_STATE_MAX);
+        mrv.state_at = 0;
+#endif
+    } else if (op == 3u) {
+        /* (the keep-alive of the events mode) */
+    } else if (!mirror_on || op == 2u || link != mr.link || mr_events) {
+        mr_events = 0;
         if (mirror_on && link != mr.link)
             mirror_off();                             /* (another host: the first one's hands let go) */
         mirror_on = 1;
@@ -513,11 +616,47 @@ static void mirror_step(void)
     any = 0;                                          /* rows dirty: the UI draws again once the ring has room */
     for (i = 0; i < sizeof mr.dirty / 4u; i++)
         any |= mr.dirty[i];
-    if ((any || mr.ask_redraw) && now - mr.redraw_t >= MR_REDRAW_MS && mr_free() >= MR_REDRAW_ROOM) {
+    if (!mr_events && (any || mr.ask_redraw) && now - mr.redraw_t >= MR_REDRAW_MS && mr_free() >= MR_REDRAW_ROOM) {
         mr.ask_redraw = 0;
         mr.redraw_t = now;
         mr.redraws++;
         mr_redraw();
+    }
+    if (mr_events) {                                  /* the state's next chunk, the MIDI, the signature */
+        uint32_t w;
+#ifdef APP_MIRROR_STATE
+        if (mrv.state_n) {
+            uint32_t n = mrv.state_n - mrv.state_at;
+            if (n > MR_CAP + MR_ROWMAX - 8u)
+                n = MR_CAP + MR_ROWMAX - 8u;
+            mr_wr16(b, mrv.state_at);
+            mr_wr16(b + 2, mrv.state_n);
+            memcpy(b + 4, mr_state + mrv.state_at, n);
+            w = mr_seal(MR_STATE, 4u + n);
+            if (mr_free() >= w && mr_send(w)) {        /* (room for it now, or the next pass: not waited for) */
+                mrv.state_at += n;
+                if (mrv.state_at >= mrv.state_n)
+                    mrv.state_n = 0;
+            }
+            return;                                   /* (the state whole before anything else) */
+        }
+        if (now - mrv.sig_t >= MR_SIG_MS) {
+            mr_wr32(b, mr_state_sig());
+            if (!mr_ctl_send(mr_wire, mr_seal(MR_SIG, 4)))
+                mrv.sig_t = now;
+        }
+#endif
+        if (mr_midi_r != mr_midi_w) {
+            uint32_t n = 0, r = mr_midi_r;
+            while (r != mr_midi_w && n < 32u) {
+                mr_wr32(b + 4u * n, mr_midi_q[r % MR_MIDIQ]);
+                r++;
+                n++;
+            }
+            w = mr_seal(MR_MIDI, 4u * n);
+            if (mr_free() >= w && mr_send(w))
+                mr_midi_r = r;                        /* (no room: sent on a later pass) */
+        }
     }
     if (now - mr.input_t < MR_INPUT_MS)
         return;
@@ -534,13 +673,46 @@ static void mirror_step(void)
     mr_wr16(b + 21, (uint32_t)(mr.dim_b | mr.mid_b) & ~(uint32_t)mr.lit_b & 0x7FFFu);   /* (lit wins) */
     mr_wr32(b + 23, (mr.dim_k | mr.mid_k) & ~mr.lit_k);
     {
+        uint32_t nin = MR_NIN, keys = plat_keys(), k, moved = 0;
+#ifdef APP_TOUCH
+        if (touch_is_on())                            /* the sensed keys as the app has them */
+            for (k = 0; k < NKEYS; k++)
+                if (touch_sensed(k))
+                    keys = (keys & ~(1u << k)) | (mrv.held & 1u << k);
+#endif
+        if (mr_events)
+            mr_wr32(b + 2, keys);
         int32_t dm = (int32_t)(b[13] | b[14] << 8) - (int32_t)(mr.last[13] | mr.last[14] << 8);
-        if (!any && now - mr.input_t < MR_INPUT_IDLE_MS && !memcmp(b, mr.last, 6) &&
+        if (mr_events) {                              /* each held key: its number, velocity and pressure (0..127) */
+            uint8_t n = 0;
+            for (k = 0; k < NKEYS; k++)
+                if (keys >> k & 1u) {
+#ifdef APP_TOUCH
+                    uint8_t v = mrv.kv[k] ? mrv.kv[k] : 100u, p = touch_pressure(k);
+#else
+                    uint8_t v = 100u, p = 0u;
+#endif
+                    b[MR_NIN + 1u + 3u * n] = (uint8_t)k;
+                    b[MR_NIN + 2u + 3u * n] = v;
+                    b[MR_NIN + 3u + 3u * n] = p;
+                    moved |= v != mrv.vel[k] || p != mrv.prs[k];
+                    n++;
+                }
+            b[MR_NIN] = n;
+            nin = MR_NIN + 1u + 3u * n;
+        }
+        if (!any && !moved && now - mr.input_t < MR_INPUT_IDLE_MS && !memcmp(b, mr.last, 6) &&
             !memcmp(b + 15, mr.last + 15, 12) && dm < 32 && dm > -32)
             return;                                   /* nothing new (MASTER: moved by 32 / 4096 or more) */
+        if (mr_ctl_send(mr_wire, mr_seal(MR_INPUT, nin)))
+            return;                                   /* the SysEx ring full: next pass */
+        if (mr_events)
+            memset(mrv.vel, 0xFF, sizeof mrv.vel);
+        for (k = 0; mr_events && k < b[MR_NIN]; k++) {
+            mrv.vel[b[MR_NIN + 1u + 3u * k]] = b[MR_NIN + 2u + 3u * k];
+            mrv.prs[b[MR_NIN + 1u + 3u * k]] = b[MR_NIN + 3u + 3u * k];
+        }
     }
-    if (mr_ctl_send(mr_wire, mr_seal(MR_INPUT, MR_NIN)))
-        return;                                       /* the SysEx ring full: next pass */
     for (i = 0; i < 7u; i++)
         mr.enc[i] = (int16_t)(mr.enc[i] - (int8_t)b[6 + i]);
     memcpy(mr.last, b, MR_NIN);

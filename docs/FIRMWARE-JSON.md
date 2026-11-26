@@ -118,6 +118,7 @@ Each of these is listed only when the build has it:
 | `usb-audio-out` | `usb_audio_out` (on unless set false, with `usb_audio_in`): the computer plays through the FM-1 |
 | `usb-midi-host` | `usb_host = true`: USB MIDI controllers and synths plugged into the FM-1 |
 | `usb-disk` | `msc = true`: the FM-1 as a USB drive |
+| `sd-card` | `sd = true`: files on a microSD card (a card mod: m-card on the FM-1) |
 | `wifi` | `wifi = true` |
 | `second-core` | `cpu2 = true` |
 | `velocity` | `APP_TOUCH` in app.h (lib/touch): velocity from the keys |
@@ -125,7 +126,8 @@ Each of these is listed only when the build has it:
 | `screen-reader` | a words file with its `# url:` line (`words`): the screen reader says the screen in words |
 | `screen-mirror` | `mirror = true`: the screen and panel mirrored over USB |
 | `backup` | `backup = true`: the saved work backed up and restored over USB |
-| `resources` | `resources`: a resource region the installer writes after the firmware |
+| `resources` | `resources`: a resource region the package carries, written by the update loader after the firmware |
+| `companion` | `companion = true`: the companion services over USB, for a page or an app that keeps the firmware's files and edits its settings (docs/COMPANION.md) |
 
 The vocabularies live in tools/firmware_json.py, and tests/firmware_json_test.py checks that this page and the schema
 list the same ones.
@@ -139,4 +141,4 @@ will never use such a key. A firmware not built on fm1-base may write the file b
 
 ## Changes
 
-Schema 1, 2026-11-05. `screenshot` and fm1.toml's `title` added on 2026-11-05, before any release used the schema.
+Schema 1, 2026-11-05. `screenshot` and fm1.toml's `title` added on 2026-11-05, before any release used the schema. The feature `companion` added on 2026-11-18 (readers ignore a feature they do not know).

@@ -64,7 +64,18 @@ int plat_battery(void)                           /* (a level moves once the read
 }
 #ifdef APP_BATTERY_RAW
 int32_t plat_battery_raw(void) { return batt_raw; }
+/* the supply (plat_battery_charging): the chip's P33 power registers, read by the main loop (device/main_fm1.c, twice a second,
+ * interrupts off: the P33 bus is shared). JieLi AC79 SDK include_lib/driver/cpu/wl82/asm/p33.h: LDO5V_DET_GET = P3_LDO5V_CON
+ * (0xA1) bit 5, IS_CHARGE_EN = P3_CHG_CON0 (0x1A) bit 0, CHARGE_FULL_FLAG_GET = P3_CHG_READ (0x19) bit 0 */
+static int8_t supply_st = -1;
+static void plat_supply_read(void)
+{
+    uint8_t ldo = fm1_p33_read(0xA1u), con = fm1_p33_read(0x1Au), rd = fm1_p33_read(0x19u);
+    supply_st = !(ldo & 0x20u) ? 0 : (con & 1u) && !(rd & 1u) ? 2 : 1;
+}
+int plat_battery_charging(void) { return supply_st; }
 #endif
+
 
 #if FM1B_HEADPHONES
 #include "plat_hp.c"                       /* the headphone jack, debounced (plat_headphones) */
@@ -196,14 +207,23 @@ uint32_t plat_usb_session(void) { return usb.config ? usb.resets + 1u : 0u; }   
  * packet into it each 3 bytes (CIN 4: more follow; 5..7: the last, with F7) */
 static struct {
     uint8_t on, cut, k, acc[3];
+    uint32_t ms, held;                          /* the last begin or put (fm1_ms); streams let go (plat_sysex_hold) */
 } sxs;
 int plat_sysex_begin(void)
 {
     if (!usb.config || sx_busy)
         return -1;
     sx_busy = 1;
-    sxs.on = 1, sxs.cut = 0, sxs.k = 0;
+    sxs.on = 1, sxs.cut = 0, sxs.k = 0, sxs.ms = fm1_ms;
     return 0;
+}
+static void plat_sysex_hold(void)              /* main loop: a stream with no put for PLAT_SYSEX_HOLD_MS let go (plat.h) */
+{
+    if (sxs.on && fm1_ms - sxs.ms > PLAT_SYSEX_HOLD_MS) {
+        sxs.cut = 1;                            /* (its frame cut: no last packet) */
+        (void)plat_sysex_end();
+        sxs.held++;
+    }
 }
 static int sxs_pkt(uint32_t cin)               /* the packet in sxs.acc into the ring, waiting while the computer reads */
 {
@@ -226,6 +246,7 @@ int plat_sysex_put(const uint8_t *p, uint32_t n)
     uint32_t i;
     if (!sxs.on || sxs.cut)
         return -1;
+    sxs.ms = fm1_ms;
     for (i = 0; i < n; i++) {
         if (sxs.k == 3u && sxs_pkt(4u)) {       /* (a full packet goes when the next byte comes: the last carries F7) */
             sxs.cut = 1;
@@ -255,8 +276,9 @@ int plat_sysex_send(const uint8_t *frame, uint32_t n) { return ota_wire_send(fra
 #endif
 
 /* the data area and its two more windows (plat.h): read through the unencrypted XIP window (main_fm1.c
- * fl_plain_window_init, from 0x93000 up); erased and written by felucca-bsp's RAM driver (FL_RANGE_OK: the store, its
- * FL_XDATA windows) */
+ * fl_plain_window_init, from the app area's end up: 0x93000, or a bigger slot's); erased and written by felucca-bsp's
+ * RAM driver (FL_RANGE_OK: the store, its FL_XDATA windows) */
+_Static_assert(FL_APP_END == FM1B_APP_END && FL_DATA_LO == PLAT_DATA_LO, "plat.h's app area end is felucca-bsp's");
 _Static_assert(FL_XDATA0_LO == PLAT_XDATA0_LO && FL_XDATA0_HI == PLAT_XDATA0_HI && FL_XDATA1_HI == PLAT_XDATA1_HI &&
                FL_AUTO_LO == PLAT_XDATA1_LO && FL_AUTO_HI == FL_XDATA1_LO, "plat.h's windows are felucca-bsp's");
 _Static_assert(PLAT_STAGE_LO == OTA_AREA && PLAT_STAGE_HI == OTA_AREA + OTA_AREA_LEN, "plat.h's staging is ota.c's");
@@ -272,15 +294,26 @@ const uint8_t *plat_data(uint32_t off)
 {
     return flash_ok && PLAT_DATA_OK(off, 1u) ? (const uint8_t *)FL_XIP(off) : 0;
 }
+int plat_boot_read(uint32_t off, void *dst, uint32_t n)   /* (unity.c st_read: the RAM driver in 256-byte IRQ-off windows) */
+{
+    return flash_ok && plat_in(off, n, 0u, 0x4000u) ? st_read(off, dst, n) : -1;
+}
 int plat_data_erase(uint32_t off)
 {
+#if !FM1B_ERASE_SLICED
     uint32_t took;
+#endif
     if (!flash_ok || (off & 0xFFFu) || !PLAT_DATA_OK(off, 0x1000u) || DATA_STORE_HIT(off, 0x1000u))
         return -1;
     fm1_wdt_feed();                               /* (a run of erases: tens of ms each) */
+#if FM1B_ERASE_SLICED
+    return data_erase(off);
+#else
     audio_silence();
     return fl_erase4k(off, &took);
+#endif
 }
+uint32_t plat_flash_held(void) { return flash_held; }
 int plat_data_write(uint32_t off, const void *src, uint32_t n)   /* page programs only (fl_prog_ram, 0x02): bits
                                                                  * clear in place, nothing erased, nothing read back
                                                                  * (plat.h's promise: keep it so) */
@@ -382,6 +415,9 @@ int plat_midi_in(uint32_t *pkt, int *port)
     if (port)
         *port = from;
     midi_counted(from, 0, *pkt);
+#if FM1B_MIRROR
+    mirror_midi_tap(*pkt);                        /* (the events mirror: the viewer's MIDI) */
+#endif
     return 1;
 }
 void plat_midi_send(uint32_t pkt, uint32_t to)    /* the main loop's and the tick's rings are shared */
@@ -407,6 +443,13 @@ void plat_midi_send(uint32_t pkt, uint32_t to)    /* the main loop's and the tic
         plat_unlock(f);
 }
 void plat_midi_out(uint32_t pkt) { plat_midi_send(pkt, TO_USB); }
+#ifdef APP_TICK_FAST                              /* (an app without it: nothing of this is built, felucca-bsp's FELUCCA_MIDI_RT is 0) */
+int plat_midi_rt(uint32_t pkt)                    /* the TIMER5 tick only (app_tick_fast): EP1 at once (felucca-bsp usb_midi_rt) */
+{
+    midi_counted(PORT_USB, 1, pkt);
+    return usb_midi_rt(pkt);
+}
+#endif
 
 #if FELUCCA_USB_HOST                              /* (felucca-bsp's UH_MSG_* are USBH_MSG_*, in order) */
 void plat_usb_host(int on) { usb_host_switch((uint32_t)(on != 0)); }
@@ -461,11 +504,32 @@ uint32_t plat_analog_mask(void)
 }
 #endif /* !PLAT_SMK37 */
 
-#if FM1B_WIFI || FM1B_BLE
+#if FM1B_WIFI || FM1B_BLE || defined(FELUCCA_USB_SERIAL_FN)
 const uint8_t *plat_chip_uid(void) { return flash_ok ? flash_uid : 0; }
 #else
 const uint8_t *plat_chip_uid(void) { return 0; }
 #endif
+#ifdef FELUCCA_USB_SERIAL_FN
+/* the USB serial number (fm1.toml usb_serial, felucca-bsp FELUCCA_USB_SERIAL_FN): plat_chip_uid's 16 bytes folded into 12
+ * (the last 4 over the first 4), 24 hex digits; "" with no ID (the bsp then says "0"). The same on every firmware with it,
+ * so a computer tells FM-1s apart whichever port they are in (macOS's MIDI setup goes by the port without one) */
+const char *FELUCCA_USB_SERIAL_FN(void)
+{
+    static char sn[25];
+    const uint8_t *u = plat_chip_uid();
+    uint32_t i;
+    if (!u)
+        return "";
+    for (i = 0; i < 12u; i++) {
+        uint8_t b = (uint8_t)(u[i] ^ (i < 4u ? u[12u + i] : 0u));
+        sn[2u * i] = "0123456789ABCDEF"[b >> 4];
+        sn[2u * i + 1u] = "0123456789ABCDEF"[b & 15u];
+    }
+    sn[24] = 0;
+    return sn;
+}
+#endif
+int plat_dev_id(void) { return plat_uid_hash16(plat_chip_uid()); }
 int plat_store_load(uint32_t obj, void *dst, uint32_t max) { return flash_ok ? st_load(obj, dst, max) : -1; }
 int plat_store_head(uint32_t obj, void *dst, uint32_t n) { return flash_ok ? st_load_head(obj, dst, n) : -1; }
 int plat_store_size(uint32_t obj) { return flash_ok ? st_size(obj) : -1; }
@@ -479,7 +543,7 @@ int plat_store_room(void) { return -1; }
 static volatile uint32_t audio_cpu_pct, audio_xruns;
 uint32_t plat_cpu_pct(void) { return audio_cpu_pct; }
 #ifdef APP_CPU_KHZ
-uint32_t plat_cpu_khz(void) { return fm1_clock_is_stock() ? 360000u : 0u; }   /* (PLL1 24 / 12 * 270 MHz, x 2/3) */
+uint32_t plat_cpu_khz(void) { return fm1_clock_khz(); }   /* (PLL1 24 / 12 * mul MHz, x 2/3: 360000 stock, 396000 at cpu_clock = 396) */
 #endif
 uint32_t plat_xruns(void) { return audio_xruns; }
 _Static_assert(PLAT_TICKS_PER_US == FM1_TICKS_PER_US, "plat_ticks24 is TIMER4's count");

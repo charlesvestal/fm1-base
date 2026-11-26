@@ -27,11 +27,14 @@
  *   FM1B_BLE 0              Bluetooth MIDI (fm1.toml ble = true; tools/build.py --no-ble leaves it out)
  *   FM1B_MIRROR 0           the screen and panel mirrored over USB (fm1.toml mirror = true: mirror.c)
  *   FM1B_MSC 0              disk mode: the FM-1 as a USB drive of the app's blocks (fm1.toml msc = true: msc.c)
+ *   FM1B_SD 0               a microSD card on the LCD's SPI1 and its FAT files (fm1.toml sd = true: sd.c, lib/sd_fs.c,
+ *                           lib/fatfs; felucca-bsp's fm1_sd_hw.h)
  *   FM1B_BACKUP 0           backup and restore of the app's objects over USB (fm1.toml backup = true: backup.c)
  *   FM1B_RES 0              the resource region (fm1.toml resources = FILE: res.c; with backup)
  *   FM1B_CPU2 0             the second core (fm1.toml cpu2 = true: cpu2.c, felucca-bsp's fm1_cpu1.h)
  *   FM1B_CACHE_RAM 0        data-cache ways as RAM, 2, 4 or 7 (fm1.toml cache_ram_ways: plat_cache_ram, felucca-bsp's
- *                           fm1_cache_ram.h; set and tested in fm1_cstart, main_fm1.c) */
+ *                           fm1_cache_ram.h; set and tested in fm1_cstart, main_fm1.c)
+ *   FM1B_COMPANION 0        the companion services over USB (fm1.toml companion = true: companion.c) */
 #include <stdint.h>
 #include "plat.h"
 #include "app.h"                  /* first: the scan's hooks below may call the app */
@@ -51,6 +54,37 @@
 #include "fm1_sys.h"
 #include "fm1_irq.h"
 #include "fm1_guard.h"
+/* The input scan's rate (fm1.toml input_hz: FM1B_INPUT_HZ, felucca-bsp's FM1_INPUT_HZ: keys, knobs and LEDs, one column
+ * a tick) and TIMER5's (FM1B_T5_HZ), which also polls USB and runs the app's tick. TIMER5 never runs slower than
+ * 2 kHz, so USB is polled at 2 kHz or more at every input rate (MIDI as before, USB audio's one packet per 1 ms frame
+ * with a poll to spare); with usb_audio_channels it stays at 10 kHz (the stream serviced every 0.1 ms). The scan then
+ * runs on 1 tick in FM1B_T5_SCAN_DIV (input_hz 1000: every other 2 kHz tick).
+ *   input_hz  TIMER5  scan       USB poll        app tick
+ *   10000     10 kHz  each tick  each 5th: 2 kHz each 10th
+ *    5000      5 kHz  each tick  each 2nd: 2.5   each 5th
+ *    2000      2 kHz  each tick  each: 2 kHz     each 2nd
+ *    1000      2 kHz  each 2nd   each: 2 kHz     each 2nd
+ *   (usb_audio_channels: 10 kHz, the scan each 2nd / 5th / 10th, the rest as at 10000) */
+#ifndef FM1B_INPUT_HZ
+#define FM1B_INPUT_HZ 10000
+#endif
+#if FM1B_INPUT_HZ != 10000 && FM1B_INPUT_HZ != 5000 && FM1B_INPUT_HZ != 2000 && FM1B_INPUT_HZ != 1000
+#error "FM1B_INPUT_HZ (fm1.toml input_hz): 10000, 5000, 2000 or 1000"
+#endif
+#if defined(FM1B_UAC_CH) && FM1B_UAC_CH > 2
+#define FM1B_T5_HZ 10000          /* (usb_audio_channels: see main_fm1.c) */
+#elif FM1B_INPUT_HZ < 2000
+#define FM1B_T5_HZ 2000
+#else
+#define FM1B_T5_HZ FM1B_INPUT_HZ
+#endif
+#define FM1_INPUT_HZ FM1B_INPUT_HZ
+#define FM1_T5_PERIOD (6000000u / FM1B_T5_HZ)   /* (felucca-bsp's fm1_timer.h: 600 at 10 kHz) */
+#define FM1B_T5_SCAN_DIV (FM1B_T5_HZ / FM1B_INPUT_HZ)
+#define FM1B_T5_USB_DIV (FM1B_T5_HZ / 2000)    /* (5000: 2, 2.5 kHz: never slower than 2 kHz) */
+#define FM1B_T5_APP_DIV (FM1B_T5_HZ / 1000)
+#define FM1B_T5_WRAP (FM1B_T5_HZ == 2000 ? 2 : 10)   /* a multiple of the three */
+#define FM1B_T5_LATE_US (3000000u / FM1B_T5_HZ)       /* a gap of over 3 ticks: the tick held up (300 us at 10 kHz) */
 #include "fm1_input.h"
 #include "fm1_timer.h"
 #include "fm1_audio.h"
@@ -59,9 +93,20 @@
 #include "fm1_jack.h"               /* the headphone jack's switch (PB5): plat_headphones */
 #endif
 #include "fm1_lcd_hw.h"
-#if FM1B_WIFI || FM1B_BLE
+#if FM1B_SD
+#include "fm1_sd_hw.h"            /* the SD card on the LCD's SPI1 (felucca-bsp: the board's pins; sd.c) */
+#endif
+#if FM1B_WIFI || FM1B_BLE || defined(FELUCCA_USB_SERIAL_FN)
 #define FL_UID 1                          /* the flash's unique ID: the WiFi MAC, the Bluetooth name (plat_chip_uid) */
 #endif
+#ifndef FM1B_ERASE_SLICED
+#define FM1B_ERASE_SLICED 0       /* 1: a store or data-area erase in windows of about 1 ms, the sound on between them
+                                   * (app.h or the environment; felucca-bsp FL_ERASE_SLICED, plat_flash_held); 0: one
+                                   * window, the sound silenced first */
+#endif
+#define FL_ERASE_SLICED FM1B_ERASE_SLICED
+static uint32_t flash_held;               /* erases that held the sound for the whole erase (plat_flash_held) */
+#define FL_ERASE_HELD() (flash_held++)
 #include "fm1_flash.h"
 #include "fm1_xip.h"
 #if PLAT_SMK37
@@ -72,11 +117,11 @@
 #define OTA_BOARD_USR_LO FL_PROT2_LO
 #define OTA_BOARD_USR_LEN (FL_PROT2_HI - FL_PROT2_LO)
 #if PLAT_SMK37_MODEL == 1            /* the update record names the model, as the stock app's does */
-#define OTA_PARM_ID "ota-SMK-37 Pro_016"
+#define OTA_REC_NAME "ota-SMK-37 Pro_016"
 #elif PLAT_SMK37_MODEL == 2
-#define OTA_PARM_ID "ota-SMK-37 Elite_016"
+#define OTA_REC_NAME "ota-SMK-37 Elite_016"
 #else
-#define OTA_PARM_ID "ota-MKE-P37_016"
+#define OTA_REC_NAME "ota-MKE-P37_016"
 #endif
 #endif
 #include "fm1_perf.h"
@@ -150,6 +195,9 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #ifndef FM1B_CPU2
 #define FM1B_CPU2 0
 #endif
+#ifndef FM1B_COMPANION
+#define FM1B_COMPANION 0
+#endif
 #define FELUCCA_MIRROR FM1B_MIRROR /* usb.c's ring for mirror.c's frames */
 #ifndef FM1B_USB_HOST
 #define FM1B_USB_HOST 0
@@ -159,11 +207,21 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define FM1B_MSC 0
 #endif
 #define FELUCCA_MSC FM1B_MSC      /* disk mode: usb.c's mass-storage descriptors and EP3 (msc.c) */
+#ifndef FM1B_SD
+#define FM1B_SD 0
+#endif
+#ifndef FM1B_SD_AHEAD
+#define FM1B_SD_AHEAD 0           /* with FM1B_SD: an app's read read ahead in SPI1's interrupt, this many blocks
+                                   * (fm1.toml sd_read_ahead; sd_ahead.h) */
+#endif
 #ifndef FM1B_MIDI_STAMP
 #define FM1B_MIDI_STAMP 0         /* 1: MIDI in stamped where it lands, USB and the jack (fm1.toml midi_stamp = true;
                                    * plat_midi_in_t24); 0: when the app read it */
 #endif
 #define FELUCCA_MIDI_STAMP FM1B_MIDI_STAMP
+#ifdef APP_TICK_FAST              /* the app's 10 kHz tick sends its clock by plat_midi_rt: felucca-bsp's usb_midi_rt (off without it) */
+#define FELUCCA_MIDI_RT 1
+#endif
 #ifndef FM1B_CRASHLOG
 #define FM1B_CRASHLOG 0           /* 1: the crash history in flash, 0xE2000..0xE3FFF, and the stacks' room at a crash
                                    * (fm1.toml crash_history = true: crashlog.c, stacks.c) */
@@ -195,10 +253,13 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #endif
 
 static uint8_t flash_ok;          /* JEDEC id matched at boot */
-#if FM1B_WIFI || FM1B_BLE
+#if FM1B_WIFI || FM1B_BLE || defined(FELUCCA_USB_SERIAL_FN)
 static uint8_t flash_uid[16];     /* the flash's factory unique ID (plat_chip_uid), read at boot */
 #endif
 static void audio_silence(void);
+#if FM1B_ERASE_SLICED
+static int data_erase(uint32_t off);   /* (main_fm1.c) */
+#endif
 static int st_read(uint32_t off, void *dst, uint32_t n)   /* 256-byte IRQ-off windows: audio keeps up */
 {
     uint8_t *d = dst;
@@ -216,11 +277,17 @@ static int st_read(uint32_t off, void *dst, uint32_t n)   /* 256-byte IRQ-off wi
 }
 static int st_erase(uint32_t off)
 {
+#if !FM1B_ERASE_SLICED
     uint32_t took;
+#endif
     if (!FL_STORE_OK(off, 0x1000u))
         return -8;
+#if FM1B_ERASE_SLICED
+    return data_erase(off);
+#else
     audio_silence();
     return fl_erase4k(off, &took);
+#endif
 }
 static int st_prog(uint32_t off, const void *src, uint32_t n)
 {
@@ -299,7 +366,9 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)   /* never waits: no room
 #else
 #include "radio_none.c"           /* the build with no radio: nothing of JieLi's linked */
 #endif
-#if FM1B_WIFI
+#if FM1B_WIFI_OWN
+#include "wifi_own.c"             /* WiFi on the own stack (wifi/, felucca-bsp's chip/fm1_wifi.h; link/ with FM1B_LINK) */
+#elif FM1B_WIFI
 #include "wifi.c"                 /* WiFi (ble/wifi/, the SDK's lwIP) */
 #endif
 #if FM1B_MIRROR
@@ -314,6 +383,7 @@ static void mr_put(const uint8_t *p, uint32_t n)
     mr_w = w + n;
 }
 static int mr_link(void) { return usb.config ? (int)(midi_links & 0x7FFFFFFFu) : -1; }
+static void mr_pump(void) { usb_mirror_pump(); }
 static int mr_busy(void) { return !usb.config || usb.suspended || backup_streaming(); }
 static int mr_ctl_send(const uint8_t *p, uint32_t n)
 {
@@ -353,6 +423,10 @@ static void mirror_mid(uint32_t buttons, uint32_t keys) { (void)buttons, (void)k
 #endif
 #if FM1B_MSC
 #include "msc.c"                  /* disk mode: the FM-1 as a USB drive (plat_disk_*) */
+#endif
+#if FM1B_SD
+#include "sd.c"                   /* the card: plat_sd_read / _write (on SPI1 between the LCD's transfers) */
+#include "sd_fs.c"                /* its files: FatFs, plat_sd_start */
 #endif
 #if FM1B_BACKUP
 #include "backup.c"               /* backup and restore of the app's objects over USB (tools/fm1_backup.py) */
@@ -433,6 +507,38 @@ static int bu_room(void)                            /* the SysEx ring empty: a f
 static int bu_send(const uint8_t *p, uint32_t n) { return ota_wire_send(p, n); }
 static void bu_flush(void) { app_backup_flush(); }
 static void bu_hold(int on) { app_backup_hold(on); }
+#endif
+#if FM1B_COMPANION
+#include "companion.c"            /* the companion services over USB (docs/COMPANION.md: web/companion, tools/fm1_companion.py) */
+static int cp_send(const uint8_t *p, uint32_t n) { return usb.config ? ota_wire_send(p, n) : -1; }
+static int cp_room(uint32_t n)                      /* the SysEx ring takes it now: nobody else holds it, no backup */
+{
+    return usb.config && !usb.suspended && !sx_busy && !backup_streaming() && SXQ - (so_w - so_r) >= (n + 2u) / 3u;
+}
+static uint32_t cp_link(void) { return usb.config ? usb.resets + 1u : 0u; }
+static int cp_held(void) { return backup_streaming(); }   /* (the app's saving held: no file written meanwhile) */
+#ifdef APP_FILE_OBJS
+#if ST_BOUNCED
+static int cp_obj_read(uint32_t obj, uint32_t off, uint8_t *dst, uint32_t n)   /* (storage.c st_load_at: the current
+                                                                                * copy, checked, page by page) */
+{
+    if (!flash_ok || obj >= OBJ_NOBJ)
+        return -1;
+    return st_load_at(obj, off, dst, n);
+}
+#else
+static int cp_obj_read(uint32_t obj, uint32_t off, uint8_t *dst, uint32_t n)   /* (from storage.c's buffer: st_current
+                                                                                * leaves the current copy there, checked;
+                                                                                * st_load_at, as here) */
+{
+    st_hdr_t h;
+    if (!flash_ok || obj >= OBJ_NOBJ || st_current(obj, &h) < 0 || off > h.len || n > h.len - off)
+        return -1;
+    memcpy(dst, st_buf + off, n);
+    return 0;
+}
+#endif
+#endif
 #endif
 #ifdef APP_TOUCH
 #include "touch.c"

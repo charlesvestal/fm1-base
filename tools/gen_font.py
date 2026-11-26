@@ -17,7 +17,7 @@ import heapq
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, features
 
 FONTS = Path(__file__).resolve().parents[1] / "assets" / "fonts"
 # (name, file, px, scale, pixel, first, last): pixel fonts are rendered without
@@ -171,6 +171,9 @@ def render(ttf, px, scale, pixel, first, last):
         font.set_variation_by_axes([float(axes.get(n.lower()[:4], axes.get(n, 0)) or a["default"])
                                     for n, a in zip(names, font.get_variation_axes())])
     feats = None if pixel else ["tnum"]
+    if feats and not features.check("raqm"):           # (Pillow's raqm needs FriBiDi, loaded at run time)
+        raise SystemExit("gen_font: Pillow has no raqm for the tabular figures: install FriBiDi "
+                         "(macOS: brew install fribidi; Debian / Ubuntu: libfribidi0)")
     asc, desc = font.getmetrics()
     top = max(0, font.getbbox("A8|(", features=feats)[1] - 1)
     h = asc + desc - top

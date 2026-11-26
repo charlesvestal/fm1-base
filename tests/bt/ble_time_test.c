@@ -100,6 +100,50 @@ int main(void)
         }
         check(ok, "the stamps wrapping at 8.192 s: spaced as sent");
     }
+    /* one odd stamp (issue 54: one F8 of a steady clock came out 1.2 .. 1.5 s before it was read): in a steady clock
+     * (153 BPM, 16.3 ms apart, one message a 15 ms event), message 300's ts (or its packet's last_ts) is 1300 ms off;
+     * its time at most BLE_TIME_FAR_MS before its arrival, and every other message's time the same as without it */
+    {
+        static const struct { int16_t dts, dlast; const char *what; } odd[] = {
+            {-1300, 0, "one stamp 1.3 s behind: its time its arrival, the others as without it"},
+            {0, 1300, "one packet's newest 1.3 s ahead: its time its arrival, the others as without it"},
+            {1300, 1300, "one stamp 1.3 s ahead: the others as without it"},
+        };
+        uint32_t m;
+        for (m = 0; m < sizeof odd / sizeof odd[0]; m++) {
+            struct ble_in_clock a = {0}, b = {0};
+            uint32_t k, ok = 1, dmax = 0;
+            for (k = 0; k < 600u; k++) {
+                uint32_t sent_us = k * 16340u, now = base + ((sent_us / 15000u + 1u) * 15000u + rnd(3000u)) * 24u;
+                uint16_t ts = (uint16_t)((sent_us / 1000u) & 0x1FFFu), ta, tb;
+                uint32_t xa = ble_in_time(&a, now, TMS, ts, ts), xb;
+                ta = (uint16_t)((ts + (k == 300u ? odd[m].dts : 0)) & 0x1FFF);
+                tb = (uint16_t)((ts + (k == 300u ? odd[m].dlast : 0)) & 0x1FFF);
+                xb = ble_in_time(&b, now, TMS, ta, tb);
+                if (k == 300u ? (int32_t)(now - xb) > (int32_t)(BLE_TIME_FAR_MS * TMS) || (int32_t)(xb - now) > 0
+                              : (int32_t)(xa - xb) > (int32_t)(2u * TMS) || (int32_t)(xb - xa) > (int32_t)(2u * TMS))
+                    ok = 0;
+                if (k != 300u && (xa > xb ? xa - xb : xb - xa) > dmax)
+                    dmax = xa > xb ? xa - xb : xb - xa;
+            }
+            printf("ble_time: odd stamp %u: the others at most %u us from the times without it\n", m, dmax / 24u);
+            check(ok, odd[m].what);
+        }
+    }
+    /* far for a beat: a sender whose clock went back 2 s (it restarted): after BLE_TIME_LATE_N messages, its new
+     * times followed (the offset taken again), none of them before then more than BLE_TIME_FAR_MS old */
+    {
+        struct ble_in_clock r = {0};
+        uint32_t k, ok = 1, t = 0, now = 0;
+        for (k = 0; k < 200u; k++) {
+            uint32_t sent_us = k * 16340u - (k >= 100u ? 2000000u : 0u);
+            now = base + (k * 16340u + 5000u) * 24u;
+            t = ble_in_time(&r, now, TMS, (uint16_t)((sent_us / 1000u) & 0x1FFFu), (uint16_t)((sent_us / 1000u) & 0x1FFFu));
+            if ((int32_t)(now - t) > (int32_t)(BLE_TIME_FAR_MS * TMS))
+                ok = 0;
+        }
+        check(ok && (int32_t)(now - t) <= (int32_t)(10u * TMS), "a sender's clock 2 s back: never a time far old, then followed");
+    }
     printf("ble_time: %d failed\n", fails);
     return fails;
 }

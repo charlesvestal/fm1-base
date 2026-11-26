@@ -11,7 +11,10 @@
   manual/index.html, img/     the manual (APP_DIR/docs/MANUAL.md, its images from APP_DIR/docs/img), if there is one
   emu/                        the firmware in the browser (APP_DIR/build/emu: tools/build.py APP_DIR --web)
   words/                      the screen reader's words files (APP_DIR/web/words), every one ever made
+  fonts/                      Barlow (SIL OFL), which emu/, mirror/ and backup/ load as ../fonts/fonts.css
   mirror/index.html           the screen mirror (web/mirror/index.html, with fm1ports.js inlined), with mirror = true
+  companion/                  the companion page (web/companion/: index.html, companion.js, zip.js; web/fm1ports.js at
+                              the site's top, which companion.js imports), with companion = true
   backup/index.html           backup and restore in the browser (web/backup/index.html, with fm1ports.js inlined), with
                               backup = true: its magic and version from APP_DIR/app.h (APP_BACKUP_MAGIC, APP_BACKUP_VERSION)
   firmware/NAME-VERSION.fwsc  the package the installer writes; also the download
@@ -36,7 +39,7 @@ import sys
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1]
-MBOOT_VERSION = "1.2"                             # web/m-bootloader/fm1-uboot-X.Y.fwsc: a new release is a new file and this
+MBOOT_VERSION = "2.4"                             # web/m-bootloader/fm1-uboot-X.Y.fwsc: a new release is a new file and this
 sys.path.insert(0, str(SRC / "tools"))
 from build import read_conf  # noqa: E402
 
@@ -91,7 +94,8 @@ def backup_values(app, conf):
 
 
 def tool_pages(app, conf=None, values=None):
-    """{"mirror/index.html": html, "backup/index.html": html}, as fm1.toml asks (mirror, backup), filled in; values:
+    """{"mirror/index.html": html, "backup/index.html": html, "companion/...": ...}, as fm1.toml asks (mirror, backup,
+    companion), filled in; values:
     the firmware's own, over the defaults (EXTRA: its notes; EXTRAS_JS: its own sections, web/backup/index.html)"""
     app = Path(app).resolve()
     conf = conf or read_conf(app / "fm1.toml")
@@ -105,6 +109,11 @@ def tool_pages(app, conf=None, values=None):
         out["backup/index.html"] = fill((SRC / "web" / "backup" / "index.html").read_text(encoding="utf-8"),
                                         dict(backup_values(app, conf), PORTS_JS=ports_js(), **(values or {})),
                                         "web/backup")
+    if conf.get("companion"):                     # (generic: everything it shows comes from the FM-1)
+        for f in ("index.html", "companion.js", "zip.js"):
+            out[f"companion/{f}"] = (SRC / "web" / "companion" / f).read_text(encoding="utf-8")
+        out["fm1ports.js"] = (SRC / "web" / "fm1ports.js").read_text(encoding="utf-8")   # (the module: companion.js
+                                                  # imports ../fm1ports.js, as in web/)
     return out
 
 
@@ -192,6 +201,7 @@ def main(app, pkg, version, out):
         if (app / "docs" / "img").is_dir():
             shutil.copytree(app / "docs" / "img", out / "manual" / "img")
     shutil.copytree(emu, out / "emu")
+    shutil.copytree(SRC / "web" / "fonts", out / "fonts", dirs_exist_ok=True)      # the pages' fonts (../fonts/fonts.css): no page asks an outside host
     if (app / "web" / "words").is_dir():
         shutil.copytree(app / "web" / "words", out / "words")
     tools = tool_pages(app, conf)
@@ -200,7 +210,7 @@ def main(app, pkg, version, out):
         (out / p).write_text(h, encoding="utf-8")
     (out / ".nojekyll").write_text("")
     print(f"site: {out}: index.html, install/ ({product}), {'manual/, ' if manual.exists() else ''}emu/, words/, "
-          f"{''.join(p.split('/')[0] + '/, ' for p in tools)}firmware/{name} ({len(raw)} B)"
+          f"{''.join(d + '/, ' for d in dict.fromkeys(p.split('/')[0] for p in tools if '/' in p))}firmware/{name} ({len(raw)} B)"
           f"{f', firmware/{res_name}' if res_src.exists() else ''}")
 
 

@@ -27,6 +27,7 @@ class Fm1 extends AudioWorkletProcessor {
     this.lastFrame = 0;
     this.busy = 0;
     this.frames = 0;
+    this.log = [];                                    // the session: [device ms, kind, value] (the page's "Copy session")
     this.port.onmessage = (e) => this.onMessage(e.data);
   }
 
@@ -63,13 +64,19 @@ class Fm1 extends AudioWorkletProcessor {
     } else if (!this.ex) {
       return;
     } else if (m.type === "buttons") {
+      this.rec("b", m.mask >>> 0);
       this.ex.web_buttons(m.mask >>> 0);
     } else if (m.type === "keys") {
+      this.rec("k", m.mask >>> 0);
       this.ex.web_keys(m.mask >>> 0);
     } else if (m.type === "enc") {
+      this.rec("e", [m.role, m.n | 0]);
       this.ex.web_enc(m.role, m.n | 0);
     } else if (m.type === "master") {
+      this.rec("m", m.value | 0);
       this.ex.web_master(m.value | 0);
+    } else if (m.type === "log") {                    // the session so far, for the page to turn into a script
+      this.port.postMessage({ type: "log", log: this.log, now: this.ex.web_now() >>> 0 });
     } else if (m.type === "sysex") {                  // a screen reader's frame: the bytes between F0 and F7
       const b = Uint8Array.from(m.bytes).subarray(0, 64);
       new Uint8Array(this.mem.buffer, this.ex.web_sysex_buf(), b.length).set(b);
@@ -77,6 +84,10 @@ class Fm1 extends AudioWorkletProcessor {
     } else if (m.type === "app" && this.app.message) {
       this.app.message(this, m);
     }
+  }
+
+  rec(kind, v) {
+    if (this.log.length < 200000) this.log.push([this.ex.web_now() >>> 0, kind, v]);
   }
 
   publish() {
@@ -87,6 +98,7 @@ class Fm1 extends AudioWorkletProcessor {
     if (ex.web_dim_ns) msg.dimOp = dimOpacity(ex.web_dim_ns() >>> 0);   // only an app with APP_DIM_LEVELS
     if (this.frames >= 44100) {                       // the share of real time spent running the device
       msg.load = Math.round(100 * this.busy / (this.frames / 44.1));
+      this.rec("l", msg.load);
       this.busy = this.frames = 0;
     }
     const transfer = [];

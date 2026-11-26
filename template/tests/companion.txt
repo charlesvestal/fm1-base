@@ -1,0 +1,33 @@
+# The template's saved settings as a file over the companion services (fm1.toml companion = true, app.h APP_FILE_OBJS;
+# docs/COMPANION.md), as a page or tools/fm1_companion.py sends them: SysEx cmd 0x61 in the update's framing, each
+# request followed by the answer it gets. Run by tests/run_tests.sh:
+#   template/build/host/template_host template/tests/companion.txt template/build/host
+wait 300
+# list file 0: one file, "settings" (kind 6 settings, flags 3: read and write), empty, room 3840 bytes
+sysex F0 00 32 05 1B 00 00 00 00 00 00 7C 07 F7
+expect_sysex F0 00 32 05 4B 01 00 00 00 00 00 00 08 00 40 41 01 00 00 00 00 00 60 03 00 00 66 15 23 47 2E 1A 37 67 66 01 28 07 F7
+sysex_out
+# write it: begin (8 bytes and their CRC-32), the bytes (magic TPL1, octave +2, wave 1 triangle), commit
+sysex F0 00 32 05 5B 00 00 40 01 00 00 20 00 00 00 40 63 50 70 14 06 0E F7
+expect_sysex F0 00 32 05 43 00 00 40 01 00 00 00 00 00 00 00 00 7C 01 F7
+sysex F0 00 32 05 7B 00 00 00 02 00 00 00 00 00 00 40 18 4C 20 51 12 10 00 00 00 57 01 F7
+expect_sysex F0 00 32 05 43 00 00 00 02 00 00 00 40 00 00 00 00 73 01 F7
+sysex F0 00 32 05 1B 00 00 40 02 00 00 68 07 F7
+expect_sysex F0 00 32 05 63 00 00 40 02 00 00 00 40 00 00 00 00 47 21 61 29 6C 1B F7
+sysex_out
+# saved, and the app took it (app_file_changed): octave +2, the triangle
+expect store_writes 1
+expect octave 2
+expect wave 1
+expect dirty 0
+# read it back: 256 bytes from 0, the 8 there are
+sysex F0 00 32 05 4B 00 00 40 00 00 00 00 00 00 00 00 00 01 7A 03 F7
+expect_sysex F0 00 32 05 03 01 00 40 00 00 00 00 00 00 00 00 00 31 18 41 22 25 20 00 00 00 34 03 F7
+# listed again: 8 bytes
+sysex F0 00 32 05 1B 00 00 00 00 00 00 7C 07 F7
+expect_sysex F0 00 32 05 4B 01 00 00 00 00 00 00 08 00 40 41 01 08 00 00 00 00 60 03 00 00 66 15 23 47 2E 1A 37 67 66 01 68 06 F7
+# deleting it: not allowed (no flag 2), the settings stay
+sysex F0 00 32 05 1B 00 00 00 03 00 00 64 07 F7
+expect_sysex F0 00 32 05 23 00 00 00 03 03 00 00 30 0F F7
+sysex_out
+expect octave 2

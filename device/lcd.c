@@ -30,8 +30,15 @@ static void lcd_spin(uint32_t n)
         ;
 }
 
+#if FM1B_SD
+static void sd_bus_lend(void);     /* sd.c: a card transfer left open on SPI1 ended (an app's write: parked) */
+#endif
+
 static void lcd_sync(void)          /* finish the running transfer (before touching its buffer) */
 {
+#if FM1B_SD
+    sd_bus_lend();                 /* (every LCD access comes through here first: the bus is the panel's again) */
+#endif
     if (!lcd_busy)
         return;
     fm1_lcd_wait();
@@ -45,6 +52,9 @@ static void lcd_cmd(uint8_t c)
     fm1_lcd_send_cmd(c);
     fm1_lcd_wait();
     fm1_lcd_deselect();
+#if FM1B_SD
+    fm1_sd_park();                 /* D/C high: the SD card is selected now, its DO (this line) idles high */
+#endif
 }
 
 static void lcd_data(const void *p, uint32_t n)

@@ -7,7 +7,8 @@
  *      level times MASTER's (the square of its position). uac_play runs at level 0 too: it still reads the ring, so its
  *      rate tracking stays locked and turning it up again starts in step;
  *   3. with USB AUDIO full (plat_usb_audio_full; the render came at 4096), MASTER for the speaker after the tap, over
- *      both: the computer's audio was added at plat_usb_play_gain's level alone, MASTER here.
+ *      both: the computer's audio was added at plat_usb_play_gain's level alone, MASTER here, slid across the block
+ *      from the last block's.
  * The includer has uac_tap and uac_play (bsp/chip/usb.c) when FELUCCA_UAC / FELUCCA_UAC_OUT are on. */
 #ifndef FM1B_UAC_MIX_H
 #define FM1B_UAC_MIX_H
@@ -26,11 +27,20 @@ static inline void uac_mix(int32_t *o, uint32_t n, uint32_t gain, uint32_t maste
 #else
     (void)master, (void)play_q12;
 #endif
-    if (full) {                                     /* the speaker and headphones: MASTER after the tap */
+    {   /* the speaker and headphones: MASTER after the tap, slid frame by frame from the last block's gain to this
+         * one's (one gain a block stepped once a block while the pot turned: a zipper); the first block takes it */
+        static float last = -1.0f;
         const float g = (float)gain * (1.0f / 4096.0f);
-        uint32_t i;
-        for (i = 0; i < 2u * n; i++)
-            o[i] = (int32_t)((float)o[i] * g);
+        if (full) {
+            const float g0 = last < 0.0f ? g : last, d = (g - g0) / (float)n;
+            uint32_t i;
+            for (i = 0; i < n; i++) {
+                const float gi = g0 + d * (float)(i + 1u);
+                o[2u * i] = (int32_t)((float)o[2u * i] * gi);
+                o[2u * i + 1u] = (int32_t)((float)o[2u * i + 1u] * gi);
+            }
+        }
+        last = g;                                   /* (not full too: the app's render was at it) */
     }
 }
 #endif

@@ -16,7 +16,7 @@
 // how far it compared with cmd 0x32 [sectors compared, all]. A loader that says nothing gets the classic protocol,
 // unchanged; a package without a Felucca loader (M-VAVE's firmware: M-VAVE's loader) never hears the hello.
 
-import { PORT_NAMES, usualName, livePorts, outputFor, pairs, askAll } from "./fm1ports.js";
+import { PORT_NAMES, usualName, livePorts, outputFor, pairs, askAll, IS_BLUETOOTH } from "./fm1ports.js";
 
 const HS_QUERY = [0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7];
 // the handshake with the one-byte body 01 (00 59 11, length 1, 01, checksum FE): a firmware on felucca-bsp's chip/ota.c
@@ -31,9 +31,6 @@ const LOADER_MARK = [..."FELUCCA-LOADER-1"].map((c) => c.charCodeAt(0));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const IS_OTA = (id) => /^ota-/i.test(id.model);
 
-// an FM-1 paired over Bluetooth MIDI shows a port named "... Bluetooth" beside its USB one: it never answers an update
-// (and a Mac lists the paired one first), so no port with that word is asked, picked, listed or tried
-export const IS_BLUETOOTH = (name) => /bluetooth/i.test(name || "");
 
 // M-VAVE's FM1 Open firmware (V10, 2026-10): its updater takes only a package it has been told about
 // first (cmd 49 reads its state, cmd 50 arms it with the image length and the package's SHA-256); then
@@ -182,6 +179,10 @@ async function ask(link, query, ms) {
 
 // the identity: HS_QUERY, then HS_FULL when the answer is NAME_ and three digits (a firmware on chip/ota.c tells its
 // whole identity so); the plain answer when nothing answers HS_FULL (M-VAVE's, an older build)
+// the identity a device answered is the package's: the whole of it, or NAME_ and three digits that start it (a firmware
+// that never answered HS_FULL; fm1_install.py's check, the same)
+const sameId = (text, product) => text === product || (/^[^_]+_\d{3}$/.test(text) && product.startsWith(text));
+
 async function handshake(link, tries = 3) {
   link.drain();
   for (let t = 0; t < tries; t++) {
@@ -345,6 +346,21 @@ export class Updater {
     return null;
   }
 
+  // a device back from an update that answered only NAME_ and three digits, the start of the identity it should have
+  // (product): asked again for its whole identity, for up to ms. Its first boot can be slow to answer HS_FULL (a
+  // firmware setting up its store after another firmware's: flash erased with the interrupts off), and handshake waits
+  // only 600 ms for it. The link closed after.
+  async settle(back, product, ms = 10000) {
+    const end = Date.now() + ms;
+    while (back.id.text !== product && product.startsWith(back.id.text) && Date.now() < end) {
+      await sleep(500);
+      const full = await ask(back.link, HS_FULL, 1500);
+      if (full === false) break;
+      if (full && full.model === back.id.model && full.text.startsWith(back.id.text)) back.id = full;
+    }
+    back.link.close();
+  }
+
   async waitFor(filter, ms) {
     const end = Date.now() + ms;
     while (Date.now() < end) {
@@ -431,8 +447,8 @@ export class Updater {
     await sleep(3000);
     const back = await this.waitFor((id) => !IS_OTA(id), 40000);
     if (!back) throw fail("noreturn", "the device did not come back: power-cycle it");
-    back.link.close();
-    if (back.id.text !== product) throw fail("mismatch", `installed, but the device reports ${back.id.text}`, back.id.text);
+    await this.settle(back, product);
+    if (!sameId(back.id.text, product)) throw fail("mismatch", `installed, but the device reports ${back.id.text}`, back.id.text);
     step("done", back.id.text);
     return back.id.text;
   }
@@ -559,8 +575,8 @@ export class Updater {
         await sleep(3000);
         const back = await this.waitFor((id) => !IS_OTA(id), 40000);
         if (!back) throw fail("noreturn", "the device did not come back: power-cycle it");
-        back.link.close();
-        if (back.id.text !== product) throw fail("mismatch", `written, but the device reports ${back.id.text}`, back.id.text);
+        await this.settle(back, product);
+        if (!sameId(back.id.text, product)) throw fail("mismatch", `written, but the device reports ${back.id.text}`, back.id.text);
         step("done", back.id.text);
       }
       return true;

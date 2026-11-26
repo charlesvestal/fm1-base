@@ -47,10 +47,10 @@ groups it needs, and only those are compiled in.
 | core | `plat_ms`, `plat_buttons`, `plat_keys`, `plat_enc`, `plat_master`, `plat_leds`, `plat_glow`, `plat_play_red`, `plat_keys_dim`, `plat_store_load/save`, `plat_cpu_pct`, `plat_xruns` | all |
 | MIDI | `plat_midi_in` (USB or TRS), `plat_midi_out`, `plat_midi3`, `plat_sysex`, `plat_midi_out_room`, `plat_midi_out_link`, `plat_midi_dropped`, SysEx in (`plat_sysex_get/done/send`) | all; the extras by some |
 | storage extras | `plat_store_load_prev`, `plat_store_head`, raw sectors (`plat_gal_*`) | X0X, SPH-16, XY-1, Polly, Mocky |
-| second core | `plat_cpu2_*` | X0X, NuSaw, SPH-16, XY-1 |
+| second core | `plat_cpu2_*`, `plat_core` (fm1.toml `cpu2 = true`; how to use it: [docs/SECOND-CORE.md](docs/SECOND-CORE.md)) | LOOM-8; X0X, NuSaw and SPH-16 on their own copies |
 | analog keys | `plat_analog_*`, `plat_cap_probe`, `plat_sense` | Velo, MONK-1, CTL-1 |
 | profiling | `plat_cycles*`, `plat_stalls*`, `plat_cpu_peak_pct`, `plat_irq_stack_*`, `plat_ticks24` | X0X, SPH-16, XY-1 |
-| power | `plat_battery`, `plat_vdc14_mv`, `plat_sysvdd_mv` | X0X, SPH-16, NuSaw, XY-1 |
+| power | `plat_battery`, `plat_battery_raw`; the supply rails are fm1-base's own, set at boot, with no call ([docs/SECOND-CORE.md](docs/SECOND-CORE.md#the-supplies)) | X0X, SPH-16, NuSaw, LOOM-8 |
 | crash | `plat_last_crash` | X0X, SPH-16, NuSaw, XY-1 |
 | Bluetooth | `plat_ble_*` | CTL-1 |
 | concurrency | `plat_lock`, `plat_unlock`, `plat_yield`, `plat_idle` | CTL-1, Mocky |

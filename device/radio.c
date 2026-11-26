@@ -82,8 +82,11 @@ void shim_idle(void)
 }
 #endif
 void shim_reboot(void) { fm1_reboot(); }
-/* the shim's delays (JieLi's delay_us and friends): from RAM, timed by TIMER4, nothing called */
+/* the shim's delays (JieLi's delay_us and friends): from RAM, timed by TIMER4, nothing called. Only where the shim is
+ * linked (JieLi's BLE or WiFi libraries: tools/build.py radio_units); the own stacks never call it (150 B of RAM) */
+#if !FM1B_BLE_OWN || SHIM_WIFI
 __attribute__((section(".ram_text"), noinline, used)) void shim_delay_us(uint32_t us) { fm1_busy_us_inl(us); }
+#endif
 
 
 /* the radio's interrupts sit above the input timer (4): JieLi asks for 0..2, mapped to 5..7 */
@@ -303,13 +306,10 @@ void ble_midi_name(char *name)
 {
     static const char hex[] = "0123456789ABCDEF";
     const uint8_t *u = plat_chip_uid();
-    uint32_t h = 2166136261u, i = 1;
-    while (u && i < 16u && u[i] == u[0])          /* all FF or all 0: no ID */
-        i++;
-    if (u && i < 16u) {
-        for (i = 0; i < 16u; i++)
-            h = (h ^ u[i]) * 16777619u;
-        h ^= h >> 16;
+    int id = plat_uid_hash16(u);                  /* (all FF or all 0: no ID) */
+    uint32_t h, i;
+    if (id >= 0) {
+        h = (uint32_t)id;
     } else {
         u = bt_get_mac_addr();
         h = (uint32_t)u[4] << 8 | u[5];
@@ -780,7 +780,10 @@ extern int ble_midi_peripheral_linked(void);
 extern void ble_midi_enable(int on);
 static uint8_t ble_off;                           /* switched off by the player (plat_ble_enable) */
 int plat_ble_state(void) { return ble_off ? BLE_OFF : ble_state; }
+int plat_ble_radio(void) { return ble_state; }   /* (switched off or not: WiFi's start) */
 int plat_ble_connected(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_connected(); }
+extern int ble_midi_rssi(int link);
+int plat_ble_rssi(int link) { return !ble_off && ble_state == BLE_READY ? ble_midi_rssi(link) : 0; }
 int plat_ble_linked(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_linked(); }
 int plat_ble_stream(const struct plat_ble_stream *s) { (void)s; return 0; }   /* (send by plat_midi_send) */
 void plat_ble_link_info(uint32_t v[7])

@@ -15,7 +15,9 @@
  *
  * Part of radio.c (the unity build). */
 #ifndef BLE_DEVICE_NAME
-#define BLE_DEVICE_NAME "FM-1"                    /* "FM-1 XXXX", XXXX this FM-1's own (own_addr), as JieLi's build named it */
+#define BLE_DEVICE_NAME "FM-1"                    /* "FM-1 XXXX", XXXX this FM-1's own (own_addr), as JieLi's build named it; an
+                                                   * app names it itself ("FM1-XXXX": BLE_DEVICE_NAME "FM1-", BLE_NAME_SEP "") */
+#define BLE_NAME_SEP " "
 #endif
 #if FM1B_BLE_CENTRAL && !defined(BLE_CENTRAL)
 #define BLE_CENTRAL 1
@@ -91,15 +93,12 @@ static int own_save(void)
 static void own_addr(uint8_t a[6])
 {
     const uint8_t *u = plat_chip_uid();
-    uint32_t h = 2166136261u, g = 0x9E3779B9u, i = 1;
-    while (u && i < 16u && u[i] == u[0])
-        i++;
-    if (u && i < 16u) {
-        for (i = 0; i < 16u; i++) {
-            h = (h ^ u[i]) * 16777619u;
+    int id = plat_uid_hash16(u);                  /* (plat.h plat_dev_id: the four digits of "FM1-XXXX") */
+    uint32_t h, g = 0x9E3779B9u, i;
+    if (id >= 0) {
+        h = (uint32_t)id;
+        for (i = 0; i < 16u; i++)
             g = (g ^ u[i]) * 2246822519u;
-        }
-        h ^= h >> 16;
     } else {                                      /* no ID: a random one, kept */
         h = fm1_ticks();
         g = fm1_ticks() * 2654435761u;
@@ -249,6 +248,7 @@ static void own_cal_log(void)                     /* what the calibration measur
     shim_log(b);
 }
 
+static uint8_t ble_off;                           /* switched off by the player (plat_ble_enable) */
 static void ble_start(void)
 {
     char b[40];
@@ -296,7 +296,8 @@ static void ble_start(void)
         shim_log(b);
     }
     own_held(1);
-    ble_enable(1);
+    ble_enable(!ble_off);                         /* (switched off by the player and started for WiFi or the audio: the
+                                                   * radio up, no advertising) */
     own_held(0);
     ble_state = BLE_READY;
 }
@@ -417,9 +418,10 @@ static void ble_poll(void)
 }
 
 /* ---- plat.h */
-static uint8_t ble_off;                           /* switched off by the player (plat_ble_enable) */
 int plat_ble_state(void) { return ble_off ? BLE_OFF : ble_state; }
+int plat_ble_radio(void) { return ble_state; }   /* (switched off or not: the radio stays up, WiFi's start reads it) */
 int plat_ble_connected(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_connected(); }
+int plat_ble_rssi(int link) { (void)link; return 0; }   /* (not yet: the own controller keeps no link's reading) */
 int plat_ble_linked(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_linked(); }
 void plat_ble_link_info(uint32_t v[7])            /* the computer's link as agreed (0 each: none) */
 {

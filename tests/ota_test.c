@@ -176,6 +176,23 @@ static int load(const char *path)                  /* the package's logical imag
 
 static uint8_t b_scratch[512];
 
+/* ota.bin's length in the package (its UFW entry, type 100): step 1 reads it in 512-byte pieces */
+static uint32_t pkg_ota_len(void)
+{
+    uint8_t h[0x400];
+    uint32_t i, n;
+    memcpy(h, logical, sizeof h);
+    ota_jl_enc(h, 0x40);
+    n = ota_rd16(h + 8);
+    for (i = 0; i < n && i < 11u; i++) {
+        uint8_t *e = h + 0x40 + i * 0x50u;
+        ota_jl_enc(e, 0x50);
+        if (ota_rd16(e) == 100)
+            return ota_rd32(e + 12);
+    }
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     int bad = 0, rc;
@@ -210,7 +227,8 @@ int main(int argc, char **argv)
     rc = ota_session();
     printf("  %u requests\n", requests);
     bad += check("session commits", rc == 0 && committed);
-    bad += check("headers + loader + confirm, no head reads", requests >= 10 && requests <= 30);
+    bad += check("headers + loader + confirm, no head reads",
+                 requests >= 10 && requests <= 2u + (pkg_ota_len() + 511u) / 512u + 4u);
     {
         uint8_t *h = nor + 0xE0000, *p = committed_parm;
         bad += check("staged body == the package's loader", !memcmp(nor + 0xE0020, logical + ota_body_off(), 64));
@@ -309,10 +327,10 @@ int main(int argc, char **argv)
                              v == 1u ? "m-bootloader boot area for the SMK-37 -> -5" :
                                        "damaged boot area -> -5", v == 0u ? rc == 0 : rc == -5);
             }
-            memcpy(img, tpl, sizeof img);                   /* ours keeps the SDK's file unciphered: */
-            logical = img;                                  /* never written (Felucca's writer is exempt) */
+            memcpy(img, tpl, sizeof img);                   /* ours, its SPL ciphered as on flash: another */
+            logical = img;                                  /* writer that carries it (SHRUB's) is taken */
             rc = ota_boot_valid(0, sizeof img, b_scratch);
-            bad += check("our packages' head: not one to write -> -5", rc == -5);
+            bad += check("our packages' head: bootable", rc == 0);
             logical = NULL;
         }
 

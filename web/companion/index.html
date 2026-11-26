@@ -1,0 +1,336 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MPL-2.0
+     Copyright (C) 2026 Henri David
+     Copyright (C) 2026 Charles Vestal
+     The companion page (docs/COMPANION.md): any fm1-base firmware built with companion = true, over Web MIDI or the
+     browser emulator (its port part, web/emu/parts/port_client.js, when the site has it): what the FM-1 runs and has,
+     its files as a librarian keeps them (by kind; downloaded, replaced, deleted; all of them backed up into one zip
+     and put back from one, only what changed sent) and its parameters (edited, kept up to date while shown). Nothing
+     of any one app here: everything comes from the FM-1 (device/companion.c). companion.js beside it is the protocol,
+     zip.js the zip files; tools/make_site.py puts them in a site's companion/ (and fm1ports.js at the site's top)
+     with companion = true. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FM-1 Companion</title>
+<meta name="description" content="Keep an FM-1's files on this computer: back them up, put them back, and change its settings. Chrome or Edge.">
+<style>
+:root { --bg: #faf4e8; --fg: #48392f; --dim: #6e5c4b; --rule: #e6dccb; --card: #fffaf1; --accent: #b84a1e; --on-accent: #fff;
+        --teal: #1f7a71; --bad: #a3271b; --focus: #1f6fd1; color-scheme: light; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #1c1814; --fg: #f2e8d8; --dim: #b3a28e; --rule: #3a322a; --card: #26201b;
+                                    --accent: #f28a5a; --on-accent: #2a140a; --teal: #4cc3b6; --bad: #ff8a73; --focus: #79adff;
+                                    color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #1c1814; --fg: #f2e8d8; --dim: #b3a28e; --rule: #3a322a; --card: #26201b;
+                           --accent: #f28a5a; --on-accent: #2a140a; --teal: #4cc3b6; --bad: #ff8a73; --focus: #79adff;
+                           color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); padding: 32px 16px 64px;
+       font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; }
+main { max-width: 44rem; margin: 0 auto; }
+h1 { font-size: 24px; font-weight: 600; margin: 0 0 8px; }
+h2 { font-size: 18px; font-weight: 600; margin: 0 0 12px; }
+h3 { font-size: 13px; font-weight: 600; margin: 16px 0 4px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+p { margin: 0 0 12px; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.lede { color: var(--dim); margin-bottom: 20px; }
+.card { background: var(--card); border: 1px solid var(--rule); border-radius: 12px; padding: 16px 18px; margin: 0 0 16px; }
+button, label.pick { font: inherit; border-radius: 999px; padding: 6px 18px; cursor: pointer; display: inline-block;
+                     background: var(--accent); color: var(--on-accent); border: 1px solid var(--accent); }
+button.plain, label.pick { background: none; color: var(--fg); border-color: var(--dim); }
+button.small, label.pick.small { padding: 2px 12px; font-size: 14px; }
+button:disabled, label.pick.off { opacity: .45; cursor: default; }
+label.pick input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+label.pick:focus-within { outline: 3px solid var(--focus); outline-offset: 2px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.status { border-left: 4px solid var(--teal); background: var(--card); border-radius: 0 10px 10px 0; padding: 10px 14px; margin: 0 0 16px; }
+.status.err { border-left-color: var(--bad); }
+.status p { margin: 0; }
+#alert { color: var(--bad); font-weight: 600; }
+progress { width: 100%; height: 8px; accent-color: var(--accent); margin: 8px 0; }
+[hidden] { display: none !important; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 16px; margin: 0; }
+dt { color: var(--dim); }
+dd { margin: 0; overflow-wrap: anywhere; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { font-size: 13px; border: 1px solid var(--rule); border-radius: 999px; padding: 0 8px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+td { border-bottom: 1px solid var(--rule); padding: 6px 4px; vertical-align: middle; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--dim); }
+td.acts { text-align: right; }
+td.acts .row { justify-content: flex-end; gap: 6px; }
+.opt { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0 0; }
+.opt input { margin-top: 6px; accent-color: var(--accent); }
+.param { display: grid; grid-template-columns: minmax(7rem, 1fr) 2fr minmax(5.5rem, auto); gap: 10px; align-items: center; padding: 4px 0; }
+.param input[type=range] { width: 100%; accent-color: var(--teal); }
+.param input[type=number], .param select { font: inherit; width: 100%; padding: 2px 6px; border: 1px solid var(--rule);
+       border-radius: 6px; background: var(--bg); color: var(--fg); }
+.param .ro { color: var(--dim); }
+.small { color: var(--dim); font-size: 14px; }
+ul.report { margin: 8px 0 0; padding-left: 20px; font-size: 14px; }
+@media (max-width: 34rem) {
+  .param { grid-template-columns: 1fr 1fr; } .param .ctl { grid-column: 1 / -1; grid-row: 2; }
+  td.num { display: none; }
+}
+</style>
+</head>
+<body>
+<main>
+<h1>FM-1 Companion</h1>
+<p class="lede">Use this page to keep your FM-1's files on this computer: download one, send one back, or back them all up
+in one zip file and put them back later. You can also change the firmware's settings here. Connect the FM-1 with a USB
+cable, or open the firmware's emulator in another tab. It works in Chrome and Edge, with nothing to install.</p>
+
+<div class="status" id="statusBox"><p id="status" role="status">Press Connect to start.</p><p id="alert" role="alert"></p></div>
+<div class="row" style="margin-bottom:16px"><button type="button" id="connect">Connect</button></div>
+<div class="card" id="pick" hidden><h2>Which FM-1?</h2><div id="ports" class="row"></div></div>
+
+<section class="card" id="infoCard" hidden aria-labelledby="infoTitle">
+  <h2 id="infoTitle">This FM-1</h2>
+  <dl id="info"></dl>
+</section>
+
+<section class="card" id="filesCard" hidden aria-labelledby="filesTitle">
+  <div class="row" style="justify-content:space-between"><h2 id="filesTitle" style="margin:0">Files</h2>
+    <button type="button" class="plain small" id="refreshFiles">Refresh</button></div>
+  <div class="row" style="margin:12px 0 0">
+    <button type="button" id="backupAll">Back up all</button>
+    <label class="pick" id="restorePick">Restore from a backup…<input type="file" id="restoreFile" accept=".zip,application/zip"></label>
+  </div>
+  <label class="opt"><input type="checkbox" id="changedOnly" checked>
+    <span>Send only what changed. The FM-1 compares each file with the one in the backup and skips the ones that are the same.</span></label>
+  <progress id="fileProgress" max="1" value="0" hidden></progress>
+  <ul class="report" id="report" hidden></ul>
+  <div id="files"></div>
+  <p class="small" style="margin-top:12px">The FM-1 checks each file it receives and keeps it only when every byte arrived. If a
+  transfer stops partway, send the same file again. The FM-1 refuses changes while it plays: stop it first.</p>
+</section>
+
+<section class="card" id="paramsCard" hidden aria-labelledby="paramsTitle">
+  <h2 id="paramsTitle">Settings</h2>
+  <div id="params"></div>
+  <p class="small">Changes you make on the FM-1 show here while this page is open.</p>
+</section>
+</main>
+
+<script type="module">
+import { Companion, findCompanions, KINDS, F_READ, F_WRITE, F_DELETE, F_PLAYING } from "./companion.js";
+import { zip, unzip } from "./zip.js";
+
+const $ = (id) => document.getElementById(id);
+const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+const say = (msg, err = false) => { $("status").textContent = err ? "" : msg; $("alert").textContent = err ? msg : ""; $("statusBox").classList.toggle("err", err); };
+const size = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(2)} MB`;
+const MANIFEST = "fm1-companion.json";          // what the backup came from, beside its files (files/NAME)
+let dev = null, hello = null, keep = null, list = [];
+
+async function access() {                       // Web MIDI's ports and the emulator's, side by side
+  const inputs = new Map(), outputs = new Map();
+  if (navigator.requestMIDIAccess) {
+    try {
+      const a = await navigator.requestMIDIAccess({ sysex: true });
+      for (const [k, v] of a.inputs) inputs.set(k, v);
+      for (const [k, v] of a.outputs) outputs.set(k, v);
+    } catch (e) { say("This page needs MIDI with SysEx. Allow it in the browser's site settings, then press Connect again.", true); }
+  }
+  try {
+    const { emuAccess } = await import("../emu/parts/port_client.js");
+    const e = emuAccess();
+    await new Promise((r) => setTimeout(r, 300));  // (the emulators answer "who" within a moment)
+    for (const [k, v] of e.inputs) inputs.set(k, v);
+    for (const [k, v] of e.outputs) outputs.set(k, v);
+  } catch (e) { /* (no emulator on this site) */ }
+  return { inputs, outputs };
+}
+
+$("connect").onclick = async () => {
+  say("Looking for FM-1s…");
+  const found = await findCompanions(await access());
+  if (!found.length) {
+    say("No FM-1 answered. Plug it in with a USB data cable, close other apps that use its MIDI, and press Connect again. The firmware must be built with companion services.", true);
+    return;
+  }
+  if (found.length === 1) return use(found[0]);
+  $("ports").replaceChildren(...found.map((f) => el("button", { type: "button", className: "plain", onclick: () => use(f) },
+    `${f.hello.name} ${f.hello.appVersion} on ${f.name}`)));
+  $("pick").hidden = false;
+  say(`${found.length} FM-1s answered. Pick one.`);
+};
+
+async function use(f) {
+  $("pick").hidden = true;
+  if (dev) dev.close();
+  if (keep) clearInterval(keep);
+  dev = new Companion(f.input, f.output);
+  const h = hello = f.hello;
+  say(`Connected to ${h.name} ${h.appVersion} on ${f.name}.`);
+  const rows = [["Firmware", `${h.name} ${h.appVersion}`], ["Identity", h.identity], ["Port", f.name]];
+  $("info").replaceChildren(...rows.flatMap(([k, v]) => [el("dt", {}, k), el("dd", {}, v)]),
+    el("dt", {}, "Has"), el("dd", {}, el("div", { className: "chips" }, ...h.services.map((s) => el("span", { className: "chip" }, s)))));
+  $("infoCard").hidden = false;
+  $("filesCard").hidden = !h.services.includes("files");
+  $("paramsCard").hidden = !h.services.includes("parameters");
+  try {
+    if (!$("filesCard").hidden) await showFiles();
+    if (!$("paramsCard").hidden) await showParams();
+  } catch (e) { say(e.message, true); }
+}
+
+// ------------------------------------------------------------------ files
+const progress = (at, n) => { $("fileProgress").hidden = false; $("fileProgress").value = n ? at / n : 1; };
+const explain = (e) => e.code === "busy" ? "The FM-1 is playing. Stop it, then try again." : e.message;
+let working = false;
+async function busy(what, fn) {
+  if (working) return;
+  working = true;
+  for (const b of document.querySelectorAll("#filesCard button, #filesCard input")) b.disabled = true;
+  $("restorePick").classList.add("off");
+  try { say(what); const done = await fn(); say(done || "Done."); } catch (e) { say(explain(e), true); }
+  finally {
+    $("fileProgress").hidden = true;
+    working = false;
+    $("restorePick").classList.remove("off");
+    for (const b of document.querySelectorAll("#filesCard button, #filesCard input")) b.disabled = false;
+    await showFiles().catch(() => {});
+  }
+}
+function save(name, data, type = "application/octet-stream") {
+  const a = el("a", { href: URL.createObjectURL(new Blob([data], { type })), download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+$("refreshFiles").onclick = () => showFiles().catch((e) => say(explain(e), true));
+
+async function showFiles() {
+  list = await dev.files();
+  const kinds = new Map();
+  for (const f of list) {
+    if (!kinds.has(f.kind)) kinds.set(f.kind, []);
+    kinds.get(f.kind).push(f);
+  }
+  $("files").replaceChildren(...[...kinds].flatMap(([kind, fs]) => [el("h3", {}, kind),
+    el("table", {}, el("tbody", {}, ...fs.map(fileRow)))]));
+  $("backupAll").disabled = !list.some((f) => f.flags & F_READ);
+}
+function fileRow(f) {
+  const acts = el("div", { className: "row" });
+  if (f.flags & F_READ) acts.append(el("button", { type: "button", className: "plain small", disabled: !f.size,
+    ariaLabel: `Download ${f.name}`, onclick: () => busy(`Reading ${f.name}…`, async () => {
+      save(f.name, await dev.read(f.index, progress));
+      return `${f.name} downloaded.`;
+    }) }, "Download"));
+  if (f.flags & F_WRITE) {
+    const input = el("input", { type: "file", onchange: () => busy(`Sending ${f.name}…`, async () => {
+      const file = input.files[0];
+      input.value = "";
+      if (!file) return "";
+      if (file.size > f.room) throw new Error(`${file.name} is ${size(file.size)}, and ${f.name} holds ${size(f.room)} at most.`);
+      await dev.write(f.index, new Uint8Array(await file.arrayBuffer()), progress);
+      return `${f.name} replaced with ${file.name}.`;
+    }) });
+    acts.append(el("label", { className: "pick small", ariaLabel: `Replace ${f.name}` }, "Replace…", input));
+  }
+  if (f.flags & F_DELETE) acts.append(el("button", { type: "button", className: "plain small", disabled: !f.size,
+    ariaLabel: `Delete ${f.name}`, onclick: () => {
+      if (confirm(`Delete ${f.name} on the FM-1? This can't be undone.`))
+        busy(`Deleting ${f.name}…`, async () => { await dev.remove(f.index); return `${f.name} deleted.`; });
+    } }, "Delete"));
+  return el("tr", {}, el("td", {}, f.name, f.flags & F_PLAYING ? el("span", { className: "small" }, " (also while playing)") : ""),
+    el("td", { className: "num" }, f.size ? size(f.size) : "empty"), el("td", { className: "acts" }, acts));
+}
+
+// every readable file in one zip: files/NAME each, and fm1-companion.json saying what they came from
+$("backupAll").onclick = () => busy("Backing up…", async () => {
+  const entries = [], files = [];
+  const readable = list.filter((f) => f.flags & F_READ);
+  for (const [k, f] of readable.entries()) {
+    say(`Backing up ${f.name} (${k + 1} of ${readable.length})…`);
+    const data = f.size ? await dev.read(f.index, progress) : new Uint8Array(0);
+    entries.push({ name: `files/${f.name}`, data });
+    files.push({ name: f.name, kind: f.kind, size: data.length });
+  }
+  const manifest = { format: "fm1-companion-backup", version: 1, identity: hello.identity, name: hello.name,
+    appVersion: hello.appVersion, made: new Date().toISOString(), files };
+  entries.unshift({ name: MANIFEST, data: new TextEncoder().encode(JSON.stringify(manifest, null, 2) + "\n") });
+  const day = new Date().toISOString().slice(0, 10);
+  save(`${hello.name}-${hello.appVersion}-${day}.zip`.replace(/[^\w.-]+/g, "_"), zip(entries), "application/zip");
+  return `Backed up ${files.length} file${files.length === 1 ? "" : "s"}.`;
+});
+
+// a backup put back: each file in it the FM-1 has and takes, the same ones skipped (with "only what changed")
+$("restoreFile").onchange = () => {
+  const file = $("restoreFile").files[0];
+  $("restoreFile").value = "";
+  if (!file) return;
+  busy(`Reading ${file.name}…`, async () => {
+    const entries = await unzip(new Uint8Array(await file.arrayBuffer()));
+    const m = entries.find((e) => e.name === MANIFEST);
+    let from = null;
+    try { from = m ? JSON.parse(new TextDecoder().decode(m.data)) : null; } catch (_) { /* (no description: files only) */ }
+    if (from && from.name && from.name !== hello.name &&
+        !confirm(`This backup is from ${from.name}, and this FM-1 runs ${hello.name}. Put its files back anyway?`)) return "Nothing changed.";
+    const inZip = entries.filter((e) => e.name.startsWith("files/") && e.name.length > 6);
+    if (!inZip.length) throw new Error(`${file.name} has no files from an FM-1 in it.`);
+    const only = $("changedOnly").checked, report = [];
+    let sent = 0, same = 0;
+    for (const [k, e] of inZip.entries()) {
+      const name = e.name.slice(6), f = list.find((x) => x.name === name);
+      if (!f) { report.push(`${name}: this FM-1 has no file by that name, so it was skipped.`); continue; }
+      if (!(f.flags & F_WRITE)) { report.push(`${name}: the FM-1 doesn't take this file, so it was skipped.`); continue; }
+      if (e.data.length > f.room) { report.push(`${name}: too big for the FM-1 (${size(e.data.length)} of ${size(f.room)}), so it was skipped.`); continue; }
+      say(`Sending ${name} (${k + 1} of ${inZip.length})…`);
+      if (only) {
+        const now = await dev.sum(f.index);
+        if (now.size === e.data.length && now.crc === e.crc) { same++; continue; }
+      }
+      if (!e.data.length && (f.flags & F_DELETE)) await dev.remove(f.index);
+      else await dev.write(f.index, e.data, progress);
+      sent++;
+    }
+    $("report").replaceChildren(...report.map((r) => el("li", {}, r)));
+    $("report").hidden = !report.length;
+    return `Restored from ${file.name}: ${sent} file${sent === 1 ? "" : "s"} sent` + (only ? `, ${same} already the same.` : ".");
+  });
+};
+
+// ------------------------------------------------------------- parameters
+const ctls = new Map();                          // id -> (value) => the control shows it
+async function showParams() {
+  const ps = await dev.params(), vals = await dev.get(ps.map((p) => p.id)), groups = new Map();
+  ctls.clear();
+  for (const p of ps) {
+    if (!groups.has(p.group)) groups.set(p.group, []);
+    groups.get(p.group).push(row(p, vals.get(p.id) ?? p.def));
+  }
+  $("params").replaceChildren(...[...groups].flatMap(([g, rows]) => [el("h3", {}, g), ...rows]));
+  dev.onchange = (id, v) => { const f = ctls.get(id); if (f) f(v); };
+  await dev.watch(true);
+  keep = setInterval(() => { if (!document.hidden && !working) dev.watch(true).catch(() => {}); }, 3000);
+}
+function row(p, v) {
+  const id = `p${p.id}`, name = el("label", { htmlFor: id }, p.name + (p.unit ? ` (${p.unit})` : ""));
+  const ro = p.flags & 1, send = async (x) => { try { show(await dev.set(p.id, x)); } catch (e) { say(explain(e), true); } };
+  let ctl, out, show;
+  if (p.type === "enum") {
+    ctl = el("select", { id, disabled: ro, onchange: () => send(+ctl.value) },
+      ...p.labels.map((l, k) => el("option", { value: p.min + k }, l)));
+    out = el("span");
+    show = (x) => { ctl.value = x; };
+  } else {
+    const num = el("input", { type: "number", min: p.min, max: p.max, disabled: ro, ariaLabel: `${p.name} value`, onchange: () => send(+num.value) });
+    ctl = el("input", { type: "range", id, min: p.min, max: p.max, disabled: ro, oninput: () => { num.value = ctl.value; },
+      onchange: () => send(+ctl.value) });
+    out = num;
+    show = (x) => { ctl.value = x; num.value = x; };
+  }
+  ctls.set(p.id, show);
+  show(v);
+  return el("div", { className: "param" }, name, el("div", { className: "ctl" }, ctl), ro ? el("span", { className: "ro" }, out, " (read only)") : out);
+}
+</script>
+</body>
+</html>

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Charles Vestal
 # Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
+# Copyright (C) 2026 Henri David
 """Build an FM-1 update package (.fwsc) from the Felucca app and update loader.
 
   flash.bin  head [0, 0x4000): flash header (JieLi SDK default values), JLFS
@@ -11,33 +12,36 @@
              app area 0x4000..: app_area_head, app.bin, the SDK cfg_tool.bin and
              eq_cfg_hw.bin, the region descriptors; SFC-encrypted with the chip key
   ota.bin    the Felucca update loader (firmware/loader)
+  res.bin    with --res: the app's resource region (device/res.c: its commit record, then the payload), padded to
+             whole sectors, an entry of type 101 (as Melodee's) with the region's flash address at byte 0x14; the
+             update loader writes it after the app (felucca-bsp loader/ldr_core.c ldr_res), so an install by any
+             host that serves the package brings it
 
-The SDK files come from the JieLi AC79 SDK (AC79_SDK, or --sdk).
+The SDK files come from the JieLi AC79 SDK (AC79_SDK, or --sdk; else .toolchain/ac79-sdk, tools/setup_toolchain.sh's).
 All integrity checks in the format are CRC16 (poly 0x1021, init 0).
 
-  fm1pkg_make.py APP.bin OTA.bin OUT.fwsc [--product FM-1_9XY] [--sdk DIR] [--board fm1|smk37]
+  fm1pkg_make.py APP.bin OTA.bin OUT.fwsc [--product FM-1_9XY] [--sdk DIR] [--res RES.bin --res-base ADDR]
+                    [--app-end 0xCE000] [--board fm1|smk37]
 """
 import argparse
 import os
 import struct
 from pathlib import Path
 
-APP_SLOT = 0x8DFBC                  # the FM-1's (BOARDS below: the SMK-37's)
+APP_SLOT = 0x8DFBC                  # app.bin's room in the normal app area [0x4000, FLASH_SIZE): app_slot(FLASH_SIZE)
 FLASH_SIZE = 0x93000
+APP_HEAD = 0x120                    # the app area's directory before app.bin
+APP_TAIL = 0xF24                    # after it: the SDK's cfg_tool.bin and the cfg directory
 KEY = 0x980F
-# the boards: flash.bin's size (the app area with its head: the PRCT region), app.bin's slot in it, and the region
-# descriptors after the app entries (offset, size, flags, resvd, index, the 16 name bytes with the SDK packer's
-# trailing fields). The FM-1's are M-VAVE's own; the SMK-37's follow the stock v016 table (fm1-to-smk37 docs/01 §2,
+# the boards: the app area's end (flash.bin's size: the PRCT region),
+# app.bin's slot in it, and the region descriptors after the app entries (offset, size, flags, resvd, index, the 16
+# name bytes with the SDK packer's trailing fields). The SMK-37's follow the stock v016 table (fm1-to-smk37 docs/01 §2,
 # M. Geisler's analysis: VM 0x9D000 + 0x23000, BTIF 0xC0000, USRTRIM 0xC1000, USRFLASH 0xC2000 + 0x29000,
 # USR 0xF4000 + 0xA000), their trailing fields as the FM-1's analogues; the slot is the FM-1's + 0xA000, so the tail
-# of the app area (cfg_tool.bin, the cfg directory) lies as on the FM-1. Untried on a unit
+# of the app area (cfg_tool.bin, the cfg directory) lies as on the FM-1
 BOARDS = {
-    "fm1": {"flash_size": 0x93000, "app_slot": 0x8DFBC, "regions": [
-        (0x93000, 352256, 0x12, 0x80, 0, bytes.fromhex("564d00ffffffffffffffffff00800000")),
-        (0, 0x93000, 0x92, 0x82, 0, bytes.fromhex("5052435400ffffffffffffff434f4445")),
-        (0xE9000, 0x1000, 0x92, 0x80, 0, bytes.fromhex("4254494600ffffffffffffff4155544f")),
-        (0xEA000, 0x12000, 0x92, 0x81, 1, "USR")]},
-    "smk37": {"flash_size": 0x9D000, "app_slot": 0x97FBC, "regions": [
+    "fm1": {"app_hi": FLASH_SIZE, "app_slot": APP_SLOT, "regions": None},   # (board_regions: from the app area's end)
+    "smk37": {"app_hi": 0x9D000, "app_slot": 0x97FBC, "regions": [
         (0x9D000, 0x23000, 0x12, 0x81, 0, bytes.fromhex("564d00ffffffffffffffffff00800000")),
         (0, 0x9D000, 0x92, 0x82, 0, bytes.fromhex("5052435400ffffffffffffff434f4445")),
         (0xC0000, 0x1000, 0x92, 0x82, 0, bytes.fromhex("4254494600ffffffffffffff4155544f")),
@@ -49,6 +53,8 @@ BOARDS = {
 # fs_ver 0x10, PID "AC791N_STORY"), plain, without its CRC
 FLASH_HDR = bytes.fromhex("20022f104cc900f00f001010a4ff4e5d0b41e0cd781dc856417fb367cf9f")
 UFW_CHIP = b"AC791N"
+RES_TYPE = 101                                       # res.bin (felucca-bsp loader/ldr_core.c LDR_RES_TYPE)
+RES_AT = 0x14                                        # its entry: the region's flash address (LDR_RES_AT)
 SDK = None
 
 
@@ -111,27 +117,59 @@ def key_blob(key):
 
 
 def sdk_file(rel):
-    root = Path(SDK or os.environ.get("AC79_SDK", ""))
-    path = root / "cpu" / "wl82" / "tools" / rel
-    try:
-        return path.read_bytes()
-    except OSError as e:
-        raise SystemExit(f"fm1pkg_make: {path}: {e.strerror}. Set AC79_SDK to a JieLi AC79 SDK checkout.")
+    """--sdk or AC79_SDK, else the three files tools/setup_toolchain.sh checked out into .toolchain/ac79-sdk"""
+    given = SDK or os.environ.get("AC79_SDK")
+    roots = [Path(given)] if given else [Path(__file__).resolve().parents[1] / ".toolchain" / "ac79-sdk",
+                                         Path.home() / "fw-AC79_AIoT_SDK"]
+    for root in roots:
+        path = root / "cpu" / "wl82" / "tools" / rel
+        if path.exists():
+            return path.read_bytes()
+    raise SystemExit(f"fm1pkg_make: no {rel} in {', '.join(str(r) for r in roots)}: set AC79_SDK to a JieLi AC79 SDK "
+                     "checkout, or run tools/setup_toolchain.sh")
 
 
-def flash_image(app, key, board="fm1"):
-    b = BOARDS[board]
-    flash_size, app_slot = b["flash_size"], b["app_slot"]
+def app_slot(app_hi):
+    """app.bin's room in the app area [0x4000, app_hi) (tools/build.py app_end: a bigger slot; the SMK-37's 0x9D000)"""
+    return app_hi - 0x4000 - APP_HEAD - APP_TAIL
+
+
+assert app_slot(FLASH_SIZE) == APP_SLOT and app_slot(BOARDS["smk37"]["app_hi"]) == BOARDS["smk37"]["app_slot"]
+
+
+def board_regions(board, app_hi):
+    """the region descriptors after the app entries: the FM-1's from its app area's end (the VM region from there to
+    the SDK's BTIF: 352,256 B after the normal 0x93000), a board's own (BOARDS)"""
+    if board != "fm1":
+        return BOARDS[board]["regions"]
+    return [(app_hi, 0xE9000 - app_hi, 0x12, 0x80, 0, bytes.fromhex("564d00ffffffffffffffffff00800000")),
+            (0, app_hi, 0x92, 0x82, 0, bytes.fromhex("5052435400ffffffffffffff434f4445")),
+            (0xE9000, 0x1000, 0x92, 0x80, 0, bytes.fromhex("4254494600ffffffffffffff4155544f")),
+            (0xEA000, 0x12000, 0x92, 0x81, 1, "USR")]
+
+
+def flash_image(app, key, app_hi=FLASH_SIZE, board="fm1"):
+    """flash.bin [0, app_hi): the head and the app area (app_hi: 0x93000, or a bigger slot's end; a board's own)"""
+    if board != "fm1":
+        if app_hi not in (FLASH_SIZE, BOARDS[board]["app_hi"]):
+            raise SystemExit(f"{board}: its app area is the board's (no app_end)")
+        app_hi = BOARDS[board]["app_hi"]
+    slot = app_slot(app_hi)
     spl = sdk_file("uboot.boot")                         # SDK SPL, BANKCB-encoded as in the SDK
     cfg_tool = sdk_file("cfg_tool.bin")
     eq = sdk_file("cfg/eq_cfg_hw.bin")
     isd = key_blob(key) + b"[FELUCCA]\r\n"
-    f = bytearray(b"\xFF" * flash_size)
+    f = bytearray(b"\xFF" * app_hi)
     # ---- head
     spl_off = 0xA0
     isd_off = spl_off + len(spl)
     assert isd_off + len(isd) <= 0x4000
-    f[spl_off:spl_off + len(spl)] = spl
+    # the SPL as an FM-1's flash holds it: its 16-byte container header ENC 0xFFFF, the rest ENC 0xFFFF again (the
+    # entry's CRC stays the plain file's); felucca-bsp chip/ota.c refuses a writer whose boot area is not so
+    spl_enc = bytearray(spl)
+    enc(spl_enc, 0, 16)
+    enc(spl_enc, 16, len(spl) - 16)
+    f[spl_off:spl_off + len(spl)] = spl_enc
     f[isd_off:isd_off + len(isd)] = isd
     top = (entry(crc16(spl), spl_off, len(spl), 0x00, 0x00, 0, "uboot.boot") +
            entry(crc16(isd), isd_off, len(isd), 0x02, 0x80, 0, "isd_config.ini") +
@@ -143,17 +181,19 @@ def flash_image(app, key, board="fm1"):
         enc(head, o, 32)
     f[0:len(head)] = head
     # ---- app area (plain first, then SFC)
-    if len(app) > app_slot:
-        raise SystemExit(f"app is {len(app)} B, the slot is {app_slot} B")
-    app = app + b"\xFF" * (app_slot - len(app))
-    blk = 0x120 + app_slot + len(cfg_tool)              # app_area_head block size
+    if len(app) > slot:
+        raise SystemExit(f"app is {len(app)} B, the slot is {slot} B")
+    app = app + b"\xFF" * (slot - len(app))
+    blk = 0x120 + slot + len(cfg_tool)                  # app_area_head block size
     area = bytearray(b"\xFF" * blk)
-    area[0x120:0x120 + app_slot] = app
-    area[0x120 + app_slot:blk] = cfg_tool
-    ents = [entry(crc16(app), 0x120, app_slot, 0x82, 0xFF, 0, "app.bin"),
-            entry(crc16(cfg_tool), 0x120 + app_slot, len(cfg_tool), 0x82, 0xFF, 0, "cfg_tool.bin"),
-            # region descriptors (BOARDS); the bytes after the names are SDK packer fields (VM size, "CODE", "AUTO")
-            *[entry(0xFFFF, off, size, flags, resvd, index, name) for off, size, flags, resvd, index, name in b["regions"]]]
+    area[0x120:0x120 + slot] = app
+    area[0x120 + slot:blk] = cfg_tool
+    ents = [entry(crc16(app), 0x120, slot, 0x82, 0xFF, 0, "app.bin"),
+            entry(crc16(cfg_tool), 0x120 + slot, len(cfg_tool), 0x82, 0xFF, 0, "cfg_tool.bin"),
+            # region descriptors (board_regions); the bytes after the names are SDK packer fields (VM size, "CODE",
+            # "AUTO")
+            *[entry(0xFFFF, off, size, flags, resvd, index, name)
+              for off, size, flags, resvd, index, name in board_regions(board, app_hi)]]
     assert 32 + len(b"".join(ents)) <= 0x120
     area[32:32 + len(b"".join(ents))] = b"".join(ents)
     area[0:32] = entry(crc16(area[32:blk]), 0x02000120, blk, 0x83, 0xFF, 0, "app_area_head")
@@ -162,18 +202,29 @@ def flash_image(app, key, board="fm1"):
     cfg_body = eq_e + eq
     cfg = entry(crc16(cfg_body), 0x20, 0x20 + len(cfg_body), 0x83, 0xFF, 1, "cfg") + cfg_body
     region = bytearray(area + cfg)
+    if 0x4000 + len(region) > app_hi:                  # (the update loader writes the app area only)
+        raise SystemExit(f"app area ends at {0x4000 + len(region):#x}, past {app_hi:#x}")
     sfc(region, 0, len(region), 0, key)
     f[0x4000:0x4000 + len(region)] = region
     return bytes(f)
 
 
-def ufw(flash, ota, product):
+def ufw(flash, ota, product, res=None, res_base=0):
     files = [(0, "flash.bin", flash), (100, "ota.bin", ota)]
+    if res:                                          # the loader reads it a sector at a time
+        if res_base & 0xFFF or not 0x97000 <= res_base < 0xE0000:
+            raise SystemExit(f"res.bin at {res_base:#x}: whole sectors of the data area [0x97000, 0xE0000) only")
+        res = res + b"\xFF" * (-len(res) % 0x1000)
+        if res_base + len(res) > 0xE0000:
+            raise SystemExit(f"res.bin: {len(res):#x} B at {res_base:#x} go past the data area (0xE0000)")
+        files.append((RES_TYPE, "res.bin", res))
     off, ents, data = 0x400, [], bytearray()
     for i, (typ, name, d) in enumerate(files):
         off = (off + 0xFF) & ~0xFF
         e = bytearray(0x50)
         struct.pack_into("<HHHHIII", e, 0, typ, i, crc16(d), 0, off, len(d), (len(d) + 31) & ~31)
+        if typ == RES_TYPE:
+            struct.pack_into("<I", e, RES_AT, res_base)
         e[0x40:0x40 + len(name)] = name.encode()
         ents.append((e, off, d))
         off += len(d)
@@ -215,11 +266,18 @@ def main():
     ap.add_argument("--product", default="FM-1_900")
     ap.add_argument("--key", type=lambda s: int(s, 0), default=KEY)
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
+    ap.add_argument("--app-end", type=lambda s: int(s, 0), default=FLASH_SIZE,
+                    help="the app area's end (a bigger slot: tools/build.py app_end; default 0x93000)")
+    ap.add_argument("--res", type=Path, help="the app's resource region (build/NAME-res.bin), for the loader to write")
+    ap.add_argument("--res-base", type=lambda s: int(s, 0), default=0, help="its flash address (app.h APP_RES_BASE)")
     ap.add_argument("--board", default="fm1", choices=sorted(BOARDS), help="the layout: fm1 (default) or smk37")
     a = ap.parse_args()
     global SDK
     SDK = a.sdk
-    pkg = ufw(flash_image(a.app.read_bytes(), a.key, a.board), a.ota.read_bytes(), a.product)
+    if a.res and not a.res_base:
+        ap.error("--res needs --res-base (app.h APP_RES_BASE)")
+    pkg = ufw(flash_image(a.app.read_bytes(), a.key, a.app_end, a.board), a.ota.read_bytes(), a.product,
+              a.res.read_bytes() if a.res else None, a.res_base)
     a.out.write_bytes(pkg)
     print(f"package {a.out}: {len(pkg)} B, identity {a.product}, chip key {a.key:#06x}")
 

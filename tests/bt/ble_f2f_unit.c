@@ -106,9 +106,9 @@ void F2F(master_start)(void)
     hw.conn_on = 1;
 }
 int F2F(conn_on)(void) { return hw.conn_on; }
-uint8_t F2F(tx)(uint8_t *pdu) { return hw.conn_on ? ble_ll_hw_tx(pdu) : 0u; }
+uint16_t F2F(tx)(uint8_t *pdu) { return hw.conn_on ? ble_ll_hw_tx(pdu) : 0u; }
 void F2F(acked)(void) { ble_ll_hw_tx_acked(); }
-void F2F(rx)(const uint8_t *pdu, uint8_t n)
+void F2F(rx)(const uint8_t *pdu, uint16_t n)
 {
     if (hw.conn_on)
         ble_ll_hw_rx(pdu, n);

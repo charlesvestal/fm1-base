@@ -21,6 +21,7 @@ typedef struct {               /* proportional, see tools/gen_font.py */
 #define CV_MAX APP_CANVAS_PX      /* (app.h may give less: a WiFi build needs the pool; cv_begin keeps to it) */
 static uint16_t cv_px[CV_MAX] __attribute__((section(".pool")));
 static uint32_t cv_w, cv_h;
+static uint32_t cv_cuts;         /* the canvases asked taller than CV_MAX, cut short by cv_begin */
 static int32_t cv_oy;            /* y offset for graph drawing */
 static int32_t cv_y0, cv_y1;     /* X0X: the rows drawing may touch (cv_band) */
 
@@ -63,8 +64,10 @@ static inline uint16_t swap16(uint32_t c) { return (uint16_t)(((c >> 8) & 0xFFu)
 static void cv_begin(uint32_t w, uint32_t h, uint16_t bg)
 {
     uint32_t i, n;
-    if (w * h > CV_MAX)
+    if (w * h > CV_MAX) {
         h = CV_MAX / w;
+        cv_cuts++;                  /* (asked taller than the canvas: its foot missing; the host run expects none) */
+    }
     lcd_sync();                     /* the last blit may still read cv_px */
     cv_w = w;
     cv_h = h;
@@ -304,12 +307,18 @@ static void draw_text_box(uint32_t x, uint32_t y, uint32_t w, const felucca_font
                           uint16_t c, int align)
 {
     int32_t tw = text_w(f, s), tx = 0;
-    cv_begin(w, f->h, C_BLACK);
+    uint32_t r0, n, rows = CV_MAX / w;
     if (align == 1)
         tx = ((int32_t)w - tw) / 2;
     else if (align == 2)
         tx = (int32_t)w - tw;
-    cv_text(tx, 0, f, s, c);
-    cv_blit(x, y);
+    for (r0 = 0; r0 < f->h; r0 += n) {      /* (in passes when the face is taller than the canvas: an app's small one) */
+        n = f->h - r0 < rows ? f->h - r0 : rows;
+        cv_begin(w, n, C_BLACK);
+        cv_oy = -(int32_t)r0;
+        cv_text(tx, 0, f, s, c);
+        cv_oy = 0;
+        cv_blit(x, y + r0);
+    }
     lcd_sync();                     /* one-shots (boot, crash, UBOOT, update) finish here */
 }

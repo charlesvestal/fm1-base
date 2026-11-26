@@ -10,7 +10,15 @@ set -u
 cd "$(dirname "$0")/.."
 CC="${CC:-cc}"
 PY="${PYTHON:-python3}"
-export AC79_SDK="${AC79_SDK:-$HOME/fw-AC79_AIoT_SDK}"   # the package's SDK files (tools/fm1pkg_make.py)
+# the pinned Node (tools/setup_toolchain.sh) for the web tests, where it is
+[ -d .toolchain/node/bin ] && PATH="$PWD/.toolchain/node/bin:$PATH"
+# the package's SDK files (tools/fm1pkg_make.py): AC79_SDK, the home checkout, else the pinned three in .toolchain/ac79-sdk
+[ -n "${AC79_SDK:-}" ] || [ ! -d "$HOME/fw-AC79_AIoT_SDK" ] || export AC79_SDK="$HOME/fw-AC79_AIoT_SDK"
+# gen_font.py's Pillow loads FriBiDi (raqm) from the system, and on macOS uv's Python doesn't look in Homebrew's lib
+# for it (Homebrew's Python does), so the font tests point it there as tools/build.py does: inside each command,
+# since macOS drops DYLD_* on the way through /bin/sh.
+FONT_PY=$PY
+[ "$(uname -s)" != Darwin ] || FONT_PY="DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib:/usr/local/lib:/usr/lib $PY"
 OUT=template/build/tests
 FAIL=0
 mkdir -p "$OUT"
@@ -25,6 +33,14 @@ run() {
     fi
 }
 run encoder sh -c "$CC -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -o $OUT/encoder_test tests/encoder_test.c && $OUT/encoder_test"
+# the input scan at each fm1.toml input_hz (felucca-bsp's fm1_input.h FM1_INPUT_HZ: tests/input_rate_test.c): presses,
+# releases and bounces, a stray sample, repeats, the encoders slow and fast, the LEDs' timing; 10000 as before
+for hz in 10000 5000 2000 1000; do
+    [ -f bsp/tests/input_rate_test.c ] && run input-$hz sh -c "$CC -std=c11 -O1 -Wall -Wextra -Werror -Wno-unused-function \
+        -Ibsp/chip -Ibsp/boards/fm1 -DFM1_INPUT_HZ=$hz -o $OUT/input_rate_test_$hz bsp/tests/input_rate_test.c && \
+        $OUT/input_rate_test_$hz && $CC -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -DFM1_INPUT_HZ=$hz \
+        -o $OUT/encoder_test_$hz tests/encoder_test.c && $OUT/encoder_test_$hz"
+done
 run trs sh -c "$CC -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -Idevice -o $OUT/trs_test tests/trs_test.c && $OUT/trs_test"
 # USB audio around a render block (device/uac_mix.h) on felucca-bsp's usb.c: the recording without the computer's audio,
 # the computer's at plat_usb_play_gain and MASTER, muted still read; and without usb_audio_out
@@ -39,6 +55,8 @@ run shim_lock sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/shi
 # the RAM layouts as tools/build.py reads them: device/app.ld's fixed regions (the default), app_packed.ld's one
 # region (ram_layout = "packed"), RAM code first, then data, bss, the pool
 run layout "$PY" tests/layout_test.py
+# "FM1-XXXX": the four hex digits from the flash's unique ID (plat_uid.h), the name built from them
+run dev-name sh -c "$CC -std=c11 -Wall -Wextra -Werror -O1 -o $OUT/dev_name_test tests/dev_name_test.c && $OUT/dev_name_test"
 # the cache RAM (felucca-bsp's chip/fm1_cache_ram.h, fm1.toml cache_ram_ways) on a model of the cache's registers, tags and
 # ways: 2, 4 and 7 ways set, tested and zeroed; 0 and 8 nothing; a cache that never idles, masks not taken, a stuck bit
 # in each way: all put back, 0 bytes
@@ -60,11 +78,45 @@ run smk37-flash sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -
 # the SMK-37's wheels and pedal (device/smk37_analog.h): the rest is the first look after the settling window
 run smk37-analog sh -c "$CC -std=c99 -Wall -Wextra -Werror -o $OUT/smk37_analog_test tests/smk37_analog_test.c && \
     $OUT/smk37_analog_test"
+# the same with app.h APP_STORE_BOUNCE (one page of RAM for the store): the same results, the same flash byte for byte
+run storage-bounce sh -c "$CC -O2 -w -DAPP_STORE_BOUNCE=1 -o $OUT/storage_bounce_test tests/storage_test.c && \
+    $OUT/storage_bounce_test > $OUT/storage_bounce.txt && $OUT/storage_test > $OUT/storage_plain.txt && \
+    cmp $OUT/storage_plain.txt $OUT/storage_bounce.txt"
+# the SD card (device/sd.c) against a modelled card in SPI mode (tests/sd_card_model.h), FatFs on top (lib/sd_fs.c):
+# card kinds, sectors, a file system made and read back, the clock's steps, DMA refused, damaged blocks, no card; its
+# FAT32 image read back with mtools when they're here. Then the SD example in the simulator on that image
+run sd sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT_HOST -DFF_USE_MKFS=1 -Iinclude -Ilib \
+    -Itests -o $OUT/sd_test tests/sd_test.c && $OUT/sd_test $OUT/sd_card.img && \
+    if command -v mdir >/dev/null; then MTOOLS_SKIP_CHECK=1 mdir -i $OUT/sd_card.img@@32256 ::/SAMPLES | grep -q 70000; fi"
+# lib/fatfs's own changes on a volume in memory (f_expand round the volume's end, f_unlink_entry)
+run fatfs sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT_HOST -DFF_USE_MKFS=1 -Ilib \
+    -o $OUT/fatfs_test tests/fatfs_test.c && $OUT/fatfs_test"
+# an app's streams on the same model (plat_sd_read_open ... plat_sd_close): waits within their budget, the LCD between
+# blocks (a read opened again, a write kept open), damaged and refused blocks, a card pulled or stuck; then the same
+# with the read ahead in SPI1's interrupt (fm1.toml sd_read_ahead)
+run sd-stream sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT_HOST -Iinclude -Ilib -Itests \
+    -o $OUT/sd_stream_test tests/sd_stream_test.c && $OUT/sd_stream_test"
+run sd-stream-ahead sh -c "$CC -std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function -DPLAT_HOST -DFM1B_SD_AHEAD=16 -DFM1B_SD_FINE=1 \
+    -Iinclude -Ilib -Itests -o $OUT/sd_stream_ahead_test tests/sd_stream_test.c && $OUT/sd_stream_ahead_test"
+# disk mode (device/msc.c) against a faked computer: residue, no medium, "medium changed", a WRITE never reaching a
+# medium put in during it, sync's answers; and the SD drive's writes on the host simulator's plain streams
+run msc sh -c "$CC -std=c99 -O1 -Wall -Wextra -Werror -Wno-unused-function -Iinclude -Idevice -o $OUT/msc_test \
+    tests/msc_test.c && $OUT/msc_test"
+run sd-host-disk sh -c "$CC -std=c99 -O1 -w -DPLAT_HOST -Iinclude -Ilib -o $OUT/sd_host_disk_test \
+    tests/sd_host_disk_test.c && $OUT/sd_host_disk_test"
+run sd-example sh -c "$PY tools/build.py examples/sd --host >/dev/null && \
+    FM1B_SD_IMAGE=$OUT/sd_card.img examples/sd/build/host/sd_host examples/sd/tests/sd.txt $OUT"
 run storage-pool sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -o $OUT/storage_pool_test \
     tests/storage_pool_test.c && $OUT/storage_pool_test"     # the pool (APP_STORE_POOL): the move, saves, cuts
+# the same with app.h APP_STORE_BOUNCE: the boot's move, the placeholders and the previous copy through the one page
+run storage-pool-bounce sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -Wno-unused-function -DAPP_STORE_BOUNCE=1 \
+    -o $OUT/storage_pool_bounce_test tests/storage_pool_test.c && $OUT/storage_pool_bounce_test"
 # plat_headphones' debounce (device/plat_hp.c) over a simulated jack: a plug's bounce gives one change, 100 ms on
 run hp sh -c "$CC -std=c99 -Wall -Wextra -Werror -O2 -Idevice -o $OUT/hp_test tests/hp_test.c && $OUT/hp_test"
 run fastmath sh -c "$CC -O2 -w -o $OUT/fastmath_test tests/fastmath_test.c -lm && $OUT/fastmath_test"
+run outside-hosts "$PY" tests/outside_hosts_test.py
+# the tools that find the FM-1 by its port name (fm1_remote.py, fm1_debug.py): FM1-XXXX, the old Optimist, not other gear
+run fm1-ports "$PY" tests/fm1_ports_test.py
 run flash-ok sh -c "$CC -std=c99 -Wall -Wextra -Werror -o $OUT/flash_ok_test tests/flash_ok_test.c && $OUT/flash_ok_test"   # device/fm1_flash_ok.h: the flash parts the storage may use
 run midi-rel sh -c "$CC -O2 -std=c99 -Wall -Wextra -Werror -o $OUT/midi_rel_test tests/midi_rel_test.c && $OUT/midi_rel_test"   # include/midi_rel.h
 run boot-pack sh tests/boot_pack_test.sh               # the boot's LZMA load images (boot_pack = true)
@@ -95,17 +147,23 @@ run ram-run "$PY" tests/ram_run_test.py
 run romref "$PY" tests/romref_test.py
 # fm1.toml cpu2_stack (tools/build.py cpu2_stack_flags): the second core's job stack, its range and its stop message
 run cpu2-stack "$PY" tests/cpu2_stack_test.py
+# fm1.toml bt_audio_jobs (tools/build.py bta_jobs_flags): needs cpu2, refused with cpu2_fallback
+run bta-jobs-flags "$PY" tests/bta_jobs_flags_test.py
+# app.h APP_RES_BASE against the app area's end (tools/build.py res_base): a region inside the app area stops the build
+run res-base "$PY" tests/res_base_test.py
+# app.h's store places (APP_STORE_MAP, the pool) against the data area above the app area (tools/build.py store_errors)
+run store-place "$PY" tests/store_place_test.py
 # the check on an app's RAM code (tools/ramcode.py, plat.h PLAT_RAM_CODE): RAM -> RAM passes, into XIP fails
 run ramcode "$PY" tests/ramcode_test.py
 # the web installer's m-bootloader step (web/fm1ota.js installBoot) against a simulated FM-1, and finding the FM-1 by
 # its port (unusual names, the loader under a new name, M-VAVE's Open firmware, resume's check, package checksums),
 # and writing the resource region after it
 if command -v node >/dev/null 2>&1; then
-    run installer-boot node tests/installer_boot_test.mjs web/m-bootloader/fm1-uboot-1.2.fwsc
-    run installer-ports node tests/installer_ports_test.mjs web/m-bootloader/fm1-uboot-1.2.fwsc
+    run installer-boot node tests/installer_boot_test.mjs web/m-bootloader/fm1-uboot-2.4.fwsc
+    run installer-ports node tests/installer_ports_test.mjs web/m-bootloader/fm1-uboot-2.4.fwsc
     run installer-res node tests/installer_res_test.mjs   # the resource region after an install (Updater.installRes)
     # FM1_STOCK_FWSC=<path to M-VAVE's FM-1_015.fwsc> adds the stock file's cases (that file is not in this repository)
-    run checkufw node tests/checkufw_test.mjs web/m-bootloader/fm1-uboot-1.2.fwsc ${FM1_STOCK_FWSC:-}
+    run checkufw node tests/checkufw_test.mjs web/m-bootloader/fm1-uboot-2.4.fwsc ${FM1_STOCK_FWSC:-}
     run installer-bluetooth node tests/installer_bluetooth_test.mjs
     # the handshake: a firmware that answers M-UPGRADE 3.11's query short and its whole identity to the one with 01
     run installer-hs node tests/installer_hs_test.mjs
@@ -137,15 +195,38 @@ if command -v node >/dev/null 2>&1; then
 else
     echo "  skip backup-page (no node)"
 fi
+# an update or the soft key's UBOOT begins: the app stops cleanly first (APP_UPDATE_BEGIN), before the first erase or
+# write and before the restart (bsp/chip/ota.c on a simulated NOR; main_fm1.c's order)
+run update-begin sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -o $OUT/update_begin_test \
+    tests/update_begin_test.c && $OUT/update_begin_test"
 PKG=template/build/template.fwsc
+[ -f "$PKG" ] || PKG=template/build/template-usb.fwsc      # (a build without the radio, --no-ble: CI's)
 if [ -f "$PKG" ]; then
-    run ota-entry sh -c "$CC -w -o $OUT/ota_test tests/ota_test.c && $OUT/ota_test $PKG web/m-bootloader/fm1-uboot-1.2.fwsc"
+    run ota-entry sh -c "$CC -w -o $OUT/ota_test tests/ota_test.c && $OUT/ota_test $PKG web/m-bootloader/fm1-uboot-2.4.fwsc"
     run update-loader sh -c "head -c 60000 template/build/template.bin > $OUT/old_app.bin && \
         $PY tools/fm1pkg_make.py $OUT/old_app.bin template/build/loader/ota.bin $OUT/old.fwsc >/dev/null && \
-        $CC -w -o $OUT/ldr_test tests/ldr_test.c && $OUT/ldr_test $OUT/old.fwsc $PKG"
+        $CC -w -DLDR_SLOT_SWITCH=1 -o $OUT/ldr_test tests/ldr_test.c && $OUT/ldr_test $OUT/old.fwsc $PKG"
+    # a bigger app slot (tools/build.py app_end): the template's app in a package with the slot to 0xCE000, installed
+    # over the normal one (the loader built with that slot clears [0xCE000, 0xDA000) first) and back with the
+    # template's own package (every loader has the slot check, tools/build.py build_loader: the old code above 0x93000
+    # erased). The template's loader is checked for it first (its ldr_slot_switch in loader.dis)
+    run update-loader-slot sh -c "grep -q '^ldr_slot_switch:' template/build/loader/loader.dis && \
+        $PY tools/fm1pkg_make.py template/build/template.bin template/build/loader/ota.bin \
+        $OUT/big.fwsc --app-end 0xCE000 >/dev/null && \
+        $CC -w -DFL_APP_END=0xCE000u -DLDR_SLOT_SWITCH=1 -DLDR_CLEAR_END=0xDA000u -o $OUT/ldr_slot_up tests/ldr_slot_test.c && \
+        $CC -w -DLDR_SLOT_SWITCH=1 -o $OUT/ldr_slot_down tests/ldr_slot_test.c && \
+        $OUT/ldr_slot_up $PKG $OUT/big.fwsc 0x93000 && $OUT/ldr_slot_down $OUT/big.fwsc $PKG 0xCE000"
 else
-    echo "  skip update path (no $PKG: tools/build.py template)"
+    echo "  skip update path (no template package: tools/build.py template)"
 fi
+# an app with steps (fm1.toml app_steps, tools/build.py ldr_step_flags; an app's steps here: N, S0, the release's
+# L1 and the classic L1 an FM-1 may have had): each step's loader against the switch matrix, every installed end
+STEPS='-DLDR_STEPS(X)=X(0x93000u,0,0x93000u) X(0xB5000u,3,0xD8000u) X(0xCE000u,1,0xDA000u) X(0xD0000u,1,0xDA000u)'
+for S in 0x93000:0:0x93000 0xB5000:3:0xD8000 0xCE000:1:0xDA000; do
+    E=${S%%:*}; R=${S##*:}; L=${S#*:}; L=${L%%:*}
+    run update-loader-steps-$E sh -c "$CC -DFL_APP_END=${E}u -DLDR_SLOT_SWITCH=1 '$STEPS' -DLDR_STEP=$L -DLDR_RELOC_HI=${R}u \
+        -DLDR_CLEAR_TOP=0xDA000u -o $OUT/ldr_steps_$E tests/ldr_slot_test.c && $OUT/ldr_steps_$E --steps"
+done
 run host-build "$PY" tools/build.py template --host
 # the template on the simulated SMK-37 (board = "smk37"): the host build and its script (the SMK's words)
 run host-build-smk37 env FM1B_BOARD=smk37 FM1B_MODEL=elite "$PY" tools/build.py template --host
@@ -165,23 +246,23 @@ fi
 run mirror-png "$PY" tools/fm1_mirror.py $OUT/mirror.png --from $OUT/mirror/stream.syx
 # the trimmed fonts (fm1.toml font_trim) draw what the full ones draw, pixel for pixel (every face with lower case)
 run font-trim sh -c "mkdir -p $OUT/font/full $OUT/font/trim && \
-    FM1_FONT_FULL='T XS S B M L' $PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
-    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 $PY tools/gen_font.py $OUT/font/trim/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' $FONT_PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 $FONT_PY tools/gen_font.py $OUT/font/trim/felucca_font.h && \
     $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/full -o $OUT/font/full_test tests/font_trim_test.c && \
     $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/trim -o $OUT/font/trim_test tests/font_trim_test.c && \
     $OUT/font/full_test $OUT/font/full.bin && $OUT/font/trim_test $OUT/font/trim.bin && cmp $OUT/font/full.bin $OUT/font/trim.bin"
 # the packed fonts (fm1.toml font_pack: the trimmed glyphs' alphas Huffman-coded) too, pixel for pixel
 run font-pack sh -c "mkdir -p $OUT/font/full $OUT/font/pack && \
-    FM1_FONT_FULL='T XS S B M L' $PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
-    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 FM1_FONT_PACK=1 $PY tools/gen_font.py $OUT/font/pack/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' $FONT_PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 FM1_FONT_PACK=1 $FONT_PY tools/gen_font.py $OUT/font/pack/felucca_font.h && \
     $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/full -o $OUT/font/full_test tests/font_trim_test.c && \
     $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/pack -o $OUT/font/pack_test tests/font_trim_test.c && \
     $OUT/font/full_test $OUT/font/full.bin && $OUT/font/pack_test $OUT/font/pack.bin && cmp $OUT/font/full.bin $OUT/font/pack.bin"
 # the packed fonts drawn through the decoded-glyph cache (app.h APP_FONT_CACHE, device/gfx.c font_cached) too: a cache
 # that forgets all the time (the largest glyph's bytes, 16 slots) and a roomy one
 run font-cache sh -c "mkdir -p $OUT/font/full $OUT/font/pack && \
-    FM1_FONT_FULL='T XS S B M L' $PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
-    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 FM1_FONT_PACK=1 $PY tools/gen_font.py $OUT/font/pack/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' $FONT_PY tools/gen_font.py $OUT/font/full/felucca_font.h && \
+    FM1_FONT_FULL='T XS S B M L' FM1_FONT_TRIM=1 FM1_FONT_PACK=1 $FONT_PY tools/gen_font.py $OUT/font/pack/felucca_font.h && \
     $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -I$OUT/font/full -o $OUT/font/full_test tests/font_trim_test.c && \
     $CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 -DAPP_FONT_CACHE=FONT_BOX_MAX -DAPP_FONT_CACHE_BITS=4 \
         -I$OUT/font/pack -o $OUT/font/cache_small_test tests/font_trim_test.c && \
@@ -191,6 +272,8 @@ run font-cache sh -c "mkdir -p $OUT/font/full $OUT/font/pack && \
     $OUT/font/cache_test $OUT/font/cache.bin && cmp $OUT/font/full.bin $OUT/font/cache_small.bin && \
     cmp $OUT/font/full.bin $OUT/font/cache.bin"
 run template template/build/host/template_host template/tests/basic.txt template/build/host
+# the template's saved settings as a file over the companion services (app.h APP_FILE_OBJS): listed, written, taken, read back
+run template-companion template/build/host/template_host template/tests/companion.txt template/build/host
 # Bluetooth audio's calls (plat_bta_*) on the host simulator's stand-in, from a test app's buttons
 run bta sh -c "$PY tools/build.py tests/bta_app --host && tests/bta_app/build/host/bta_test_host tests/bta_app/tests/bta.txt tests/bta_app/build/host"
 # the same with the buffers lent by the app (fm1.toml bt_audio_mem = "app", plat_bta_mem): on only with the block lent, refused back while on
@@ -219,6 +302,9 @@ run battery-app sh -c "$PY tools/build.py tests/battery_app --host && \
 # an app with APP_CPU_KHZ (plat_cpu_khz) in the host simulator: tests/cpukhz_app
 run cpukhz-app sh -c "$PY tools/build.py tests/cpukhz_app --host && \
     tests/cpukhz_app/build/host/khztest_host tests/cpukhz_app/tests/cpukhz.txt tests/cpukhz_app/build/host"
+# an app with APP_TICK_FAST (app_tick_fast, plat_midi_rt) in the host simulator: tests/midirt_app
+run midirt-app sh -c "$PY tools/build.py tests/midirt_app --host && \
+    tests/midirt_app/build/host/rttest_host tests/midirt_app/tests/midirt.txt tests/midirt_app/build/host"
 # plat_core on both cores (cpu2 = true) in the host simulator: tests/core_app
 run core-app sh -c "$PY tools/build.py tests/core_app --host && \
     tests/core_app/build/host/coretest_host tests/core_app/tests/core.txt tests/core_app/build/host"
@@ -247,6 +333,7 @@ fi
 # and in the browser emulator (web/emu/emu_web.c web_sx_in, web_sx_out_*), its app.wasm under node
 if command -v emcc >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
     run emu-sysex sh -c "$PY tools/build.py tests/sysex_app --web && node tests/sysex_web_test.mjs tests/sysex_app/build/emu"
+    run companion-web sh -c "$PY tools/build.py tests/companion_app --web && node tests/companion_web_test.mjs tests/companion_app/build/emu"
 else
     echo "  skip emu-sysex (no emcc or node)"
 fi
@@ -294,5 +381,17 @@ run stack-c1 sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -O2 
     $OUT/stack_c1_test"
 run host-dbgstats sh -c "mkdir -p $OUT/dbgstats && $H/template_host tests/dbgstats.txt $OUT/dbgstats && \
     $PY tests/dbgstats_host_test.py $H/template_host $OUT/dbgstats"
+# the companion services (device/companion.c) in the host simulator, through tools/fm1_companion.py: tests/companion_app
+run companion "$PY" tests/companion_test.py $OUT/companion
+# the companion page's zip files (web/companion/zip.js: "Back up all" and its restore) under node, read by Python's zipfile too
+if command -v node >/dev/null 2>&1; then
+    run companion-zip sh -c "PY=$PY node tests/companion_zip_test.mjs $OUT/companion_zip"
+else
+    echo "  skip companion-zip (no node)"
+fi
+# the own Wi-Fi stack (wifi/, device/wifi_own.c: wifi_stack = "own", Optimist's) and Ableton Link (link/, GPL-3.0-only,
+# link = true): the station, the crypto, the IP layer, the simulator's access point, Link; the Link example on a simulated
+# network in the host simulator
+if sh tests/wifi/run.sh; then :; else FAIL=1; fi
 [ $FAIL -eq 0 ] && echo "all tests passed" || echo "TESTS FAILED"
 exit $FAIL

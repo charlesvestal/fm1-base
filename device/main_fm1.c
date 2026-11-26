@@ -48,12 +48,17 @@ static int dev_frame(const uint8_t *p, uint32_t n);   /* bt_own_central.c */
 #if PLAT_SMK37
 #define FM1B_FLASH_JEDEC_OK(id) FL_JEDEC_OK(id)        /* the board's accepted parts (bsp boards/smk37/fm1_flash.h) */
 #endif
+#include "update_begin.h"                          /* the app's stop before an update, PLAT_UPDATE_BEGIN_MS at most */
 #include "fm1_flash_ok.h"                          /* the flash parts the storage may use (FM1B_FLASH_JEDEC_OK) */
 #if FM1B_BT_AUDIO
 static volatile uint8_t bta_streamed;               /* the last render went to Bluetooth (plat_bta_streams) */
 int plat_bta_streams(void) { return bta_streamed; }
 #else
 int plat_bta_streams(void) { return 0; }
+int plat_bta_job_pending(void) { return 0; }
+void plat_bta_job(void) {}
+void plat_bta_job_keep(int on) { (void)on; }
+uint32_t plat_bta_job_inline(void) { return 0; }
 #endif
 static void render_block(int32_t *o)                /* ALNK0: one half, measured */
 {
@@ -124,6 +129,9 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
 #ifndef FM1B_AUDIO_ASIDE
 #define FM1B_AUDIO_ASIDE 0                          /* fm1.toml audio_aside = true: 1 */
 #endif
+#ifndef FM1B_AUDIO_AHEAD
+#define FM1B_AUDIO_AHEAD 0                          /* fm1.toml audio_ahead = true: 1 (with FM1B_AUDIO_ASIDE) */
+#endif
 #if FM1B_AUDIO_ASIDE
 #include "audio_commit.c"                           /* the half rendered aside, copied in while its half is free;
                                                      * FM1B_AUDIO_ASIDE 0 (the default): straight into the DMA's half */
@@ -135,7 +143,26 @@ void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_is
     fm1_audio_ack_aux(p);
     if (p & FM1_AUDIO_HALF) {
         uint32_t half = fm1_audio_free_half();
-#if FM1B_AUDIO_ASIDE
+#if FM1B_AUDIO_ASIDE && FM1B_AUDIO_AHEAD
+        uint32_t ok;
+        static uint8_t behind;                      /* (renders in a row that ran past their half) */
+        fm1_audio_ack_half();
+        ok = audio_commit(half);                    /* the block rendered last time */
+        render_block(aside);                        /* the next: one running past its half leaves the next half
+                                                     * pending, served as soon as this returns (a block's worth of
+                                                     * latency for a render up to two halves long) */
+        if (fm1_audio_pending() & FM1_AUDIO_HALF) {
+            if (++behind >= 2u) {                   /* (two in a row: that half dropped, as without the lookahead,
+                                                     * so the main loop gets its time; without this it starved) */
+                fm1_audio_ack_half();
+                behind = 0;
+                fm1b_dbg.late++;
+                audio_xruns++;
+            }
+        } else
+            behind = 0;
+        if (!ok) {
+#elif FM1B_AUDIO_ASIDE
         uint32_t ok;
         fm1_audio_ack_half();                       /* (now: a new pending after the render = the DMA moved on) */
         render_block(aside);
@@ -170,10 +197,24 @@ static void audio_silence(void)                     /* IRQs off (flash erase): t
         abuf[i] = 0;
 }
 
+#if FM1B_ERASE_SLICED
+/* a 4 KiB sector of the store or the data area (st_erase, plat_data_erase), main loop only. felucca-bsp's
+ * fl_erase4k_sliced: windows of about 1 ms, the interrupts and the render on between them; a part that does not
+ * suspend is waited out in one window, abuf silenced by it (FL_ERASE_HELD: plat_flash_held). The render's job on the
+ * second core is waited for before the render returns, so the main loop never starts a window under one (the XIP is
+ * off in each window). Without FM1B_ERASE_SLICED (the default) each erase is one window with the sound silenced first,
+ * inline in st_erase and plat_data_erase, as before */
+static int data_erase(uint32_t off)
+{
+    uint32_t took;
+    return fl_erase4k_sliced(off, &took, abuf, sizeof abuf / sizeof abuf[0]);
+}
+#endif
+
 /* ------------------------------------------------------------ timer --- */
 static uint8_t usb_due;
-static uint32_t t5_gap_max, t5_late, t5_run_max;                /* the longest gap between ticks (us), and gaps over 300 us:
-                                                     * the key and light scan held up (the log reads and clears) */
+static uint32_t t5_gap_max, t5_late, t5_run_max;                /* the longest gap between ticks (us), and gaps over 3 ticks
+                                                     * (300 us at 10 kHz): the key and light scan held up (the log reads and clears) */
 void fm1_timer5_irq(void)
 {
     static uint32_t sub, t5_prev;
@@ -183,11 +224,12 @@ void fm1_timer5_irq(void)
         if (t5_prev) {
             if (gap > t5_gap_max)
                 t5_gap_max = gap;
-            if (gap > 300u)
+            if (gap > FM1B_T5_LATE_US)
                 t5_late++;
         }
 #if FM1B_MIDI_STAMP
-        /* what came in since the last tick came in, on the average, half way since: within 0.05 ms at 10 kHz (a tick
+        /* what came in since the last tick came in, on the average, half way since: within 0.05 ms at 10 kHz (half a
+         * tick: 0.1 ms at 5 kHz, 0.25 at 2; a tick
          * held up by a lock: half the gap). Every tick, the render's too: the poll below waits for the render, the
          * stamps do not. One SIE read and a look at the jack's ring */
         {
@@ -203,14 +245,17 @@ void fm1_timer5_irq(void)
     fm1b_dbg.timer_irqs++;
     if (fm1b_dbg.in_audio)
         fm1b_dbg.nested++;
-    fm1_input_tick();
+#if FM1B_T5_SCAN_DIV > 1
+    if (sub % FM1B_T5_SCAN_DIV == FM1B_T5_SCAN_DIV - 1u)   /* (a slower input_hz: not on the app's tick) */
+#endif
+        fm1_input_tick();
 #if PLAT_SMK37 && FM1B_TRS
     trs_out_tick();                                 /* the jack: one byte a tick, never waiting (midi_trs_out.c) */
 #endif
-    /* 2 kHz: all USB SIE traffic lives here. This ISR now nests into the audio render (so the key
+    /* 2 kHz (2.5 at input_hz 5000): all USB SIE traffic lives here. This ISR now nests into the audio render (so the key
      * matrix keeps its rhythm, below); USB shares the MIDI queues with the audio ISR, so a poll that
      * falls inside the render waits for the first tick outside it, as it did before the nesting. */
-    if (sub % 5u == 0u) {
+    if (sub % FM1B_T5_USB_DIV == 0u) {
         usb_due = 1;
 #if FELUCCA_UAC && FELUCCA_UAC_CH == 2
         /* the USB audio stream cannot wait for the render (one packet per 1 ms frame, a render takes
@@ -221,8 +266,8 @@ void fm1_timer5_irq(void)
 #endif
     }
 #if FELUCCA_UAC && FELUCCA_UAC_CH > 2
-    /* usb_audio_channels: every tick (0.1 ms), nested in the render or not (outside it, but for the ticks usb_poll
-     * runs: it services the stream itself). A packet of 10 channels takes ~0.6 ms on the bus: polled at 2 kHz, the next
+    /* usb_audio_channels: every tick (0.1 ms: TIMER5 stays at 10 kHz whatever input_hz), nested in the render or not
+     * (outside it, but for the ticks usb_poll runs: it services the stream itself). A packet of 10 channels takes ~0.6 ms on the bus: polled at 2 kHz, the next
      * was often queued after the next frame's IN, which then found none (on an FM-1: 38,400 frames/s instead of
      * 44,100, the ring overflowing, halves dropped: crackles and a lower pitch). The stall count: FELUCCA_UAC_STALL_POLLS */
     if (fm1b_dbg.in_audio || !usb_due)
@@ -235,14 +280,22 @@ void fm1_timer5_irq(void)
         uart_midi_poll();                           /* the TRS jack: same context, same queue */
 #endif
     }
+#ifdef APP_TICK_FAST
+    app_tick_fast();                                /* 10 kHz, nested in the render or not (plat_midi_rt) */
+    usb_midi_rt_kick();                             /* what plat_midi_rt left while EP1 was busy (felucca-bsp usb.c) */
+#endif
 #ifdef APP_TICK
+#if FM1B_T5_APP_DIV == FM1B_T5_WRAP
     if (sub == 0u) {                                /* 1 kHz: the app's tick (a clock, a sequencer) */
+#else
+    if (sub % FM1B_T5_APP_DIV == 0u) {
+#endif
         in_tick = 1;
         app_tick();
         in_tick = 0;
     }
 #endif
-    if (++sub == 10u)
+    if (++sub == FM1B_T5_WRAP)
         sub = 0;
     {
         uint32_t run = (fm1_ticks() - t5_prev) / FM1_TICKS_PER_US;
@@ -280,15 +333,16 @@ static void hexs(char *b, uint32_t v)
 #if FM1B_CRASHLOG
 #include "stacks.c"                                 /* the stacks' room: painted at the start, read at a crash */
 
+#if !FM1B_ERASE_SLICED
 /* a sector of the crash history or the debug stats, main loop only: one window, the sound silenced, as plat_data_erase
- * (Henri's crashlog.c / dbgstats.c call his data_erase, felucca-bsp's sliced erase from w0ts/fm1-base
- * feat/sliced-erase, which is not taken here) */
+ * (Henri's crashlog.c / dbgstats.c call his data_erase; with FM1B_ERASE_SLICED it is felucca-bsp's sliced erase, above) */
 static int data_erase(uint32_t off)
 {
     uint32_t took;
     audio_silence();
     return fl_erase4k(off, &took);
 }
+#endif
 
 /* the crash history in flash (crashlog.c: the staging area's 0xE2000..0xE3FFF), the boot's save and the readouts */
 #ifndef FM1B_BUILD
@@ -960,6 +1014,63 @@ static int wifi_frame(const uint8_t *p, uint32_t n)
         q = wifi_cat(q, " ", e);
         wifi_cat(q, plat_wifi_why(), e);
         wifi_line(b);
+#if FM1B_WIFI_OWN
+#if FM1B_WIFI_JANK
+        {   /* MODE JANK: its air, then each unit heard: frames received from it, its signal, how long ago */
+            static const char *const JW[2][4] = {{"jank ch ", " tx ", " err ", " kept "}, {"peer ", " data ", " -dbm ", " ago "}};
+            uint32_t v[4];
+            int k;
+            for (k = 0; plat_wifi_jank_stat(k, v); k++) {
+                q = b;
+                for (i = 0; i < 4; i++) {
+                    q = wifi_cat(q, JW[k != 0][i], e);
+                    q = wifi_num(q, (int32_t)v[i], e);
+                }
+                wifi_line(b);
+            }
+        }
+#endif
+        {   /* joined: how well the link works (plat_wifi_quality), a second line: the first ask starts the measuring, so
+             * a status 10 s later has the whole window ("10s") */
+            struct plat_wifi_quality wq;
+            static const char *const W[] = {"q ", " dBm ", "k tx ", " retried ", " lost ", " rxover ", " in ", "s"};
+            if (plat_wifi_quality(&wq)) {
+                const int32_t v[7] = {wq.rssi, wq.tx_kbps, wq.tx, wq.retried, wq.lost, wq.rx_over, wq.secs};
+                q = b;
+                for (i = 0; i < 7; i++) {
+                    q = wifi_cat(q, W[i], e);
+                    q = wifi_num(q, v[i], e);
+                }
+                wifi_cat(q, W[7], e);
+                wifi_line(b);
+            }
+        }
+        {   /* the tuning (wifi/wifi_tune.h), a third line: "tune a:on b:on c:on f:on | cal 187 in | filt sta | agc 51 | 2000k
+             * falls 0": which switches are on, then what each does now */
+            struct plat_wifi_tune t;
+            static const char *const CAL[] = {"not read", "187 ", "no 187"};
+            static const char L[5] = {'a', 'b', 'c', 'f', 'g'};   /* (g: MODE AP's group frames once, WT_GRP) */
+            int up = plat_wifi_tune_info(&t);
+            q = wifi_cat(b, "tune", e);
+            for (i = 0; i < 5; i++) {
+                char k[4] = {' ', L[i], ':', 0};
+                q = wifi_cat(q, k, e);
+                q = wifi_cat(q, t.on >> i & 1u ? "on" : "off", e);
+            }
+            q = wifi_cat(q, " | cal ", e);
+            q = wifi_cat(q, CAL[t.cal < 3u ? t.cal : 0], e);
+            if (t.cal == 1u)
+                q = wifi_cat(q, t.cal_in ? "in" : "out", e);
+            q = wifi_cat(q, t.filt_sta ? " | filt sta | agc " : " | filt all | agc ", e);
+            q = wifi_num(q, t.agc_gain, e);
+            q = wifi_cat(q, " | ", e);
+            q = wifi_num(q, t.tx_kbps, e);
+            q = wifi_cat(q, "k falls ", e);
+            q = wifi_num(q, (int32_t)t.falls, e);
+            wifi_cat(q, up ? "" : " (radio not up)", e);
+            wifi_line(b);
+        }
+#endif
         break;
     }
     case 5:
@@ -1005,6 +1116,12 @@ static int wifi_frame(const uint8_t *p, uint32_t n)
             wifi_line(b);
         }
         break;
+#if FM1B_WIFI_OWN
+    case 9:                                      /* the tuning's switches: 1 a, 2 b, 4 c, 8 f, 16 g (wifi/wifi_tune.h) */
+        if (n >= 5u)
+            plat_wifi_tune_set(p[4] & 31u);   /* (wifi_tune.h WT_BITS) */
+        break;
+#endif
     default:
         break;
     }
@@ -1069,6 +1186,10 @@ static void usb_cmd(uint32_t d)
         return;
     }
 #endif
+#if FM1B_COMPANION
+    if (comp_cmd(ota_dec, d))
+        return;                                     /* the companion services (companion.c) */
+#endif
 #ifdef APP_USB_CMD
     app_usb_cmd(ota_dec, d);
     ota_try_ms = 5000u;                             /* (the app's patience, plat_host_patience, back to the default) */
@@ -1102,6 +1223,11 @@ static void fm1_fault(const fm1_crash_t *c)
     t0 = fm1_ticks();
     while ((uint32_t)(fm1_ticks() - t0) < 4000u * 1000u * FM1_TICKS_PER_US)
         ;
+    {
+        uint32_t f = irq_save();
+        fm1_clock_restore();                        /* (a soft reset keeps the PLL: stock for what starts next) */
+        irq_restore(f);
+    }
     fm1_reboot();
 }
 
@@ -1109,19 +1235,51 @@ static void fm1_fault(const fm1_crash_t *c)
 void plat_restart(void)
 {
     app_panic();
+#if FM1B_SD
+    sd_bus_release();                               /* (as before an update: the card idle for what starts next) */
+#endif
     fm1_audio_stop();
     usb_detach();
     fm1_delay_ms(30);
     bootguard.pending = 0;                          /* intentional reset: not a failed boot */
     radio_clean_exit();
+    {
+        uint32_t f = irq_save();
+        fm1_clock_restore();                        /* (a soft reset keeps the PLL: stock for what starts next) */
+        irq_restore(f);
+    }
     fm1_reboot();
 }
 #endif
 
+/* an update (the upgrade command, F0 22 24 35 7F F7) or the soft key's UBOOT from the host begins, in the app's main
+ * loop: the app stops cleanly first (APP_UPDATE_BEGIN: its transport stopped, its notes and MIDI let go), before
+ * anything is staged or erased and before the restart. Asked once per pass until the app says it is done, and no
+ * longer than PLAT_UPDATE_BEGIN_MS (update_begin.h): the update never waits for the app beyond that. 1 = go ahead.
+ * Not in safe mode (no app running there). The watchdog fed on both sides of the app's ask */
+static int update_ready(void)
+{
+#ifdef APP_UPDATE_BEGIN
+    static update_begin_t st;
+    int r;
+    fm1_wdt_feed();
+    r = update_begin_ready(&st, fm1_ms, app_update_begin);
+    fm1_wdt_feed();
+    return r;
+#else
+    return 1;                                       /* (no hook: nothing waited for, nothing built) */
+#endif
+}
+
 static void enter_uboot(const char *why)
 {
+    {
+        uint32_t f = irq_save();
+        fm1_clock_restore();                        /* (the chip's update mode at the stock clock) */
+        irq_restore(f);
+    }
     fm1_audio_stop();
-    lcd_fill(0, 0, 240, 240, C_BLACK);
+    lcd_fill(0, 0, 240, 240, C_BLACK);              /* (lcd_sync: an SD card's open transfer ended, the card idle) */
     sys_box(0, 110, 240, SYS_S, why, C_WHITE, 1);
     fm1_delay_ms(20);
     usb_detach();
@@ -1175,6 +1333,11 @@ static void safe_main(void)
             sys_box(0, 172, 240, SYS_S, "STARTING " APP_NAME "...", C_HI, 1);
             usb_detach();
             fm1_delay_ms(30);
+            {
+                uint32_t f = irq_save();
+                fm1_clock_restore();                /* (a soft reset keeps the PLL: stock for what starts next) */
+                irq_restore(f);
+            }
             fm1_reboot();
         }
         {   /* the log readout works here too: what crashed is the question safe mode raises */
@@ -1220,14 +1383,20 @@ static void fm1_main(void)
 #if !PLAT_SMK37
     int32_t knob = 512 * 16;
     uint32_t batt_t = 0;                            /* (the battery's last reading, fm1_ms) */
+    uint32_t supply_t = 0;                          /* (the supply's: plat_battery_charging) */
 #endif
     uint32_t last_frame = 0;
     int took;                                       /* a SysEx frame taken this pass (not the updater's) */
+    int waiting;                                    /* a SysEx frame was waiting at this pass's look */
     {
         uint32_t f = irq_save();
 #if FM1B_CRASHLOG
+#if PLAT_SMK37
+        pst_boot(&last_frame);                      /* (no MASTER pot to smooth on the SMK-37: no knob) */
+#else
         pst_boot(&knob);                            /* the stacks painted below what is live (stacks.c: the room a crash
                                                      * finds; the last run's marks were read at its fault, if any) */
+#endif
 #endif
         rails_boot[0] = fm1_p33_read(FM1_P3_ANA_CON6);
         rails_boot[1] = fm1_p33_read(FM1_P3_ANA_CON9);
@@ -1249,7 +1418,7 @@ static void fm1_main(void)
         fm1_clock_read(clock_boot);
         clock_fix = (int8_t)fm1_clock_stock();      /* the stock 360 MHz, whichever bootloader started us (fm1_clock.h) */
         flash_ok = FM1B_FLASH_JEDEC_OK(FL_FAR(fl_jedec_ram)());   /* a known 1 MiB part, else RAM only */
-#if FM1B_WIFI || FM1B_BLE
+#if FM1B_WIFI || FM1B_BLE || defined(FELUCCA_USB_SERIAL_FN)
         if (flash_ok)
             FL_FAR(fl_uid_ram)(flash_uid);
 #endif
@@ -1291,6 +1460,16 @@ static void fm1_main(void)
 #endif
     if (safe_mode)
         safe_main();                                /* never returns */
+#if FM1B_CPU_396
+    {                                               /* fm1.toml cpu_clock = 396: PLL1 24 / 12 * 297 = 594 MHz, the
+                                                     * system clock 2/3 of it (JieLi's top, not for mass production);
+                                                     * after safe mode's choice, so two hung starts start at 360. The
+                                                     * resets put the stock clock back first (felucca-bsp fm1_sys.h) */
+        uint32_t f = irq_save();
+        fm1_clock_pll1(297u);
+        irq_restore(f);
+    }
+#endif
     if (fm1_crash.magic == FM1_CRASH_MAGIC && fm1_crash.count != fm1b_dbg.crash_seen) {
         char b[16];                                 /* a crash since the last boot: say so, a moment */
         fm1b_dbg.crash_seen = fm1_crash.count;
@@ -1329,6 +1508,9 @@ static void fm1_main(void)
 #endif
     /* above ALNK0 (3): the key / encoder / LED matrix is scanned one column per tick and must keep
      * its rhythm through a render (X0X's finding: below the audio, turns lost steps and LEDs flickered) */
+#if FM1B_SD && FM1B_SD_AHEAD
+    sd_ahead_attach();                              /* SPI1's vector, before the guard write-protects them (sd_ahead.h) */
+#endif
     fm1_timer5_start(isr_timer5, 4);
     fm1_guard_lock_top();
     fm1_irq_enable_all();
@@ -1395,6 +1577,14 @@ static void fm1_main(void)
             if (b > 0)
                 batt_raw = batt_raw ? batt_raw + (b - batt_raw) / 16 : b;
         }
+#ifdef APP_BATTERY_RAW
+        if (fm1_ms - supply_t >= 500u) {            /* the supply: 5 V and the charger (plat_battery_charging) */
+            uint32_t f = irq_save();
+            plat_supply_read();
+            irq_restore(f);
+            supply_t = fm1_ms;
+        }
+#endif
 #endif
         fm1b_dbg.stage = 2;                         /* (breadcrumbs: where a watchdog reset found the loop) */
         ble_poll();                                 /* Bluetooth's tasks, once started */
@@ -1405,12 +1595,16 @@ static void fm1_main(void)
 #ifdef APP_LOOP
         app_loop();                                 /* the app's background (a radio's tasks) */
 #endif
+#ifdef APP_SYSEX
+        plat_sysex_hold();                          /* (a stream the app left open: let go, so replies go out) */
+#endif
         {   /* a screen reader's SysEx (announce.c), before the updater looks; the updater only at a frame none took
              * (the next one waiting, else, would be its own, dropped if not) */
             const uint8_t *p;
             uint32_t n;
             took = 0;
-            if (ota_frame_get(&p, &n) && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || CL_REQUEST(p, n) ||
+            waiting = ota_frame_get(&p, &n);
+            if (waiting && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || CL_REQUEST(p, n) ||
                                           DS_REQUEST(p, n) || remote_frame(p, n)
 #if FM1B_WIFI
                                           || wifi_frame(p, n)
@@ -1430,7 +1624,8 @@ static void fm1_main(void)
             }
         }
         fm1b_dbg.stage = 4;
-        if (!took)
+        if (waiting && !took)                       /* (only the frame none took: with none waiting at the look above, one that
+                                                     * came in since would be the updater's and dropped, unseen by the app) */
             usb_cmd(ota_service());                 /* M-UPGRADE handshake; the commands in its framing (backup,
                                                      * mirror, the app's); other SysEx is dropped */
 #if FM1B_BACKUP
@@ -1439,14 +1634,35 @@ static void fm1_main(void)
 #if FM1B_MIRROR
         mirror_step();                              /* the screen mirrored: input reports, redraws, timeouts */
 #endif
-        if (usb.ota_req) {
+#if FM1B_COMPANION
+        comp_step();                                /* the companion: what a watched parameter did */
+#endif
+        if (usb.ota_req && update_ready()) {        /* (the app stopped cleanly first, or its time is up) */
             usb.ota_req = 0;
             app_panic();                            /* silence: the update rewrites the flash */
+            {
+                uint32_t f = irq_save();
+                fm1_clock_restore();                /* (the update loader at the stock clock) */
+                irq_restore(f);
+            }
+#if FM1B_SD
+            sd_bus_release();                       /* the card's open transfer (the USB drive's) ended: the next
+                                                     * firmware finds it idle (a reset restarts the chip, not the card);
+                                                     * the card stays started if nothing is installed */
+#endif
             if (flash_ok)
                 ota_session();                      /* returns only if nothing was committed */
+#if FM1B_CPU_396
+            {                                       /* (nothing installed: back to cpu_clock's) */
+                uint32_t f = irq_save();
+                fm1_clock_pll1(297u);
+                irq_restore(f);
+            }
+#endif
             app_ui_init();
         }
-        if (usb.uboot_req)
+        if (usb.uboot_req && update_ready())        /* the soft key (F0 22 24 35 7D F7): the chip's update mode;
+                                                     * enter_uboot stops the audio, no app_panic (nothing of the app's) */
             enter_uboot("UBOOT (USB)");
         if (fm1_ms - last_frame >= 16u) {           /* ~60 frames/s at most; input in between */
             last_frame = fm1_ms;
@@ -1515,18 +1731,22 @@ void fm1_cstart(void)
     fm1_irq_init();
     for (d = _bss_start; d < _bss_end; d++)
         *d = 0;
+    uint32_t *pool_dirty_end = _pool_end;           /* (where the boot decoder's tables may have left the RAM dirty) */
     if (_rt_load[0] == BOOT_LZMA_MAGIC) {
         /* the load images boot-packed (fm1.toml boot_pack, tools/boot_pack.py), .ram_text's then .data's, the decoder's
          * tables in the pool, cleared after; one that does not unpack exactly: update mode */
         const uint32_t *at = boot_image(_rt_load, _rt_start, _rt_end);
         (void)boot_image(at, _data_start, _data_end);
+        if (_pool_start + (BOOT_LZMA_PROBS + 1u) / 2u > pool_dirty_end)   /* (a pool smaller than the tables: they run on
+                                                                          * into the packed SRAM's free part) */
+            pool_dirty_end = _pool_start + (BOOT_LZMA_PROBS + 1u) / 2u;
     } else {
         for (s = _data_load, d = _data_start; d < _data_end; s++, d++)
             *d = *s;
         for (s = _rt_load, d = _rt_start; d < _rt_end; s++, d++)
             *d = *s;
     }
-    for (d = _pool_start; d < _pool_end; d++)
+    for (d = _pool_start; d < pool_dirty_end; d++)
         *d = 0;
 #if FM1B_CACHE_RAM
     fm1_cache_ram_init(FM1B_CACHE_RAM);             /* data-cache ways as RAM (felucca-bsp's fm1_cache_ram.h): its RAM

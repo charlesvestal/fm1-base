@@ -1,0 +1,9 @@
+# The real-time MIDI test app's build settings (tools/build.py): an app with APP_TICK_FAST (plat_midi_rt), for
+# tests/run_tests.sh in the host simulator (tests/midirt_app/tests/midirt.txt)
+name = "RTTEST"
+id_prefix = "FM-1_19"          # package identity: dev FM-1_1900
+usb_manufacturer = "fm1-base"
+usb_product = "RTTEST FM-1"
+o2 = []
+words = "words.tsv"
+licence = "MPL-2.0"

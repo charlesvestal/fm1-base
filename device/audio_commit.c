@@ -6,7 +6,8 @@
  * (the audio of two halves before, whole) instead of writing into it while it plays, which tore the output mid-half (a
  * click at every late half). 2 KiB of RAM. Part of main_fm1.c (after abuf and HALF_WORDS); on its own for
  * tests/audio_commit_test.c, which gives it the DMA's state and the interrupt enable over a simulated chip. */
-static int32_t aside[HALF_WORDS] __attribute__((aligned(4)));
+static int32_t aside[HALF_WORDS] __attribute__((aligned(4)));   /* (in SRAM: in the cache RAM the audio came out with
+                                                     * tones at 1/4 and 1/8 of the rate, a cache line's pattern) */
 static uint32_t audio_commit(uint32_t half)        /* 1 copied, 0 late (nothing written) */
 {
     volatile int32_t *dst = &abuf[half * HALF_WORDS];

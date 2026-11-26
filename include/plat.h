@@ -82,6 +82,12 @@ int plat_headphones(void);             /* the headphone jack's switch (PB5: 0 wi
                                         * pass and debounced (a state counts once the pin held it 100 ms: the contact
                                         * bounces ~150 ms a plug): 1 headphones in, 0 nothing plugged; -1 not read yet (the
                                         * host: its script's "jack"). The speaker mutes itself in hardware on a plug */
+int plat_battery_charging(void);       /* the supply, read from the chip's own power registers twice a second (P33: P3_LDO5V_CON bit 5
+                                        * LDO5V_DET, P3_CHG_CON0 bit 0 CHARGE_EN, P3_CHG_READ bit 0 the charge-full flag; JieLi AC79
+                                        * SDK p33.h): 0 no 5 V on the supply pin (running on the cell), 1 5 V present and the
+                                        * chip's charger not running (full, off, or an external charger), 2 5 V present, the chip's
+                                        * charger on and not full = charging; -1 not read yet. The registers are the SDK's: not yet
+                                        * measured on an FM-1. Built for an app with APP_BATTERY_RAW (below) */
 
 /* lights: bright buttons and keys, and dim ones (a short pulse each scan frame; a bright bit wins); glow 0 the dim
  * ones off, 1 low, 2 high. Bit NB in buttons / dim_buttons is PLAY's second, green LED */
@@ -125,6 +131,11 @@ uint32_t plat_midi_in_from(void);      /* where the last one came from, as an ou
 void plat_midi_send(uint32_t pkt, uint32_t to);   /* to: TO_USB | TO_BLE, or one link; main loop, the render or the
                                                    * tick */
 void plat_midi_out(uint32_t pkt);      /* plat_midi_send(pkt, TO_USB) */
+/* a real-time USB-MIDI packet (a clock tick, Start, Stop) to the computer NOW, from app_tick_fast (APP_TICK_FAST): loaded
+ * into the endpoint at once, or at the next 0.1 ms tick while the previous packet is still there, ahead of the queued
+ * messages; not held while the render runs. 0: 8 already waiting (dropped). plat_midi_send goes out at the next 2 kHz
+ * poll outside the render instead (a clock tick through it, released by app_tick: 418 us sd on a Mac, up to 1.5 ms) */
+int plat_midi_rt(uint32_t pkt);
 uint32_t plat_midi_out_room(uint32_t to);   /* the free slots in the out queues of to (TO_USB, TO_BLE, a link: each
                                         * has its own): the fewest among the ones someone listens on; 0 when nobody
                                         * does. A sequencer keeps room for the note-offs it owes before it sends a
@@ -160,10 +171,19 @@ uint32_t plat_midi_ago(int port, int out);     /* ms since the last one (0xFFFFF
 #define FM1B_BLE 0
 #endif
 enum { BLE_OFF, BLE_STARTING, BLE_READY, BLE_FAILED };
-int plat_ble_state(void);
+int plat_ble_state(void);              /* BLE_OFF while the player has Bluetooth switched off (plat_ble_enable(0)) */
+int plat_ble_radio(void);              /* the radio's own state (BLE_*), switched off or not: plat_ble_enable(0) leaves
+                                        * a started radio up and quiet, and WiFi (which runs on it) reads this, not
+                                        * plat_ble_state */
 int plat_ble_connected(void);          /* a central is connected and listening */
 int plat_ble_linked(void);             /* a central is connected, listening or not yet (a Mac whose MIDI driver
                                         * never subscribed holds the link, and the FM-1 stops advertising) */
+int plat_ble_rssi(int link);           /* a connected link's signal strength, dBm (about -20 with the other end
+                                        * touching the FM-1, -90 far off); 0: no link, or not known. link 0: the
+                                        * central's (a computer, a phone: plat_ble_linked), 1: the device's
+                                        * (plat_ble_device). The controller's reading of the link's latest packets, new
+                                        * every 30-40 ms: noisy (a few dB), an app smooths it. Main loop.
+                                        * ble_stack = "own": 0 (not yet) */
 void plat_ble_start(void);
 /* A stream of SysEx frames to the computer's link (ble_stack = "own"; a screen mirrored): the radio reads it in its own
  * interrupts, a connection event at a time, as much as the link takes (full notifications, as many as the stack puts
@@ -296,6 +316,18 @@ int plat_bta_timed_out(void);          /* PLAT_BTA_REFUSED because the set-up ti
 int32_t plat_bta_latency_us(void);     /* what the stream adds on the FM-1's side (its queue), us; -1: not streaming.
                                         * An app that follows a clock may play that much earlier (the device's own
                                         * buffer comes on top and is not known) */
+/* the stream's SBC encoding as the app's render jobs (an app with a second core; fm1.toml bt_audio_jobs = true: FM1B_BTA_JOBS,
+ * 1,280 B more of the pool, and not with cpu2_fallback; without it these do nothing). With keep on, the frames a render's output completes are kept and
+ * not encoded at the feed; the next render encodes them, one a plat_bta_job call (either core, from the render: not the
+ * main loop), and the next feed sends them (one half later, the same bytes). One frame is encoded at a time: a call that
+ * finds one being encoded by the other core, or none left, does nothing. Those the render did not encode, the feed
+ * encodes as before. Without Bluetooth audio: 0, nothing */
+int plat_bta_job_pending(void);        /* kept frames not yet taken by a job (the one being encoded is not counted) */
+void plat_bta_job(void);               /* the next one encoded (nothing when one is being encoded, or none is left) */
+void plat_bta_job_keep(int on);        /* the render takes them (1) or not (0: encoded at the feed, as before) */
+uint32_t plat_bta_job_inline(void);    /* frames encoded at the feed instead, since boot (a job not taken, or keep off) */
+int plat_bta_streams(void);            /* 1: the last render went to Bluetooth (the FM-1's own output muted for it); for the
+                                        * render (the audio interrupt) to plan its block by. 0 without Bluetooth audio */
 /* Bluetooth audio's big buffers in the app's memory (fm1.toml bt_audio_mem = "app": FM1B_BTA_MEM 1): the audio packets'
  * queue and the receptions' ring, which only a run of the Classic radio uses (a scan, a page, a link), are a block the
  * app lends while an AUDIO mode is on, instead of static RAM: an app that switches Bluetooth audio off has that RAM
@@ -309,13 +341,12 @@ int32_t plat_bta_latency_us(void);     /* what the stream adds on the FM-1's sid
 #endif
 uint32_t plat_bta_mem_bytes(void);
 int plat_bta_mem(void *p);
-int plat_bta_streams(void);            /* 1: the last render went to Bluetooth (the FM-1's own output muted for it); for the
-                                        * render (the audio interrupt) to plan its block by. 0 without Bluetooth audio */
 
 /* WiFi (fm1.toml wifi = true: FM1B_WIFI 1): a station on JieLi's WiFi libraries and the SDK's lwIP, on the same shim.
  * Off until the app turns it on; then it joins the networks it joined before (kept in the app's store object OBJ_WIFI,
  * six, the most recent first). The app's network code runs in a task of its own (plat_net_task) with lwIP's sockets
- * (lwip/sockets.h): a socket call waits, and the main loop must not. A build has Bluetooth or WiFi, not both (yet). */
+ * (lwip/sockets.h): a socket call waits, and the main loop must not. A build with these has Bluetooth or WiFi, not both
+ * (yet); the own stack below (wifi_stack = "own") has both. */
 #ifndef FM1B_WIFI
 #define FM1B_WIFI 0
 #endif
@@ -340,6 +371,195 @@ uint32_t plat_wifi_scans(void);        /* scans done since the start: a change m
 int plat_net_task(void (*fn)(void *), void *arg, const char *name);   /* a task for the app's network code (8 KiB
                                                                         * of stack); 0 = made */
 
+/* WiFi on fm1-base's own stack (fm1.toml wifi_stack = "own": FM1B_WIFI 1 and FM1B_WIFI_OWN 1; device/wifi_own.c, wifi/;
+ * from Optimist's Wi-Fi): a WPA2-PSK station (CCMP; open, WPA3-only, TKIP and protected-management networks are listed
+ * but not joined) on the radio the own Bluetooth stack starts (ble_stack = "own": Bluetooth and WiFi together), a small
+ * IP layer (ARP, DHCP, IGMP, UDP: no TCP, no DNS, no sockets: plat_net_task makes nothing). Nothing of JieLi's
+ * linked. Everything above works here too, with these differences: plat_wifi_on(1) is MODE AUTO (unless a mode is
+ * set), plat_wifi_on(0) MODE OFF; four networks are kept (their SSID and the WPA2 key made from the password, never the
+ * password), the most recent first, with the mode: a record of PLAT_WIFI_STORE_SIZE bytes (wifi_nets.h) in the
+ * app's store object OBJ_WIFI, or the app's own: APP_WIFI_STORE (app.h) and
+ *   uint8_t *app_wifi_store(void)      the app's record (it loads it before the main loop; zeros: none yet)
+ *   void app_wifi_store_dirty(void)    fm1-base changed it (a join kept, a network forgotten, the mode): save it
+ * Everything runs from the main loop, a step a pass (plat_yield too). Main loop only, unless said. */
+#ifndef FM1B_WIFI_OWN
+#define FM1B_WIFI_OWN 0
+#endif
+#define PLAT_WIFI_STORE_SIZE 336u
+enum { WIFI_MODE_OFF, WIFI_MODE_AUTO, WIFI_MODE_MAN, WIFI_MODE_AP, WIFI_MODE_AP_MAN, WIFI_MODE_JANK, WIFI_MODE_JANK_HOST, WIFI_MODE_JANK_AUTO };   /* JANK_AUTO: MODE JANK (wifi/wifi_jank.h: the FM-1s of a GROUP on one channel, no access point), what is stored; WIFI_MODE_JANK asks for it too, and a
+                                         * record's JANK or JANK_HOST (from before 2026-11-04) reads as it */
+/* MODE JANK only with fm1.toml wifi_jank = true (FM1B_WIFI_JANK): its frames are open (no keys), anyone in range on the
+ * group's channel can read them and send into the group. Without wifi_jank plat_wifi_mode refuses it, and a record that
+ * has it reads as AUTO. */
+#ifndef FM1B_WIFI_JANK
+#define FM1B_WIFI_JANK 0
+#endif
+void plat_wifi_mode(int mode);         /* OFF: nothing runs (the radio, once started, stays up); MAN: joins when asked;
+                                        * AUTO: and the best saved network heard, at the start and whenever none is
+                                        * joined; AP, AP_MAN: the FM-1 is the access point (wifi_ap = true, below).
+                                        * Kept */
+int plat_wifi_get_mode(void);
+int plat_wifi_group(void);             /* the JANK group, 1..9: the network fm1-jam (group 1), fm1-jam-N, on channel 1, 6, 11 repeated */
+void plat_wifi_set_group(int g);       /* 1..9, else ignored; kept with the Wi-Fi record */
+/* the manager's step (finer than plat_wifi_state), and why the last join failed */
+enum { WIFI_STEP_OFF, WIFI_STEP_RADIO, WIFI_STEP_IDLE, WIFI_STEP_SCAN, WIFI_STEP_KEY, WIFI_STEP_AUTH, WIFI_STEP_ASSOC,
+       WIFI_STEP_HANDSHAKE, WIFI_STEP_UP, WIFI_STEP_FAIL, WIFI_STEP_JOINED, WIFI_STEP_PRE };   /* KEY: the key made from the
+                                        * password; JOINED: the handshake done, DHCP next; PRE: the old association
+                                        * ended first; UP: joined (plat_wifi_ip once DHCP answered) */
+enum { WIFI_FAIL_NONE, WIFI_FAIL_RADIO, WIFI_FAIL_NOT_FOUND, WIFI_FAIL_AUTH, WIFI_FAIL_ASSOC, WIFI_FAIL_HANDSHAKE,
+       WIFI_FAIL_KEY, WIFI_FAIL_LOST };   /* KEY: a key frame failed its check on every attempt: the password is wrong;
+                                        * LOST: joined, then the AP went (nothing heard for 8 s) or sent the FM-1 away */
+int plat_wifi_step(void);
+int plat_wifi_fail(void);
+uint32_t plat_wifi_fails(void);        /* failures since the start: a change is a new one */
+struct plat_wifi_ap {                  /* an access point heard (wifi_nets.h struct wn_ap) */
+    uint8_t bssid[6];
+    uint8_t ch, ssid_len, sec;         /* sec: PLAT_WIFI_SEC_* */
+    int8_t rssi;
+    uint8_t ssid[32];
+};
+enum { PLAT_WIFI_SEC_OTHER, PLAT_WIFI_SEC_PSK, PLAT_WIFI_SEC_OPEN };   /* PSK: WPA2-PSK with CCMP (the one joined) */
+int plat_wifi_found_ap(int i, struct plat_wifi_ap *a);   /* the scan's table, strongest first; 0 = none */
+void plat_wifi_scanning(int on);       /* scan again and again while on (a list on screen), nothing joined */
+int plat_wifi_join_ssid(const uint8_t *ssid, uint32_t len, const char *pass);   /* by name (any bytes): its strongest AP;
+                                        * pass 0 or "": the saved key. 0 asked, -1 MODE OFF / AP or a bad name, -2 no
+                                        * password and not kept, -3 the radio not up yet */
+int plat_wifi_joining(struct plat_wifi_ap *a);   /* the AP being joined or joined: 1 */
+int plat_wifi_joined_slot(void);       /* the kept network joined (plat_wifi_saved's i), -1 none */
+int plat_wifi_saved_join(void);        /* the join in hand uses a kept key */
+void plat_wifi_leave(void);            /* the AP told, the link ended (the mode stays) */
+uint32_t plat_wifi_addr(void);         /* the address in host order (192.168.1.42 = 0xC0A8012A), 0 none */
+int64_t plat_wifi_us(void);            /* the IP layer's clock, microseconds (an FM-1: plat_ticks24's) */
+/* UDP (the app's ports, up to 4, Link's included): a datagram to port (unicast to the FM-1, broadcast, or to the group
+ * joined) to rx with its arrival time (plat_wifi_us's); main loop. src_ip in host order */
+int plat_net_udp_open(uint16_t port, void (*rx)(void *ctx, uint32_t src_ip, uint16_t src_port, const uint8_t *p,
+                                                uint32_t n, int64_t at_us), void *ctx);   /* 0, -1 taken / full */
+void plat_net_udp_close(uint16_t port);
+int plat_net_udp_send(uint16_t src_port, uint32_t ip, uint16_t port, const void *p, uint32_t n);   /* ip host order;
+                                        * 512 B at most; 0 sent, -1 no address yet / no way there */
+void plat_net_join(uint32_t group);    /* the multicast group (host order, 0 none) whose datagrams the ports get */
+/* How well the link works, for a page or a log (the own stack). Measured only while asked: the first call starts it,
+ * each call keeps it on, and it stops 15 s after the last (a call a frame from a page, or one per stats snapshot). The
+ * counts are the MAC's own (Ralink's TX_STA_CNT0 / 1, RX_STA_CNT2 at 0x170C / 0x1710 / 0x1708, read and cleared once
+ * a second while on) over the last 10 s: secs says how many of them are in (0..10: a fresh start has fewer) */
+struct plat_wifi_quality {
+    int16_t rssi;                      /* dBm, a running mean of the joined AP's frames (MODE AP: of the strongest client
+                                        * heard); 0: none heard in the last 3 s */
+    uint16_t tx_kbps;                  /* the rate frames go out at (the own stack: 1000, 1 Mb/s, every frame) */
+    uint16_t tx;                       /* frames the MAC sent in the window (MODE AP's beacons, which wait for no ACK, count
+                                        * as sent at once) */
+    uint16_t retried, lost;            /* .. of them: acknowledged only after a retry; never acknowledged (the MAC gave up) */
+    uint16_t rx_over;                  /* frames the receiver dropped, its queue full (the main loop did not take them in time) */
+    uint8_t secs;                      /* seconds in the window, 0..10 */
+};
+int plat_wifi_quality(struct plat_wifi_quality *q);   /* 1: joined (or MODE AP up, or MODE JANK) and q filled; 0: q zeroed */
+/* The own stack's tuning (wifi/wifi_tune.h: each switch, its JieLi reference), four switches for an A/B on the FM-1, each
+ * acting at once and kept in the Wi-Fi record: PLAT_WIFI_TUNE_CAL (a) the stored calibration (VM 187), _FILT (b) the
+ * station's receive filter, _AGC (c) the AGC's highest gain from the AP's signal, _RATE (f) unicast data at 2 Mb/s. The
+ * build's default when none was chosen: all four (FM1B_WIFI_TUNE) */
+#define PLAT_WIFI_TUNE_CAL 1u
+#define PLAT_WIFI_TUNE_FILT 2u
+#define PLAT_WIFI_TUNE_AGC 4u
+#define PLAT_WIFI_TUNE_RATE 8u
+struct plat_wifi_tune {
+    uint8_t on;                        /* the switches on (PLAT_WIFI_TUNE_*) */
+    uint8_t cal;                       /* (a) the VM: 0 not read yet (CAL never on with the radio up), 1 a valid 187, 2 none */
+    uint8_t cal_in;                    /* .. its fields are in the PHY now */
+    uint8_t filt_sta;                  /* (b) the station filter (0x17F97) is in now */
+    uint8_t agc_gain;                  /* (c) the AGC's highest gain now (66: the start's) */
+    uint8_t rate_slow;                 /* (f) fallen back: everything at 1 Mb/s for now */
+    uint16_t tx_kbps;                  /* unicast data's rate now */
+    uint32_t falls, fast;              /* (f) fallbacks since the start; frames sent at 2 Mb/s */
+};
+uint32_t plat_wifi_tune_get(void);     /* the switches on */
+void plat_wifi_tune_set(uint32_t mask);
+int plat_wifi_tune_info(struct plat_wifi_tune *t);   /* 1: the Wi-Fi side is up (t filled either way) */
+
+/* MODE AP (fm1.toml wifi_ap = true, with wifi_stack = "own": FM1B_WIFI_AP 1; device/wifi_own_ap.c): the FM-1 is a
+ * WPA2-PSK access point (CCMP) for up to 4 clients (a phone, a laptop), on channel 1..13 (6 by default), at 192.168.4.1,
+ * its clients 192.168.4.2.. by DHCP; a ping to it is answered; the app's UDP ports and Link run on it as on a network
+ * joined (plat_wifi_addr is 192.168.4.1). Its network is kept in the record with the networks: the name (none: FM1- and
+ * the last four digits of the radio's address), the channel and the WPA2 key made from the password (never the
+ * password). WIFI_MODE_AP runs it from power-on (the password: the typed one, else one made for this FM-1 at random and
+ * kept: plat_wifi_ap_default_key shows it); WIFI_MODE_AP_MAN only once started
+ * (plat_wifi_ap_run, or a password set), off again at power-on. The station's manager rests meanwhile. No web server,
+ * no internet behind it. (Declared in every build; defined only with wifi_ap = true.) */
+#ifndef FM1B_WIFI_AP
+#define FM1B_WIFI_AP 0
+#endif
+enum { WIFI_AP_OFF, WIFI_AP_NOKEY, WIFI_AP_STARTING, WIFI_AP_UP, WIFI_AP_FAILED, WIFI_AP_STOPPED };   /* OFF: not an AP
+                                        * mode; NOKEY: unused (the default password is always there); STARTING: the
+                                        * key being made, the radio starting; FAILED: the radio did not start;
+                                        * STOPPED: AP_MAN, not started */
+int plat_wifi_ap_state(void);
+int plat_wifi_ap_set(const uint8_t *ssid, uint32_t len, const char *pass);   /* the network's name (len 0: the
+                                        * automatic one) and password (8..63 printable characters): the key made (a
+                                        * slice a pass) and kept, the access point started again on it (AP_MAN: started).
+                                        * 0, -1 a bad name or password */
+int plat_wifi_ap_set_channel(int ch);  /* 0 AUTO (the default: the quietest channel, chosen again at each start), or 1..13, kept;
+                                        * a running access point moves once it has rested 1.2 s. 0 / -1 */
+int plat_wifi_ap_channel(void);        /* the channel in use (AUTO: the one chosen, else the kept one, or the one
+                                        * plat_wifi_ap_start runs) */
+int plat_wifi_ap_channel_auto(void);   /* 1: CHANNEL is AUTO */
+int plat_wifi_ap_name(char *name);     /* the network's name (33 bytes, may be 0): its length */
+int plat_wifi_jank(void);               /* MODE JANK: the FM-1s heard lately (0: none yet), -1 not running (starting, another mode), -2 the radio cannot start */
+int plat_wifi_jank_stat(int i, uint32_t v[4]);   /* MODE JANK running, 1 and v: i 0: the channel, frames sent, failed to send, kept; i 1..: the unit heard (its number, its frames, its signal as -dBm, ms since); 0: no such */
+int plat_wifi_ap_has_key(void);        /* a typed password's key is kept */
+#define PLAT_WIFI_AP_KEY_MAX 13u          /* plat_wifi_ap_default_key's out: the password and its 0 */
+int plat_wifi_ap_default_key(char *out);   /* the password in use when none is typed, for the screen (out: PLAT_WIFI_AP_KEY_MAX
+                                        * bytes, may be 0): 12 characters made for this FM-1 from the radio's random
+                                        * source the first time one is needed, and kept. 1 it is the one in use; 0 a typed
+                                        * one is (out ""; a typed one is never shown) */
+void plat_wifi_ap_forget(void);        /* the typed key, or the password made for this FM-1, goes (the name and channel stay):
+                                        * a new one is made, and the access point starts again on it */
+int plat_wifi_ap_run(int on);          /* AP_MAN: start / stop. 0, -1 not AP_MAN */
+int plat_wifi_ap_start(const uint8_t *ssid, uint32_t len, const char *pass, int ch);   /* one not kept, with MODE OFF
+                                        * (until a mode is chosen): 0, -1 not MODE OFF or a bad name / password / channel */
+void plat_wifi_ap_stop(void);          /* .. stopped (the clients told) */
+uint32_t plat_wifi_ap_clients(void);   /* the clients joined (their keys in) */
+int plat_wifi_ap_client(int i, uint8_t mac[6], uint32_t *ip);   /* client slot i (0..3): 1 joined, its address (host
+                                        * order, 0 none yet); 0 none */
+
+/* Ableton Link (fm1.toml link = true, with wifi_stack = "own": FM1B_LINK 1; link/, GPL-3.0-only: a firmware with it is
+ * GPL-3.0-only as a whole): a peer of the tempo / beat / start-stop session on the network joined,
+ * with Live, the iOS apps and Ableton's library. Times: Link's clock, plat_link_now (microseconds; an interrupt may
+ * read it); beats in micro-beats (1,000,000 a beat), tempo in microseconds a beat. Main loop, but plat_link_now and
+ * plat_link_t24 */
+#ifndef FM1B_LINK
+#define FM1B_LINK 0
+#endif
+void plat_link_enable(int on);         /* on: Link runs whenever there is an address (a session of its own at the
+                                        * tempo set, joined to the others'); off: it leaves */
+int plat_link_on(void);                /* it runs */
+uint32_t plat_link_peers(void);        /* the peers in the session (0: alone) */
+int32_t plat_link_mpb(void);           /* the session's tempo (us a beat) */
+int64_t plat_link_beat_at(int64_t us); /* the session's beat at a time; -1 not running */
+int64_t plat_link_time_at(int64_t ub); /* the time of a beat */
+int64_t plat_link_phase(int64_t ub, int64_t quantum_ub);   /* ub modulo the quantum (4 beats: 4000000), in [0, q) */
+int plat_link_playing(void);           /* the session's start / stop */
+int64_t plat_link_play_beat(void);     /* the beat it took effect at */
+void plat_link_set_tempo(int32_t mpb); /* the beat now kept; also the tempo a new session starts with */
+void plat_link_set_playing(int play);  /* from the beat now */
+int64_t plat_link_now(void);           /* Link's clock (us) */
+uint32_t plat_link_t24(int64_t us);    /* plat_ticks24 at a Link time within a minute of now */
+/* the Wi-Fi's big state in the app's memory (fm1.toml wifi_mem = "app": FM1B_WIFI_MEM 1): Link's node and the access
+ * point's (its clients, their handshakes, the DHCP leases), which only a running Link or access point uses, are blocks
+ * the app lends, not static RAM: Link starts only once its node is lent, the access point comes up only once its block
+ * is (a password's key is made without it). Without FM1B_WIFI_MEM they are static and these say so.
+ *   plat_link_mem_bytes(), plat_wifi_ap_mem_bytes()   the block's size (4-aligned), 0: static
+ *   plat_link_mem(p), plat_wifi_ap_mem(p)             p (zeroed, 8-aligned: the blocks hold pointers, 8 bytes on the
+ *                                                     host; a block aligned less is refused, -1): lent -> 0;
+ *                                                     0: taken back -> 0 done, -1 still running (Link:
+ *                                                     until plat_link_enable(0) or the address goes; the access
+ *                                                     point: until it is no longer up) */
+#ifndef FM1B_WIFI_MEM
+#define FM1B_WIFI_MEM 0
+#endif
+uint32_t plat_link_mem_bytes(void);
+int plat_link_mem(void *p);
+uint32_t plat_wifi_ap_mem_bytes(void);
+int plat_wifi_ap_mem(void *p);
+
 /* the 1 kHz tick (app_tick, an app with APP_TICK) runs in the timer interrupt: the main loop locks it out around
  * what they share. It nests, and plat_unlock takes what its plat_lock returned: the outermost unlock switches the
  * interrupts back on only if they were on at its lock, so a lock is safe inside an interrupt (app_render, app_tick)
@@ -353,13 +573,19 @@ void plat_yield(void);
  * millisecond, a "reboot"). Built for an app whose app.h defines APP_RESTART */
 void plat_restart(void);
 void plat_log(const char *line);
-/* the flash's data area, 0x97000..0xDFFFF, for an app's own big data (a table it builds, samples): its store objects
- * live there too, at the offsets it gave them (APP_STORE_MAP), so it keeps to the rest. Main loop only; an erase or a
- * write stops everything for a moment (the sound too: no flash reads meanwhile).
+/* the flash's data area, 0x97000..0xDFFFF (from app_end with a bigger slot, below), for an app's own big data (a table
+ * it builds, samples): its store objects live there too, at the offsets it gave them (APP_STORE_MAP), so it keeps to
+ * the rest. Main loop only; a write stops everything for a moment (no flash reads meanwhile: a 256-byte page at a
+ * time). An erase (here and the store's) is one window of 8-17 ms with the sound silenced first. An app may ask for
+ * felucca-bsp's sliced erase instead (#define FM1B_ERASE_SLICED 1 in app.h, or FM1B_ERASE_SLICED=1 in the environment
+ * for one build): windows of about 1 ms, the interrupts and the sound on between them, the sector reading anything
+ * until it is done; a flash part that does not suspend an erase is still waited out in one window, the sound silenced
+ * (plat_flash_held counts those).
  * Two more windows for big data, outside the store: PLAT_XDATA0 (16 KiB, just above the app area) and PLAT_XDATA1
  * (92 KiB, above the update's staging). The update loader clears an update record it finds in the last 256 bytes of
  * a sector there (bsp/loader/ldr_core.c: "AT" at bytes 0xF06..0xF07, a nonzero CRC-16 at 0xF00 over the 78 bytes
- * from 0xF02), so in these two an app keeps bytes 0xF00..0xF07 of every sector erased (0xFF), or else makes sure
+ * from 0xF02) in place: those bytes, 8 to 80 from 0xF00, programmed to 0, the rest of the sector kept. So in these
+ * two an app keeps bytes 0xF00..0xF07 of every sector erased (0xFF), or else makes sure
  * those bytes never read as a record: never "AT" at 0xF06 (LOOM-8's sample bank moves its data so, and refuses a
  * bank that has it).
  * A fourth, on request (fm1.toml xdata2 = true: FM1B_XDATA2): PLAT_XDATA2, the three sectors 0xFC000..0xFEFFF
@@ -368,6 +594,13 @@ void plat_log(const char *line);
  * looks for records below 0xFC000 only, so no 0xF00 rule here. Store objects may sit there too (the template's
  * settings pair is 0xFC000 / 0xFD000): with the window on, plat_data_erase and plat_data_write refuse a store
  * object's sectors in it, so an app with this window puts its objects elsewhere (or keeps to the rest) */
+/* An app with a bigger slot (fm1.toml app_end: FM1B_APP_END, its code past 0x93000): the data area starts at its end
+ * when that is above 0x97000, and XDATA0 is what is left of 0x93000..0x96FFF above it (none from 0x97000 on); the
+ * store's objects and pool and APP_RES_BASE stay at or above PLAT_DATA_LO (the build checks). Not on the
+ * SMK-37 (its app area is the board's: the build refuses app_end there) */
+#ifndef FM1B_APP_END
+#define FM1B_APP_END 0x93000u
+#endif
 #if PLAT_SMK37                         /* the SMK-37's windows (felucca-bsp boards/smk37/fm1_flash.h): the data area
                                         * 0xC2000..0xE9FFF (40 sectors), PLAT_XDATA0 just above the SMK's app area,
                                         * PLAT_XDATA1 (the autosave pair and 96 KiB) below the update's staging; the
@@ -392,9 +625,9 @@ void plat_log(const char *line);
                                         * would be cleared) */
 #define PLAT_RESERVED(off, n) ((off) < PLAT_OWNER + 0x1000u && (off) + (n) > PLAT_OWNER)
 #else
-#define PLAT_DATA_LO 0x97000u
+#define PLAT_DATA_LO (FM1B_APP_END > 0x97000u ? FM1B_APP_END : 0x97000u)
 #define PLAT_DATA_HI 0xE0000u
-#define PLAT_XDATA0_LO 0x93000u
+#define PLAT_XDATA0_LO (FM1B_APP_END < 0x97000u ? FM1B_APP_END : 0x97000u)
 #define PLAT_XDATA0_HI 0x97000u
 #define PLAT_XDATA1_LO 0xE5000u
 #define PLAT_XDATA1_HI 0xFC000u
@@ -424,7 +657,11 @@ static inline int plat_in(uint32_t off, uint32_t n, uint32_t lo, uint32_t hi)   
     return off >= lo && off <= hi && n <= hi - off;
 }
 const uint8_t *plat_data(uint32_t off);   /* read in place; 0 = outside the windows */
+/* the boot area [0, 0x4000) read as stored (the bootloader and its configuration; the flash driver's own read, not XIP): an app
+ * that tells the installers which bootloader the FM-1 has. Read only; main loop; 0 = read */
+int plat_boot_read(uint32_t off, void *dst, uint32_t n);
 int plat_data_erase(uint32_t off);        /* the 4 KiB sector at off (aligned); 0 = done */
+uint32_t plat_flash_held(void);           /* erases since boot that held the sound for the whole erase (above) */
 int plat_data_write(uint32_t off, const void *src, uint32_t n);   /* src in RAM; 0 = done */
 /* plat_data_write programs, as NOR flash does: each byte becomes what it was AND what is written (bits go from 1 to
  * 0 only, and only an erase sets them again). So it writes into erased flash, and it may also clear bits in place, in
@@ -448,6 +685,9 @@ uint32_t plat_sysex_queued(void);      /* the bytes still in the ring, not yet r
  * computer drops a frame cut short at the next F0), the rest of its puts and its end return -1. Main loop; built for
  * an app with APP_SYSEX */
 #define PLAT_SYSEX_STALL_MS 30u
+/* a stream with no put for PLAT_SYSEX_HOLD_MS (an app that began one and never ended it) is ended by the main loop: the
+ * ring free again, its frame cut; else nothing else would ever go out (the update's and the console's replies) */
+#define PLAT_SYSEX_HOLD_MS 250u
 int plat_sysex_begin(void);            /* 0 = the stream is open; -1 = no computer, or a send under way */
 int plat_sysex_put(const uint8_t *p, uint32_t n);   /* 0 = in the ring (the last bytes held until more or end) */
 int plat_sysex_end(void);              /* the last packet out, the ring free again: 0 = the frame went whole */
@@ -474,7 +714,10 @@ void plat_console_present(int on);        /* the console presented (the default)
 
 /* the app's own commands in the update's SysEx framing (F0 pack7(00 59 cmd len24 body ~sum) F7: felucca-bsp ota.c),
  * an app with APP_USB_CMD: app_usb_cmd(d, n) gets each frame whose cmd the platform does not take (d: the decoded
- * frame, cmd d[2], the body from d + 6). Inside it the app may pull data from the host as an update does: */
+ * frame, cmd d[2], the body from d + 6). The platform's cmds are not the app's: 0x11 and 0x30 (the update), 0x41..0x44
+ * (backup, restore, resources), 0x50..0x54 (the mirror) and 0x60..0x6F (the companion services: docs/COMPANION.md,
+ * taken whole with companion = true, kept free without it). Inside it the app may pull data from the host as an update
+ * does: */
 int plat_host_read(uint32_t addr, uint8_t *dst, uint32_t n);   /* n bytes (512 at most) at the host's addr; 0 = ok.
                                                                  * Waits (tries: 3); main loop only */
 void plat_host_patience(uint32_t try_ms, uint32_t total_ms);   /* each try's wait (default 5000) and the whole
@@ -511,6 +754,12 @@ uint32_t plat_analog_mask(void);       /* bit k: key k is on an analog row (PA7 
 /* 16 bytes unique to this FM-1 (its flash part's factory ID; the same across updates, firmwares and a wiped store):
  * for an address that must not change (the WiFi MAC, the Bluetooth name); 0 = unknown (and in a build without a radio) */
 const uint8_t *plat_chip_uid(void);
+/* the four hex digits that tell this FM-1 from another, 0..0xFFFF (-1: no ID; plat_uid.h): the hash of plat_chip_uid, also
+ * the low two octets of the Bluetooth address the own stack makes (bt_own.c), so a name "FM1-XXXX" (plat_dev_name) is the
+ * same on the radio, on USB (fm1.toml usb_name_fn) and for the tools. Needs the ID read: a build with Wi-Fi, Bluetooth or
+ * usb_name_fn */
+int plat_dev_id(void);
+#include "plat_uid.h"                  /* plat_uid_hash16, plat_dev_name(out[9], id): "FM1-XXXX" */
 
 /* persistent storage (Felucca storage.c objects: A/B sectors, CRC, torn-write safe) */
 int plat_store_load(uint32_t obj, void *dst, uint32_t max);   /* bytes loaded, < 0 = none / bad (an empty object is
@@ -532,6 +781,59 @@ int plat_store_room(void);
  * ends with OBJ_NOBJ, and APP_STORE_MAP, each object's flash offset: two 4 KiB sectors (A/B) from there, inside the
  * data area (0x97000..0xDFFFF) or Felucca's settings sector pair at 0xFC000. An object's number is written in its
  * record, so an app keeps its numbering from one release to the next. */
+
+/* The companion's files (fm1.toml companion = true, app.h APP_FILES: docs/COMPANION.md): what app_file says of file i.
+ * kind PLAT_FK_*, flags PLAT_FF_* (PLAYING: written and deleted while the app is busy too); size its bytes now (0:
+ * empty), room the most it takes; name unique among the app's files (31 characters at most) */
+enum { PLAT_FK_OTHER, PLAT_FK_PROJECT, PLAT_FK_PRESET, PLAT_FK_SAMPLE, PLAT_FK_BANK, PLAT_FK_PATTERN, PLAT_FK_SETTINGS,
+       PLAT_FK_TEXT, PLAT_FK_LOG };
+#define PLAT_FF_READ 1u
+#define PLAT_FF_WRITE 2u
+#define PLAT_FF_DELETE 4u
+#define PLAT_FF_PLAYING 8u
+typedef struct {
+    const char *name;
+    uint8_t kind, flags;
+    uint32_t size, room;
+} plat_file_info_t;
+/* A store object a computer may manage as a file (app.h APP_FILE_OBJS, a list of these): obj the app's object (never
+ * OBJ_PANEL, the unit's calibration), kind PLAT_FK_*, flags PLAT_FF_* (PLAT_FF_DELETE: the object emptied, as the app
+ * finds it at a first start), name unique among the app's files. A write replaces the object whole */
+typedef struct {
+    uint16_t obj;
+    uint8_t kind, flags;
+    const char *name;
+} plat_file_obj_t;
+/* A file kept in the data area (plat_data's windows) as two copies, A at a and B at b, n bytes each (whole 4 KiB
+ * sectors): the current one is the newer whose head (its first PLAT_FILE_HEAD bytes: the size, the data's CRC-32, a
+ * sequence number) is whole; a write goes to the other, its sectors erased as the data reaches them, its head written
+ * last after the data was read back and checked: a power cut leaves the old one current. room n - PLAT_FILE_HEAD. One
+ * write at a time (begin .. commit); main loop only (plat_data_*'s rules: the sound stops for each erase) */
+#define PLAT_FILE_HEAD 32u
+typedef struct {
+    uint32_t a, b, n;
+} plat_file_t;
+int plat_file_size(const plat_file_t *f);                      /* the current one's bytes; -1 none */
+const uint8_t *plat_file_data(const plat_file_t *f);           /* read in place; 0 none */
+int plat_file_read(const plat_file_t *f, uint32_t off, void *dst, uint32_t n);   /* 0 = read */
+int plat_file_begin(const plat_file_t *f, uint32_t size);     /* a new one of size bytes: 0 = ready */
+int plat_file_write(const plat_file_t *f, uint32_t off, const void *src, uint32_t n);   /* in order, src in RAM */
+int plat_file_commit(const plat_file_t *f, uint32_t size, uint32_t crc);   /* checked, current: 0 */
+int plat_file_delete(const plat_file_t *f);                    /* 0 = none now */
+
+/* The companion's parameters (fm1.toml companion = true, app.h APP_PARAMS: docs/COMPANION.md): what app_param says of
+ * parameter i. id the app's own (kept from one release to the next); type PLAT_PT_*: a number min .. max, or one of
+ * labels (max - min + 1 of them, for min .. max); unit (0: none) and group (an index into app_param_group's) for a page;
+ * flags PLAT_PA_READONLY: shown, never set */
+enum { PLAT_PT_NUMBER, PLAT_PT_ENUM };
+#define PLAT_PA_READONLY 1u
+typedef struct {
+    uint16_t id;
+    uint8_t type, group, flags;
+    int32_t min, max, def;
+    const char *name, *unit;
+    const char *const *labels;
+} plat_param_t;
 
 /* audio load in % of the render budget, and xruns since boot (device: from the ISR) */
 uint32_t plat_cpu_pct(void);
@@ -559,6 +861,19 @@ typedef struct {
     int (*write)(uint32_t lba, const uint8_t *b);      /* 0 = written (it may hold it until flush) */
     void (*flush)(void);                               /* what is held, written (the computer synced or ejected) */
     const char *vendor, *product;                      /* what the computer calls it: 8 and 16 characters at most */
+    int (*sync)(void);                                 /* optional: what write held, written before the computer is
+                                                        * told a WRITE succeeded (0 = written; else it hears a write
+                                                        * error): a write may hold its blocks to write them together */
+    void (*work)(void);                                /* optional: called again and again while a transfer waits on
+                                                        * USB, for the blocks' own work meanwhile (a card's DMA): short
+                                                        * steps */
+    uint8_t read_fails;                                /* 1: read's 0 is a failure (the computer hears a medium
+                                                        * error), not zeros */
+    int (*present)(void);                              /* optional: 0 while the medium is gone (a card pulled), else
+                                                        * a number for the medium in, another when another one is put
+                                                        * in: the computer hears "no medium" (as from a card reader),
+                                                        * then "medium changed" when it's back or another; blocks may
+                                                        * differ. A command's blocks never go to another medium */
 } plat_disk_t;
 enum { PLAT_DISK_OFF, PLAT_DISK_WAITING, PLAT_DISK_MOUNTED, PLAT_DISK_EJECTED };
 void plat_disk_mode(const plat_disk_t *d);             /* d: the FM-1 drops off USB and comes back as this disk; 0:
@@ -566,6 +881,71 @@ void plat_disk_mode(const plat_disk_t *d);             /* d: the FM-1 drops off 
 int plat_disk_poll(void);                              /* main loop: serve the computer -> PLAT_DISK_* (EJECTED: the
                                                         * computer let it go) */
 uint32_t plat_disk_idle_ms(void);                      /* since the computer's last command */
+
+/* A microSD card (fm1.toml sd = true: FM1B_SD; device/sd.c on felucca-bsp's fm1_sd_hw.h, the file system lib/sd_fs.c):
+ * the m-card board on the FM-1 (github.com/jvitkauskas/m-card), on the LCD's SPI1. SDSC, SDHC and SDXC cards; FAT12,
+ * FAT16 and FAT32 through FatFs (lib/fatfs, ChaN's: "ff.h", f_open, f_read, ... on the drive ""), mounted by
+ * plat_sd_start. Main loop only (from app_ui_init on: the screen set up), as the screen it shares the bus with: every
+ * call blocks until it's done (a sector at
+ * 20 MHz ~0.3 ms, the start up to ~1 s, a card that's gone up to ~1 s a call). There's no card-detect line: a card is
+ * found by asking it, and a card changed is found by plat_sd_start again. Every block read and written is
+ * CRC-checked: an error, never wrong data. Host: an image file (the script's "sd FILE", "sd out"; or FM1B_SD_IMAGE),
+ * a whole card with its partition table or a bare FAT volume */
+enum { SD_E_NOCARD = -1,                               /* nothing answers */
+       SD_E_INIT = -2,                                 /* a card, but it didn't start */
+       SD_E_CARD = -3,                                 /* a card this doesn't take (an MMC, a voltage) */
+       SD_E_TIMEOUT = -4, SD_E_CRC = -5,               /* the card stopped answering; data kept arriving damaged */
+       SD_E_READ = -6, SD_E_WRITE = -7,                /* the card refused */
+       SD_E_RANGE = -8,                                /* sectors past the card's end */
+       SD_E_STATE = -9,                                /* not started (plat_sd_start) */
+       SD_E_NOFS = -10,                                /* started, but no FAT file system: sectors only */
+       SD_E_BUSY = -11 };                              /* a stream's block not ready yet: call again */
+int plat_sd_start(void);           /* find the card, start it, mount its file system: 0, or SD_E_* (SD_E_NOFS: the
+                                    * sectors work, the files don't). Again for a card changed or after an error */
+void plat_sd_stop(void);           /* files closed or not, the card let go (unmounted): plat_sd_start for it again */
+int plat_sd_state(void);           /* 1 started (with or without files), 0 not, < 0 the last start's SD_E_* */
+const char *plat_sd_what(int e);   /* an SD_E_* (or 0, 1) in a few words, for a screen: "no card", "ready", ... */
+uint32_t plat_sd_sectors(void);    /* the card's 512-byte sectors (0: not started) */
+int plat_sd_read(uint32_t sector, void *buf, uint32_t n);         /* n sectors into buf (RAM): 0 or SD_E_*. This and
+                                                                    * plat_sd_write feed the watchdog: one FatFs call
+                                                                    * may be thousands of them */
+int plat_sd_write(uint32_t sector, const void *buf, uint32_t n);  /* n sectors from buf: 0 or SD_E_* */
+typedef struct {
+    uint32_t sectors, khz;          /* the size; SPI1's clock for the card now (it steps down after errors) */
+    uint32_t crc_errors, retries, timeouts;   /* since power-on: blocks damaged, transfers tried again, waits given up */
+    uint8_t hc, dma, ver;           /* SDHC / SDXC; reads by DMA (else byte by byte); the card's spec, 1 or 2 */
+} plat_sd_info_t;
+void plat_sd_info(plat_sd_info_t *i);
+/* streams, for an app that moves many blocks a few at a time from its main loop (samples played from the card, a
+ * recording): one open at a time; any other card call (plat_sd_read, FatFs) ends it first. A read keeps the bus the
+ * card's between its calls (the screen waits) until the LCD's next transfer, which ends it: the next
+ * plat_sd_read_next opens it again where it was. A write's blocks go one per call, each call returning once its block
+ * is sent (the card's busy is the next call's); the LCD may draw between them (the write is kept open, the card
+ * deselected). Host: plain sector calls */
+int plat_sd_read_open(uint32_t sector, uint32_t n);    /* a read from sector, n blocks (0: up to the card's end) */
+int plat_sd_read_next(void *buf, uint32_t wait_us);    /* the next block into buf: 0; SD_E_BUSY (not begun within
+                                                        * wait_us: call again; nothing waits longer, but a block begun
+                                                        * is read whole, ~0.2 ms at 20 MHz); SD_E_CRC, SD_E_READ
+                                                        * (damaged, refused: the same block at the next call);
+                                                        * SD_E_RANGE (past n or the card's end); SD_E_TIMEOUT (no
+                                                        * block for 250 ms: the read is over) */
+int plat_sd_write_open(uint32_t sector);               /* a write from sector on */
+int plat_sd_write_next(const void *buf);               /* the next block sent: 0; SD_E_BUSY (the card still writes
+                                                        * the one before: nothing sent); buf 0: only asks (0: it
+                                                        * would take one). An error ends the write (that block not
+                                                        * written) */
+int plat_sd_close(void);                               /* the stream ended (a write's last block on the card): 0 or
+                                                        * SD_E_* */
+/* fm1.toml sd_read_ahead = N: a read's blocks taken in SPI1's interrupt, up to N ahead of plat_sd_read_next, so the
+ * card streams on while the render holds the main loop up (the calls above unchanged). For a console: */
+void plat_sd_ahead(uint32_t *c);                       /* c[4]: interrupts, blocks, runs, runs ended by an error */
+/* the card as a USB drive (with fm1.toml msc = true: disk mode): plat_disk_mode(plat_sd_disk()) (0: not started), then
+ * plat_sd_disk_poll() from the main loop (APP_LOOP) in place of plat_disk_poll, with the same answers. Its files are
+ * unmounted meanwhile (the computer owns them): plat_disk_mode(0) and plat_sd_start() to have them back. Reads run
+ * ahead while USB sends; a WRITE's blocks are written together, before the computer hears it succeeded. Uses
+ * APP_SD_DISK_RA (32) + APP_SD_DISK_WB (32) blocks of the pool: 32 KiB */
+const plat_disk_t *plat_sd_disk(void);
+int plat_sd_disk_poll(void);
 
 /* code loaded at run time (fm1-ripple's currents: plug-ins copied from its disk into the pool and run there): the
  * guard's RAM code window (felucca-bsp fm1_guard.h, normally .ram_text alone) widened from .ram_text up to end, so
@@ -648,6 +1028,8 @@ int app_stats_quiet(void);
 
 /* the app's optional hooks (app.h defines the macro when it has the function):
  *   APP_TICK        void app_tick(void)           1 kHz, in the timer interrupt (a clock, a sequencer)
+ *   APP_TICK_FAST   void app_tick_fast(void)      10 kHz, in the timer interrupt, also inside the render (what must leave
+ *                                                 on time: CLOCK OUT's ticks by plat_midi_rt); a few microseconds at most
  *   APP_BOOT        void app_boot(void)           once, after the platform is up, before app_ui_init (a radio)
  *   APP_LOOP        void app_loop(void)           every pass of the main loop (a radio's tasks)
  *   APP_YIELD       void app_yield(void)          from plat_yield, inside long work
@@ -656,7 +1038,8 @@ int app_stats_quiet(void);
  *   APP_OVERLOAD    void app_overload(void)       the render took over 90 % of its time (shed voices)
  *   APP_SPLASH      void app_splash(void)         the first screen at boot, instead of the name
  *   APP_GAIN(m)     the render's gain from MASTER's position m (0..4096; default the square, m * m >> 12)
- *   APP_BATTERY_RAW (no function) plat_battery_raw is built (the battery's reading, for an app's own volts)
+ *   APP_BATTERY_RAW (no function) plat_battery_raw and plat_battery_charging are built (the battery's reading, for
+ *                   an app's own volts; whether 5 V is on the supply and the chip's charger runs)
  *   APP_CPU_KHZ     (no function) plat_cpu_khz is built (the CPU's clock)
  *   APP_DIM_LEVELS  (no function) plat_dim_ns is built (the dim lights at any of many brightnesses)
  *   APP_QUIET       void app_quiet(int32_t *lr, uint32_t n)   the render while the flash must not be read (the
@@ -686,6 +1069,15 @@ int app_stats_quiet(void);
  *   APP_LOG         void app_log(void (*line)(const char *t))   the development readout over USB-MIDI (F0 7D 4C 47 F7,
  *                   "LG"): the app's own lines, each through line (ASCII, 40 characters at most), before its "end".
  *                   Main loop
+ *   APP_UPDATE_BEGIN int app_update_begin(void)   an update (the upgrade command) or the soft key's UBOOT from the
+ *                   host begins: stop cleanly (a sequencer stopped, its notes and MIDI OUT let go), before anything is
+ *                   staged or erased and before the restart. Called once per main-loop pass (the audio interrupt
+ *                   running, the watchdog fed around it) until it returns 0 (stopped; return at once when nothing
+ *                   plays) or PLAT_UPDATE_BEGIN_MS (300 ms, device/update_begin.h) have passed since the first call:
+ *                   the update goes ahead then whatever it returns, so a hook that never finishes cannot stop an
+ *                   update. Return nonzero while it still needs time, never wait inside it. An update then runs
+ *                   app_panic; the soft key's UBOOT only the platform's audio stop (no app code after the hook).
+ *                   Without it: nothing waited for
  *
  * Screen mirroring (fm1.toml mirror = true: FM1B_MIRROR 1, device/mirror.c): the screen and the panel live on a
  * computer (base/web/mirror/, tools/fm1_mirror.py), and the panel played from it. Nothing for the app to call; an app
@@ -705,7 +1097,26 @@ int app_stats_quiet(void);
  *                                     app_backup_restored then: the app's frame starts again from app_ui_init)
  * and these: int app_backup_playing(void) (1: no restore now, STOP FIRST), void app_backup_flush(void) (what is not
  * saved yet, saved: a backup starts), void app_backup_hold(int on) (no saving while a backup streams),
- * void app_backup_restored(void) (everything from the flash again) */
+ * void app_backup_restored(void) (everything from the flash again)
+ *
+ * Companion services over USB (fm1.toml companion = true: FM1B_COMPANION 1, device/companion.c; docs/COMPANION.md,
+ * tools/fm1_companion.py): a computer asks what the firmware is and has (the platform services built, APP_NAME,
+ * APP_VERSION, the backup's magic, version and file extension). The app may add its own tags for its own pages: APP_COMPANION_EXTRAS "key=value;...".
+ * Its files: the store's objects it names (APP_FILE_OBJS {{OBJ_X, PLAT_FK_PRESET, PLAT_FF_READ | PLAT_FF_WRITE, "x"},
+ * ...}: plat_file_obj_t), listed, read and replaced whole by the platform (plat_store_save), then void
+ * app_file_changed(obj) (the computer wrote or emptied obj: load it again); APP_FILE_OBJ_MAX (optional, PLAT_STORE_MAX
+ * by default) the largest a computer may write, the size of the buffer a write is gathered in (backup.c's when backup
+ * is on and the app sets none). With either kind of file, int app_file_busy(void) (1: no write or delete now).
+ * Files that are not store objects come after them (APP_FILES): int app_file(i, plat_file_info_t *f) (file i: 0 = there, -1 past the last), app_file_read(i,
+ * off, dst, n), app_file_begin(i, size), app_file_write(i, off, src, n) (in order), app_file_commit(i, size, crc) (all
+ * of it came, its CRC-32 checked: make it current), app_file_delete(i) (0 = done each), app_file_busy() (1: no write or
+ * delete now, playing). The name app_file gives stays valid until its next call. APP_FILE_COUNT (optional): uint32_t
+ * app_file_count(void), how many files there are, for an app whose app_file is costly (each request asks it once
+ * then, not once a file). plat_file_* (above) keeps a file in the data area for an app that has nowhere else.
+ * Its parameters (APP_PARAMS; APP_PARAM_MAX the most, 64 by default): int app_param(i, plat_param_t *p) (parameter i: 0
+ * = there, -1 past the last), const char *app_param_group(g) (0 past the last), int32_t app_param_get(i),
+ * int32_t app_param_set(i, v) (v within min .. max; -> the value now). Main loop: a value the render reads is shared
+ * as the app's own UI shares it */
 
 /* The SMK-37 (fm1.toml board = "smk37": PLAT_SMK37 1; PLAT_SMK37_MODEL 1 Pro, 2 Elite, 3 MKE-P37, PLAT_SMK37_MODEL_NAME
  * "Pro" / "Elite" / "MKE"; felucca-bsp boards/smk37/). The FM-1's controls above work as on the FM-1: plat_keys the
