@@ -348,6 +348,15 @@ pinned by digest in the lock (distroless's cc, JIELI_DOCKER_IMAGE overrides it),
 capabilities. One long-lived container serves every build of the tree; FM1B_ISOLATE=1 gives each tool a run of its
 own instead, with the tree read-only (tc). The package's three SDK files come from $AC79_SDK or from
 .toolchain/ac79-sdk (the same script).
+
+  toolchain = "open"         (or FM1B_TOOLCHAIN=open in the environment; "jieli", the default, over fm1.toml's) the open
+                             pi32v2 LLVM toolchain instead (github.com/jvitkauskas/pi32v2-llvm: clang, ld.lld,
+                             llvm-objcopy, llvm-objdump), run natively, no container: FM1B_OPEN_TC its bin/ (default
+                             ~/.pi32v2-llvm/current/bin). JieLi's -mfprev1 is left out (open_tool); llvm-objdump's text
+                             is rewritten as JieLi's objdump's for the checks (open_dis). FM1B_OPEN_CFLAGS: more flags for
+                             every unit, FM1B_OPEN_UNITY_CFLAGS for the unity build only (an experiment's: "-mllvm
+                             -enable-machine-outliner"); FM1B_OPEN_LDFLAGS for ld.lld. Not yet with JieLi's Bluetooth or
+                             WiFi libraries (ble_stack = "own" only). An experiment (2026-11-26, LOOM-8): not tried on an FM-1
 """
 import argparse
 import functools
@@ -472,7 +481,107 @@ def toolchain():
                      "tools/setup_toolchain.sh pins one in .toolchain/, tools/get_toolchain.sh fetches the latest)")
 
 
+def open_tc():
+    """the open toolchain's bin/ (FM1B_TOOLCHAIN=open or fm1.toml toolchain = "open"): pi32v2-llvm's clang, ld.lld and
+    binary tools (github.com/jvitkauskas/pi32v2-llvm), run natively; FM1B_OPEN_TC, else ~/.pi32v2-llvm/current/bin"""
+    d = Path(os.environ.get("FM1B_OPEN_TC") or Path.home() / ".pi32v2-llvm" / "current" / "bin").expanduser()
+    if not (d / "clang").exists() or not (d / "ld.lld").exists():
+        raise SystemExit(f"build: the open toolchain is not at {d} (FM1B_OPEN_TC: its bin/, with clang and ld.lld; "
+                         "github.com/jvitkauskas/pi32v2-llvm releases)")
+    return d.resolve()
+
+
+OPEN = False                        # the open toolchain (open_tc): FM1B_TOOLCHAIN=open, or fm1.toml toolchain = "open"
+# JieLi's compiler flags the open clang has no use for: -mfprev1 (its FPU revision: the open one has r3's), the assembler
+# choice (the open clang's is integrated)
+OPEN_DROP = {"-mfprev1", "-integrated-as"}
+
+
+def open_dis(text, syms):
+    """llvm-objdump -d's text as JieLi's objdump prints it, for the checks that read it (ramcode.py, romref.py,
+    stack_depth.py, boot_pack.py, mul64_near_loads): a function's label "name:" alone on its line (llvm-objdump:
+    "02000120 <name>:"), the address without leading zeros, and the annotations JieLi's gives:
+      - a branch "call N <name+0x4 : 2000124 >" (llvm-objdump: "<name+0x4>"; the target is the instruction's address +
+        its length + N, as JieLi's: checked against every branch to a symbol of one name in LOOM-8, 23,078 of them);
+      - a constant loaded by a long form (4 or 6 bytes) "r1 = 29392640 <name+0x2418 : 1c07f00 >": the nearest symbol at
+        or below it (llvm-objdump gives none; romref.py reads a load by its "<").
+    The compiler's local labels inside a function (.LBB*: a jump table's targets, .Ljta*: the table, ".L0 ": an if
+    block's) are no function's start: their label lines go, and a branch to one is named by the function it is in (as
+    JieLi's text: "<fn+0x5e8 : ...>"); a table's words then read as stack_depth.py reads them (word_table_end)"""
+    import bisect
+    tab = sorted({(int(m[1], 16), m[2]) for m in re.finditer(r"^([0-9a-f]+) [^\n]*?\t[0-9a-f]+ ([^\s]+)$", syms, re.M)
+                  if not m[2].startswith(".L")})
+    at = [a for a, _ in tab]
+    fns = sorted((int(m[1], 16), int(m[2], 16)) for m in re.finditer(r"^([0-9a-f]+) .{6}F \S+\t([0-9a-f]+) ", syms, re.M))
+    fn_at = [a for a, _ in fns]
+
+    def inside(a):                               # (strictly inside a function: not its start)
+        i = bisect.bisect_right(fn_at, a) - 1
+        return i >= 0 and fns[i][0] < a < fns[i][0] + fns[i][1]
+
+    def near(v):
+        i = bisect.bisect_right(at, v) - 1
+        if i < 0:
+            return f"0 : {v:x}"
+        return f"{tab[i][1]}+{v - tab[i][0]:#X} : {v:x}".replace("0X", "0x").replace("+0x0 :", " :")
+    out = []
+    label = re.compile(r"^([0-9a-f]+) <([^>]+)>:$")
+    line = re.compile(r"^\s*([0-9a-f]+):\s((?:[0-9a-f]{2} )+)\s*\t+(.*)$")
+    branch = re.compile(r"\b(?:call|goto) (-?\d+) <([^<>]+)>$")
+    load = re.compile(r"^(\w+) = (-?\d+)$")
+    for ln in text.splitlines():
+        m = label.match(ln)
+        if m:
+            if not (m[2].startswith(".L") and inside(int(m[1], 16))):
+                out += ["", f"{m[2]}:"]
+            continue
+        m = line.match(ln)
+        if not m:
+            out.append(ln)
+            continue
+        addr, raw, ins = int(m[1], 16), m[2], m[3]
+        size = len(raw.split())
+        b, ld = branch.search(ins), load.match(ins)
+        if b:
+            to = (addr + size + int(b[1])) & 0xFFFFFFFF
+            ins = ins[:b.start(2) - 1] + f"<{near(to)} >"
+        elif ld and size >= 4:
+            ins += f" <{near(int(ld[2]) & 0xFFFFFFFF)} >"
+        out.append(f" {addr:x}:    {raw:<18}\t{ins}")
+    return "\n".join(out) + "\n"
+
+
+def open_tool(tool, rel):
+    """JieLi's tool and arguments -> the open toolchain's command (open_tc): clang, ld.lld, llvm-objcopy, llvm-objdump"""
+    b = open_tc()
+    name = tool.rsplit("/", 1)[-1]
+    if tool == "cc":
+        extra = os.environ.get("FM1B_OPEN_CFLAGS", "").split()   # (an experiment's flags, e.g. the machine outliner)
+        if any(str(a).endswith(("unity.c", "unity.ll", "unity.pass.ll")) for a in rel):   # (the unity build alone: the
+            extra += os.environ.get("FM1B_OPEN_UNITY_CFLAGS", "").split()                # main loop's -Oz / minsize code)
+        return [str(b / "clang"), "-target", "pi32v2", *[a for a in rel if a not in OPEN_DROP], *extra]
+    if name == "ld":
+        out, skip = [], False
+        for a in rel:
+            if skip:
+                skip = False
+            elif a == "--plugin":                 # (LTO is the linker's own: no plugin; --plugin-opt=... it takes)
+                skip = True
+            else:
+                out.append(a)
+        return [str(b / "ld.lld"), *out, *os.environ.get("FM1B_OPEN_LDFLAGS", "").split()]
+    if name == "objcopy":
+        return [str(b / "llvm-objcopy"), *rel]
+    if name == "objdump":
+        return [str(b / "llvm-objdump"), *[("--" + a[1:]) if a.startswith("-mcpu=") else a for a in rel]]
+    if name in ("llvm-ar", "ar"):
+        return [str(b / "llvm-ar"), *rel]
+    raise SystemExit(f"build: the open toolchain has no stand-in for JieLi's {tool}")
+
+
 def use_docker():
+    if OPEN:                        # (the open toolchain runs natively)
+        return False
     native = platform.system() == "Linux" and platform.machine() in ("x86_64", "AMD64")
     return os.environ.get("JIELI_DOCKER", "0" if native else "1") == "1"
 
@@ -564,10 +673,12 @@ def tc(tool, *args, cwd=None):
     In a container: the long-lived one (builder), or with FM1B_ISOLATE=1 a run of its own (isolated)"""
     cwd = (cwd or ROOT).resolve()
     rel = [os.path.relpath(Path(a).resolve(), cwd) if isinstance(a, Path) else a for a in args]   # (may go up: the trim's archive)
-    if tool == "cc":                # the toolchain's cc wrapper needs python3; call clang directly
+    if tool == "cc" and not OPEN:   # the toolchain's cc wrapper needs python3; call clang directly
         tool, rel = "pi32v2/bin/clang", ["-target", "pi32v2", *rel]
     work = Path("/work") / cwd.relative_to(ROOT)
-    if not use_docker():
+    if OPEN:                        # (the open toolchain's own tools, natively: open_tool)
+        cmd = open_tool(tool, rel)
+    elif not use_docker():
         cmd = [str(toolchain() / tool), *rel]
     elif isolated():
         cmd = [ctr(), "run", "--rm", *DOCKER_HARDEN, *userns(), "--pids-limit", "64",
@@ -793,6 +904,8 @@ def build_loader():
                                ("common/bin/objdump", "-d", f"-mcpu={CPU}", elf),
                                ("common/bin/objdump", "-h", elf),
                                ("common/bin/objdump", "-t", elf))
+    if OPEN:
+        dis = open_dis(dis, syms)
     (LDR / "loader.dis").write_text(dis)
     for ln in hdr.splitlines():     # the loader rewrites the flash: nothing may run from XIP
         p = ln.split()
@@ -1295,6 +1408,8 @@ def build_app():
                                ("common/bin/objdump", "-t", elf),
                                ("common/bin/objdump", "-d", f"-mcpu={CPU}", elf),
                                ("common/bin/objdump", "-d", f"-mcpu={CPU}", "-j", ".ram_text", elf))
+    if OPEN:                                      # (JieLi's objdump's text, for the checks)
+        dis, rt = open_dis(dis, syms), open_dis(rt, syms)
     (OUT / (NAME + ".dis")).write_text(dis)
 
     def symv(name):
@@ -2126,7 +2241,7 @@ def build_rfm1():
 
 
 def main():
-    global PRODUCT, VERSION, RELEASE, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, OWN, WIFI, WIFI_OWN, LINK, WIFI_AP, CPU2, STEM
+    global PRODUCT, VERSION, RELEASE, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, OWN, WIFI, WIFI_OWN, LINK, WIFI_AP, CPU2, STEM, OPEN
     ap = argparse.ArgumentParser()
     ap.add_argument("app", type=Path, help="the app's directory (with fm1.toml)")
     ap.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity id_prefix + XXYYZZ, version string X.Y[.Z]")
@@ -2172,6 +2287,13 @@ def main():
         raise SystemExit("fm1.toml link = true: Ableton Link (link/) is GPL-3.0-only, so the firmware as a whole is: "
                          "say licence = \"GPL-3.0-only\" (or \"GPL-3.0-or-later\") in fm1.toml (LICENSING.md)")
     CPU2 = (bool(CONF.get("cpu2")) and os.environ.get("FM1B_CPU2") != "0") or os.environ.get("FM1B_CPU2") == "1"
+    chain = os.environ.get("FM1B_TOOLCHAIN") or CONF.get("toolchain", "jieli")
+    if chain not in ("jieli", "open"):
+        raise SystemExit(f'build: toolchain {chain!r} (FM1B_TOOLCHAIN or fm1.toml toolchain): "jieli" or "open"')
+    OPEN = chain == "open"
+    if OPEN and ((BLE and not OWN) or WIFI):
+        raise SystemExit("build: the open toolchain with JieLi's Bluetooth or WiFi libraries is not wired in yet (their "
+                         "trim needs llvm-link -override): ble_stack = \"own\", or JieLi's toolchain")
     if BLE and WIFI:
         raise SystemExit("fm1.toml: ble and wifi together are not supported yet (one radio a build; --no-ble for WiFi)")
     STEM = NAME + ("-usb" if CONF.get("ble") and not BLE else "")
