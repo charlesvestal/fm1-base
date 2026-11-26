@@ -161,6 +161,15 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              installer page: a region there already answers at once); the host and web builds have it
                              compiled in. resources_what (and
                              resources_what_ja): what it holds, in the installer's words ("the 909 cymbals")
+  extras = ["FILE@ADDR"]     extra regions the package carries for the update loader to write after the app and the
+                             resource region (felucca-bsp loader/ldr_core.c ldr_xres; tools/fm1pkg_make.py --extra):
+                             each FILE's raw bytes (relative to APP_DIR, {gen} as for resources) at ADDR, whole sectors
+                             of PLAT_XDATA0 [0x93000, 0x97000) or PLAT_XDATA1 [0xE5000, 0xFC000), at most four, in the
+                             order written, each one's first sector last. The loader keeps no record there: the app
+                             checks its own header and CRC (put the region that holds them last); keep bytes 0xF06..0xF07
+                             of every sector off "AT" (an update record's mark: the loader stops that region there).
+                             Any host that installs the package brings them, as the resource region. An empty
+                             FILE is left out (a build with nothing there)
   companion = true           the companion services over USB (FM1B_COMPANION: device/companion.c, docs/COMPANION.md;
                              tools/fm1_companion.py): what the firmware is and has, its files and its parameters, for
                              the site's companion/ page or a tool; the browser emulator gets its part "port" with it
@@ -2218,14 +2227,30 @@ def main():
     print("parts    " + ", ".join(n for n, x in parts if x) + "  (not built in: " +
           (", ".join(n for n, x in parts if not x) or "none") + ")")
     region = res_file(res_payload()) if CONF.get("resources") else None
+    extras = []
+    for fa in CONF.get("extras", []):
+        f, _, at = fa.rpartition("@")
+        if not f:
+            raise SystemExit(f"build: fm1.toml extras {fa!r}: \"FILE@ADDR\"")
+        at = int(at, 0)
+        x = APP / f.replace("{gen}", str(GEN))
+        if not x.is_file():
+            raise SystemExit(f"build: fm1.toml extras {f!r}: no such file ({x})")
+        if at < (app_end() or APP_END):
+            raise SystemExit(f"build: fm1.toml extras {f!r} at {at:#x}: inside the app area (it ends at "
+                             f"{app_end() or APP_END:#x})")
+        if x.stat().st_size:                  # (an empty one: this build has none there)
+            extras.append((x.read_bytes(), at))
     pkg = fm1pkg_make.ufw(fm1pkg_make.flash_image(img, fm1pkg_make.KEY, app_end() or APP_END), ota, PRODUCT, region,
-                          res_base() if region else 0)
+                          res_base() if region else 0, extras)
     (OUT / name).write_bytes(pkg)
     print(f"app      {OUT / (NAME + '.bin')}  {len(img)} B")
     if region:                                # in the package (the loader writes it after the app) and beside it, for
         res = OUT / (Path(name).stem + "-res.bin")   # the host's own write (fm1_resources.py, the installer page)
         res.write_bytes(region)
         print(f"res      {res}  {len(region)} B at {res_base():#x} (in the package: the loader writes it after the app)")
+    for d, at in extras:
+        print(f"extra    {len(d)} B at {at:#x} (in the package: the loader writes it after the app)")
     print(f"loader   {LDR / 'ota.bin'}  {len(ota)} B")
     print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}")
     print(f"build    {build_id():08X}  (FM1B_BUILD: the build a crash record names, fm1_remote.py crashes)")

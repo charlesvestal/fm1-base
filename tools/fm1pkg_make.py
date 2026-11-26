@@ -16,12 +16,18 @@
              whole sectors, an entry of type 101 (as Melodee's) with the region's flash address at byte 0x14; the
              update loader writes it after the app (felucca-bsp loader/ldr_core.c ldr_res), so an install by any
              host that serves the package brings it
+  extra-ADDR.bin  with --extra FILE@ADDR (any number, in order): an app's read-only data for the plain windows outside the
+             app area and the data area, [0x93000, 0x97000) (PLAT_XDATA0) and [0xE5000, 0xFC000) (PLAT_XDATA1): raw
+             bytes, padded to whole sectors with 0xFF, an entry of type 102 with the flash address at byte 0x14 and
+             the CRC16 of the padded bytes as every entry's. The loader writes the first four after res.bin
+             (felucca-bsp loader/ldr_core.c ldr_xres), each one's first sector last: the app's own header and CRC
+             say whether they are whole, so put the region holding the header last
 
 The SDK files come from the JieLi AC79 SDK (AC79_SDK, or --sdk; else .toolchain/ac79-sdk, tools/setup_toolchain.sh's).
 All integrity checks in the format are CRC16 (poly 0x1021, init 0).
 
   fm1pkg_make.py APP.bin OTA.bin OUT.fwsc [--product FM-1_9XY] [--sdk DIR] [--res RES.bin --res-base ADDR]
-                    [--app-end 0xCE000]
+                    [--app-end 0xCE000] [--extra FILE@ADDR ...]
 """
 import argparse
 import os
@@ -39,6 +45,9 @@ FLASH_HDR = bytes.fromhex("20022f104cc900f00f001010a4ff4e5d0b41e0cd781dc856417fb
 UFW_CHIP = b"AC791N"
 RES_TYPE = 101                                       # res.bin (felucca-bsp loader/ldr_core.c LDR_RES_TYPE)
 RES_AT = 0x14                                        # its entry: the region's flash address (LDR_RES_AT)
+XRES_TYPE = 102                                      # an extra region (felucca-bsp loader/ldr_core.c LDR_XRES_TYPE)
+XRES_MAX = 4                                         # the loader writes the first four (LDR_XRES_MAX)
+XRES_WINDOWS = ((0x93000, 0x97000), (0xE5000, 0xFC000))   # PLAT_XDATA0, PLAT_XDATA1 (the staging between)
 SDK = None
 
 
@@ -179,22 +188,41 @@ def flash_image(app, key, app_hi=FLASH_SIZE):
     return bytes(f)
 
 
-def ufw(flash, ota, product, res=None, res_base=0):
-    files = [(0, "flash.bin", flash), (100, "ota.bin", ota)]
+def extra_region(d, base):
+    """an extra region's bytes padded to whole sectors, checked against its windows"""
+    d = d + b"\xFF" * (-len(d) % 0x1000)
+    if not d or base & 0xFFF or not any(lo <= base and base + len(d) <= hi for lo, hi in XRES_WINDOWS):
+        raise SystemExit(f"extra region: {len(d):#x} B at {base:#x}: whole sectors of [0x93000, 0x97000) or "
+                         "[0xE5000, 0xFC000) only")
+    return d
+
+
+def ufw(flash, ota, product, res=None, res_base=0, extras=()):
+    """extras: (bytes, flash address) for each extra region, in the order the loader writes them"""
+    files = [(0, "flash.bin", flash, 0), (100, "ota.bin", ota, 0)]
     if res:                                          # the loader reads it a sector at a time
         if res_base & 0xFFF or not 0x97000 <= res_base < 0xE0000:
             raise SystemExit(f"res.bin at {res_base:#x}: whole sectors of the data area [0x97000, 0xE0000) only")
         res = res + b"\xFF" * (-len(res) % 0x1000)
         if res_base + len(res) > 0xE0000:
             raise SystemExit(f"res.bin: {len(res):#x} B at {res_base:#x} go past the data area (0xE0000)")
-        files.append((RES_TYPE, "res.bin", res))
+        files.append((RES_TYPE, "res.bin", res, res_base))
+    if len(extras) > XRES_MAX:
+        raise SystemExit(f"extra regions: {len(extras)}, the loader writes {XRES_MAX}")
+    spans = []
+    for d, base in extras:
+        d = extra_region(d, base)
+        if any(base < hi and lo < base + len(d) for lo, hi in spans):
+            raise SystemExit(f"extra region at {base:#x}: overlaps another")
+        spans.append((base, base + len(d)))
+        files.append((XRES_TYPE, f"extra-{base:05x}.bin", d, base))   # (a name each: tools key entries by name)
     off, ents, data = 0x400, [], bytearray()
-    for i, (typ, name, d) in enumerate(files):
+    for i, (typ, name, d, at) in enumerate(files):
         off = (off + 0xFF) & ~0xFF
         e = bytearray(0x50)
         struct.pack_into("<HHHHIII", e, 0, typ, i, crc16(d), 0, off, len(d), (len(d) + 31) & ~31)
-        if typ == RES_TYPE:
-            struct.pack_into("<I", e, RES_AT, res_base)
+        if typ in (RES_TYPE, XRES_TYPE):
+            struct.pack_into("<I", e, RES_AT, at)
         e[0x40:0x40 + len(name)] = name.encode()
         ents.append((e, off, d))
         off += len(d)
@@ -240,13 +268,21 @@ def main():
                     help="the app area's end (a bigger slot: tools/build.py app_end; default 0x93000)")
     ap.add_argument("--res", type=Path, help="the app's resource region (build/NAME-res.bin), for the loader to write")
     ap.add_argument("--res-base", type=lambda s: int(s, 0), default=0, help="its flash address (app.h APP_RES_BASE)")
+    ap.add_argument("--extra", action="append", default=[], metavar="FILE@ADDR",
+                    help="an extra region for the loader to write at ADDR (XDATA0 / XDATA1), in order")
     a = ap.parse_args()
     global SDK
     SDK = a.sdk
     if a.res and not a.res_base:
         ap.error("--res needs --res-base (app.h APP_RES_BASE)")
+    extras = []
+    for x in a.extra:
+        f, _, at = x.rpartition("@")
+        if not f:
+            ap.error(f"--extra {x}: FILE@ADDR")
+        extras.append((Path(f).read_bytes(), int(at, 0)))
     pkg = ufw(flash_image(a.app.read_bytes(), a.key, a.app_end), a.ota.read_bytes(), a.product,
-              a.res.read_bytes() if a.res else None, a.res_base)
+              a.res.read_bytes() if a.res else None, a.res_base, extras)
     a.out.write_bytes(pkg)
     print(f"package {a.out}: {len(pkg)} B, identity {a.product}, chip key {a.key:#06x}")
 
