@@ -191,6 +191,13 @@ int main(void)
     assert(ub && in_order(ub, "update_ready()", "enter_uboot(\"UBOOT (USB)\");", 0));
     assert(!strstr(ub, "app_panic();") || strstr(ub, "app_panic();") > strstr(ub, "enter_uboot("));
     printf("main_fm1.c: soft key: update_ready before enter_uboot (no app_panic) ok\n");
+    /* an app's SysEx stream still open when the update or UBOOT starts (begun under PLAT_SYSEX_HOLD_MS ago, so
+     * plat_sysex_hold has not let it go yet): ended first, else the ring stays held and the update's replies never
+     * leave */
+    assert(in_order(strstr(m, "static void update_sysex_end(void)"), "if (sxs.on)", "(void)plat_sysex_end();", 0));
+    assert(in_order(loop, "app_panic();", "update_sysex_end();", "fm1_clock_restore();"));
+    assert(in_order(strstr(m, "static void enter_uboot("), "update_sysex_end();", "fm1_clock_restore();", 0));
+    printf("main_fm1.c: an open SysEx stream ended before the update and UBOOT ok\n");
     {
         const char *s = strstr(safe, "if (usb.ota_req) {"), *e = strstr(safe, "static void splash(void)");
         const char *f = strstr(m, "static int update_ready(void)");
