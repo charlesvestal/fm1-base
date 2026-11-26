@@ -27,6 +27,9 @@
  *   FM1B_BLE 0              Bluetooth MIDI (fm1.toml ble = true; tools/build.py --no-ble leaves it out)
  *   FM1B_MIRROR 0           the screen and panel mirrored over USB (fm1.toml mirror = true: mirror.c)
  *   FM1B_MSC 0              disk mode: the FM-1 as a USB drive of the app's blocks (fm1.toml msc = true: msc.c)
+ *   FM1B_USB_NET 0          a USB network adapter (fm1.toml usb_net = true: felucca-bsp's FELUCCA_NCM; needs
+ *                           wifi_stack = "own"): Link over the cable, and in MODE JANK the computer on the group's air
+ *                           (wifi_own.c un_*, wifi/wifi_usbnet.h; plat_usb_net_*)
  *   FM1B_SD 0               a microSD card on the LCD's SPI1 and its FAT files (fm1.toml sd = true: sd.c, lib/sd_fs.c,
  *                           lib/fatfs; felucca-bsp's fm1_sd_hw.h)
  *   FM1B_BACKUP 0           backup and restore of the app's objects over USB (fm1.toml backup = true: backup.c)
@@ -190,6 +193,10 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define FM1B_MSC 0
 #endif
 #define FELUCCA_MSC FM1B_MSC      /* disk mode: usb.c's mass-storage descriptors and EP3 (msc.c) */
+#ifndef FM1B_USB_NET
+#define FM1B_USB_NET 0
+#endif
+#define FELUCCA_NCM FM1B_USB_NET  /* the network adapter: usb.c's CDC-NCM function (wifi_own.c moves its frames) */
 #ifndef FM1B_SD
 #define FM1B_SD 0
 #endif
@@ -346,6 +353,9 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)   /* never waits: no room
                                    * MIDI service) */
 #else
 #include "radio_none.c"           /* the build with no radio: nothing of JieLi's linked */
+#endif
+#if FM1B_USB_NET && !FM1B_WIFI_OWN
+#error "FM1B_USB_NET (fm1.toml usb_net) needs the own Wi-Fi stack (wifi_stack = \"own\"): its IP layer and Link"
 #endif
 #if FM1B_WIFI_OWN
 #include "wifi_own.c"             /* WiFi on the own stack (wifi/, felucca-bsp's chip/fm1_wifi.h; link/ with FM1B_LINK) */

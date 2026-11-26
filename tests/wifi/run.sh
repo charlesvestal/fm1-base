@@ -41,6 +41,8 @@ t wifi_sta wifi_sta_test.c            # WPA2: SHA-1, HMAC, PBKDF2, AES, key wrap
 t wifi_ap wifi_ap_test.c              # the authenticator (the host's simulated access point) against the station
 t wifi_apip wifi_apip_test.c          # the IP layer as an access point (the simulated one's): FromDS, ARP, DHCP, ping
 t wifi_nets wifi_nets_test.c          # the networks kept, the scan's table, the beacons' security
+t usbnet usbnet_test.c                # the USB network's frames (usb_net): the IP layer, the air of MODE JANK and the cable
+t usbnet_own usbnet_own_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_BLE=1 -DFM1B_USB_NET=1 -DFM1B_WIFI_JANK=1   # .. its service in device/wifi_own.c: OFF, MODE JANK, a station
 t wifi_wlc wifi_wlc_test.c -Idevice   # the coexistence table (device/fm1_wifi_wlc.h) through felucca-bsp's fm1_wifi_up, word for word
 t wifi_tune wifi_tune_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_WIFI_AP=1 -DFM1B_BLE=1   # the tuning: (a) the stored calibration, (b) the RX filter, (c) the AGC, (f) the rate
 t wifi_apd wifi_apd_test.c -DPLAT_HOST -DFM1B_WIFI=1 -DFM1B_WIFI_OWN=1 -DFM1B_WIFI_AP=1 -DFM1B_BLE=1   # MODE AP (device/wifi_own_ap.c)

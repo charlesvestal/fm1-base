@@ -1483,6 +1483,9 @@ static void fm1_main(void)
     cpu2_booting = 0;
 #endif
     audio_init();
+#if FM1B_USB_NET
+    usb_net_boot();                                 /* the network adapter's MAC, before a computer reads it */
+#endif
     usb_start();
 #if FM1B_TRS
     uart_midi_init();                               /* before TIMER5: it read-modify-writes port H too */
