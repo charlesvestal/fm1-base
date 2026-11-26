@@ -15,8 +15,6 @@
  * The TRS jack: MIDI OUT (midi_trs_out.c).
  * The store's owner (boards/smk37/fm1_flash.h FL_OWNER): checked at every boot, before the store is read. */
 
-#define SMK_MASTER_STEP 96                         /* a detent of K5 */
-#define SMK_MASTER_SAVE_MS 2000u
 #define SMK_MASTER_ENC 4u                          /* K5 (0-based) */
 _Static_assert(FM1_TRIM_BASE == FL_USRTRIM, "the input layer reads the calibration record where the flash map puts it");
 _Static_assert(FL_DATA_LO == PLAT_DATA_LO && FL_DATA_HI == PLAT_DATA_HI, "plat.h's data window is the SMK's");
@@ -77,37 +75,11 @@ int32_t plat_battery_raw(void) { return batt_raw; }   /* (mux C's divider, avera
 #endif
 int plat_headphones(void) { return -1; }
 
-/* MASTER: K5's detents on a virtual level, kept in the panel object */
-static int32_t smk_master = 2896;                  /* half gain, until the panel object or the app says */
-static uint32_t smk_master_t;                      /* the last turn (fm1_ms), 0: nothing to save */
-void plat_master_set(uint32_t q12)
-{
-    smk_master = (int32_t)(q12 > 4096u ? 4096u : q12);
-    master_pos = mirror_in_master(remote.master >= 0 ? (uint32_t)remote.master : (uint32_t)smk_master);
-    smk_master_t = fm1_ms | 1u;                    /* kept like a turn of K5 (the save skips a level already there) */
-}
-static void smk_master_load(void)                  /* after panel_init: the level saved with the calibration */
-{
-    if (panel.master <= 4096u)
-        smk_master = (int32_t)panel.master;
-    master_pos = (uint32_t)smk_master;
-}
+#include "smk37_master.h"   /* the virtual MASTER: K5's detents, kept in the panel object (plat_master_set) */
 static void smk_main_poll(void)                    /* the main loop: K5, the wheels, the pedal, the battery's average, the saved master */
 {
-    int32_t s = fm1_enc_take(SMK_MASTER_ENC);
     smk_analog_poll();
-    if (s) {
-        smk_master = clamp(smk_master + s * SMK_MASTER_STEP, 0, 4096);
-        smk_master_t = fm1_ms | 1u;
-    }
-    master_pos = mirror_in_master(remote.master >= 0 ? (uint32_t)remote.master : (uint32_t)smk_master);
-    if (smk_master_t && fm1_ms - smk_master_t >= SMK_MASTER_SAVE_MS) {
-        smk_master_t = 0;
-        if (panel.master != (uint32_t)smk_master) {
-            panel.master = (uint32_t)smk_master;
-            plat_store_save(OBJ_PANEL, &panel, sizeof panel);
-        }
-    }
+    smk_master_poll(fm1_enc_take(SMK_MASTER_ENC));
     if (fm1_in.battery)
         batt_raw = batt_raw ? batt_raw + ((int32_t)fm1_in.battery - batt_raw) / 16 : (int32_t)fm1_in.battery;
 }

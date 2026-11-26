@@ -78,6 +78,9 @@ run smk37-flash sh -c "$CC -std=c99 -Wall -Wextra -Werror -Wno-unused-function -
 # the SMK-37's wheels and pedal (device/smk37_analog.h): the rest is the first look after the settling window
 run smk37-analog sh -c "$CC -std=c99 -Wall -Wextra -Werror -o $OUT/smk37_analog_test tests/smk37_analog_test.c && \
     $OUT/smk37_analog_test"
+# the SMK-37's virtual MASTER (device/smk37_master.h): one save after K5's turning, never a save a detent
+run smk37-master sh -c "$CC -std=c99 -Wall -Wextra -Werror -o $OUT/smk37_master_test tests/smk37_master_test.c && \
+    $OUT/smk37_master_test"
 # the same with app.h APP_STORE_BOUNCE (one page of RAM for the store): the same results, the same flash byte for byte
 run storage-bounce sh -c "$CC -O2 -w -DAPP_STORE_BOUNCE=1 -o $OUT/storage_bounce_test tests/storage_test.c && \
     $OUT/storage_bounce_test > $OUT/storage_bounce.txt && $OUT/storage_test > $OUT/storage_plain.txt && \
