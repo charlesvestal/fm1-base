@@ -1634,6 +1634,9 @@ uint32_t plat_cpu_pct(void) { return cpu_pct; }
 #ifdef APP_CPU_KHZ
 uint32_t plat_cpu_khz(void) { return 0; }        /* (no clock to speak of: the host's) */
 #endif
+#ifdef APP_CPU_396
+int plat_cpu_396(void) { return 0; }             /* (the simulator: the stock clock, whatever the app chose) */
+#endif
 static void ds_fill(ds_rec_t *r)                    /* what the simulator has of main_fm1.c's counters (the rest 0) */
 {
     r->up_s = (now_ms - hcr_boot_ms) / 1000u, r->halves = hds_halves;

@@ -23,10 +23,15 @@
 #endif
 #if FM1B_CPU_396
 #define SD_LSB_KHZ 66000u
+#define SD_LSB_TOP 66000u
+#elif defined(APP_CPU_396)                 /* (the clock the app's choice: the start's divider for the faster) */
+#define SD_LSB_KHZ (plat_cpu_396() ? 66000u : 60000u)
+#define SD_LSB_TOP 66000u
 #else
 #define SD_LSB_KHZ 60000u                  /* SPI1's source: LSB, 60 MHz at the stock 360 MHz */
+#define SD_LSB_TOP 60000u
 #endif
-#define SD_BAUD_SLOW ((SD_LSB_KHZ + 399u) / 400u - 1u)          /* 400 kHz at most: the start */
+#define SD_BAUD_SLOW ((SD_LSB_TOP + 399u) / 400u - 1u)          /* 400 kHz at most: the start */
 #ifndef FM1B_SD_FINE
 #define FM1B_SD_FINE 0
 #endif

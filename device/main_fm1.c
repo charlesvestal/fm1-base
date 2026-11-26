@@ -28,6 +28,10 @@ struct fm1b_dbg {
 #endif
 } fm1b_dbg __attribute__((section(".noinit")));
 static uint8_t safe_mode;                           /* two failed boots: no audio, USB on (safe_main) */
+#if FM1B_CPU_396 || defined(APP_CPU_396)
+static uint8_t cpu_396;                             /* the start raised the CPU to 396 MHz (plat_cpu_396) */
+int plat_cpu_396(void) { return cpu_396; }
+#endif
 int8_t clock_fix;                                   /* fm1_clock_stock() at the start: 0 stock already, 1 set, -1 failed */
 static uint8_t power_boot[4];                       /* ANA_CON0, CON5, CON7, WLDO12_AUTO as the start found them */
 static int8_t power_fix;                            /* fm1_power_stock(): 1 the DC-DC turned on, 0 it was on */
@@ -1446,11 +1450,18 @@ static void fm1_main(void)
 #endif
     if (safe_mode)
         safe_main();                                /* never returns */
+#if FM1B_CPU_396 || defined(APP_CPU_396)
+    /* fm1.toml cpu_clock = 396, or the app's saved choice (APP_CPU_396: app_cpu_396, read here from its store): PLL1
+     * 24 / 12 * 297 = 594 MHz, the system clock 2/3 of it (JieLi's top, not for mass production); after safe mode's
+     * choice, so two hung starts start at 360. The app's choice also waits out a start that failed (a crash or a hang
+     * in the first 30 s: bootguard): the next start is at 360, the one after a start that ran at 396 again. The resets
+     * put the stock clock back first (felucca-bsp fm1_sys.h) */
 #if FM1B_CPU_396
-    {                                               /* fm1.toml cpu_clock = 396: PLL1 24 / 12 * 297 = 594 MHz, the
-                                                     * system clock 2/3 of it (JieLi's top, not for mass production);
-                                                     * after safe mode's choice, so two hung starts start at 360. The
-                                                     * resets put the stock clock back first (felucca-bsp fm1_sys.h) */
+    cpu_396 = 1;
+#else
+    cpu_396 = (uint8_t)(flash_ok && bootguard.failed == 0u && app_cpu_396());
+#endif
+    if (cpu_396) {
         uint32_t f = irq_save();
         fm1_clock_pll1(297u);
         irq_restore(f);
@@ -1632,8 +1643,8 @@ static void fm1_main(void)
 #endif
             if (flash_ok)
                 ota_session();                      /* returns only if nothing was committed */
-#if FM1B_CPU_396
-            {                                       /* (nothing installed: back to cpu_clock's) */
+#if FM1B_CPU_396 || defined(APP_CPU_396)
+            if (cpu_396) {                          /* (nothing installed: back to the start's clock) */
                 uint32_t f = irq_save();
                 fm1_clock_pll1(297u);
                 irq_restore(f);

@@ -220,7 +220,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   cpu_clock = 396            the CPU at 396 MHz instead of the stock 360 (FM1B_CPU_396: PLL1's multiplier 297, felucca-bsp
                              fm1_clock_pll1; set after safe mode's choice, so two hung starts fall back to 360; fm1-base
                              puts the stock clock back before its resets and updates). JieLi's top, not for mass
-                             production: try it on several FM-1s before a release. Off by default (360)
+                             production: try it on several FM-1s before a release. Off by default (360). An app may
+                             choose it at each start instead (its own setting: plat.h APP_CPU_396)
   audio_ahead = true         audio_aside a block ahead (FM1B_AUDIO_AHEAD): the block rendered last time copied in first,
                              then the next rendered, so a render may run up to two halves long without a dropout (a
                              spike at a chord's start); two late in a row drop a half as before. One block (5.8 ms) more

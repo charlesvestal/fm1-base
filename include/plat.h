@@ -830,6 +830,8 @@ uint32_t plat_cpu_khz(void);           /* the CPU's clock, kHz: 360000 when its 
                                         * turns the render's microseconds into instructions (a CPU guard's cost model);
                                         * built for an app with APP_CPU_KHZ (below) */
 uint32_t plat_xruns(void);
+int plat_cpu_396(void);                /* 1: this start raised the CPU to 396 MHz (APP_CPU_396 or fm1.toml cpu_clock = 396:
+                                        * built with either) */
 
 /* a free-running count of PLAT_TICKS_PER_US ticks a microsecond, for timing spans shorter than plat_ms can: a part of
  * the render, say. Device: TIMER4, from the 24 MHz crystal (one register read); host: its monotonic clock, at the same
@@ -1028,6 +1030,10 @@ int app_stats_quiet(void);
  *   APP_BATTERY_RAW (no function) plat_battery_raw and plat_battery_charging are built (the battery's reading, for
  *                   an app's own volts; whether 5 V is on the supply and the chip's charger runs)
  *   APP_CPU_KHZ     (no function) plat_cpu_khz is built (the CPU's clock)
+ *   APP_CPU_396     int app_cpu_396(void)        at the start, once, before the platform's set-up (the store readable:
+ *                   plat_store_head): 1 = run the CPU at 396 MHz instead of the stock 360 (the app's saved setting; fm1.toml
+ *                   cpu_clock = 396 does it at build time). Not after a start that failed (bootguard: a crash or a hang
+ *                   in the first 30 s), nor in safe mode: those start at 360. plat_cpu_396 says what the start did
  *   APP_DIM_LEVELS  (no function) plat_dim_ns is built (the dim lights at any of many brightnesses)
  *   APP_QUIET       void app_quiet(int32_t *lr, uint32_t n)   the render while the flash must not be read (the
  *                   radio's first second, FM1B_BLE): keep time without sound (default: silence)
