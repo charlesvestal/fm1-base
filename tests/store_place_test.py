@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Charles Vestal
 """app.h's store places against where the store may be (tools/build.py store_values, store_errors): APP_STORE_MAP's
 A/B pairs and the pool in the data area, above the app area (0x97000, or fm1.toml app_end's end), or at Felucca's
-pairs (0xFC000, 0xE5000); anything else stops the build, as the store would refuse those sectors at run time. The
+pairs (0xFC000, 0xE5000; a pool too, if it fits there); anything else stops the build, as the store would refuse those sectors at run time. The
 probe's IR read in both forms the compiler writes. Run from the repo root:
   python3 tests/store_place_test.py"""
 import importlib
@@ -50,6 +50,12 @@ ok(len(got) == 1 and "APP_STORE_POOL_BASE" in got[0],
    f"the same pool under a bigger slot's end (0xB0000): stops; the pooled objects' map entries are not used ({got})")
 ok(build.store_errors(LOOM_MAP, area(pool=(0x97000, 20, 80, 2, 21))) != [],
    "a pool whose old pairs reach past the data area: stops")
+# JV's: the settings and the calibration (objects 0..1) pooled in the three sectors at 0xFC000 (its old pair the first two)
+JV_POOL = (0xFC000, 3, 2, 0, 2)
+ok(build.store_errors([0xFC000, 0xDE000], area(pool=JV_POOL)) == [], "JV's pool at 0xFC000..0xFEFFF: no error")
+got = build.store_errors([0xFC000, 0xDE000], area(pool=(0xFD000, 3, 2, 0, 2)))
+ok(len(got) == 1 and "0xfd000" in got[0], f"a pool at 0xFC000 that runs past 0xFEFFF: stops ({got})")
+ok(build.store_errors([0xFC000], area(pool=(0xE5000, 2, 2, 0, 1))) == [], "a pool in the AUTO pair at 0xE5000: no error")
 
 ir = ("@fm1b_probe_map = local_unnamed_addr constant [3 x i32] [i32 1032192, i32 901120, i32 909312], align 4\n"
       "@fm1b_probe_area = local_unnamed_addr constant [8 x i32] [i32 618496, i32 917504, i32 0, i32 0, i32 0, "

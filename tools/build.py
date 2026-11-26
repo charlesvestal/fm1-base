@@ -689,7 +689,8 @@ def store_errors(store_map, area):
     """what app.h places in the flash for the store against where the store may be (felucca-bsp FL_STORE_OK, the
     store's st_erase and st_prog): each A/B pair of APP_STORE_MAP (a pooled object's entry is not used) and the pool's
     sectors, the old pairs it moves too, whole 4 KiB sectors in the data area [PLAT_DATA_LO, PLAT_DATA_HI) (above the
-    app area: app_end's, or 0x97000), the pair at 0xFC000 or the one at 0xE5000. A list of what is not"""
+    app area: app_end's, or 0x97000), at 0xFC000..0xFEFFF or at 0xE5000..0xE6FFF (a pair, or a pool that fits: JV's
+    settings and calibration share three sectors at 0xFC000). A list of what is not"""
     data_lo, data_hi, pooled, base, n, old, obj0, objn = area
     def inside(lo, hi, regions):
         return any(a <= lo and hi <= b for a, b in regions)
@@ -704,10 +705,11 @@ def store_errors(store_map, area):
                           if data_lo > 0x97000 else "") + ", 0xfc000..0xfefff or 0xe5000..0xe6fff")
     if pooled:
         hi = base + max(n, old) * 0x1000
-        if base % 0x1000 or not inside(base, hi, [(data_lo, data_hi)]):
+        if base % 0x1000 or not inside(base, hi, store):
             errors.append(f"APP_STORE_POOL_BASE {base:#x} (the pool and the pairs it moves, [{base:#x}, {hi:#x})): "
                           f"the pool keeps to the data area [{data_lo:#x}, {data_hi:#x})"
-                          + (" (above the app area, fm1.toml app_end)" if data_lo > 0x97000 else ""))
+                          + (" (above the app area, fm1.toml app_end)" if data_lo > 0x97000 else "")
+                          + ", 0xfc000..0xfefff or 0xe5000..0xe6fff")
     return errors
 
 
