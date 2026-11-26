@@ -796,7 +796,10 @@ def board_flags():
     if BOARD == "fm1":
         return []
     n, name, _, _ = SMK_MODELS[MODEL]
-    return ["-DPLAT_SMK37=1", f"-DPLAT_SMK37_MODEL={n}", f'-DPLAT_SMK37_MODEL_NAME="{name}"']
+    flags = ["-DPLAT_SMK37=1", f"-DPLAT_SMK37_MODEL={n}", f'-DPLAT_SMK37_MODEL_NAME="{name}"']
+    if CONF.get("app_smk_8enc"):
+        flags.append("-DAPP_SMK_8ENC=1")
+    return flags
 
 
 def board_suffix():

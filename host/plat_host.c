@@ -209,8 +209,8 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
         mirror_blit(x, y, w, h, px);
 #endif
 }
-#include "app.h"                       /* before gfx.c: the app may size the canvas (APP_CANVAS_PX), as on the device */
 #include "plat.h"
+#include "app.h"                       /* before gfx.c: the app may size the canvas (APP_CANVAS_PX), as on the device */
 #include "gfx.c"
 
 
