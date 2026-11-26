@@ -219,6 +219,12 @@ int main(void)
     un_fake.ready = 0;
     run(2);
     check(!un.up && !un.usb && !wl.on && plat_usb_net() == USB_NET_WAIT, "the computer gone: no service");
+    a0 = air_n;                                   /* (a frame the cable's own service sends while it starts, before
+                                                   * un_poll marks the cable up: the radio may be off) */
+    un.usb = 1;
+    wl_send(42);
+    un.usb = 0;
+    check(air_n == a0, "the cable's service starting: nothing to the radio");
     plat_usb_net_present(0);
     check(plat_usb_net() == USB_NET_OFF, "not presented: OFF");
     printf("usbnet_own: %d of %d checks failed\n", fails, checks);

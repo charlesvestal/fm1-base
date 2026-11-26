@@ -416,7 +416,7 @@ static int un_local(uint32_t len)                 /* the IP layer's frame at own
     uint32_t w, n, cap;
     uint8_t *e;
     if (!un.up)
-        return 1;
+        return !un.usb;                           /* (the cable's own service starting: never the radio, which may be off) */
     e = un_room(&cap);
     w = un_from_local(&un.hub, own_frame(), len, e, cap, &n);
     if (w & UN_USB)

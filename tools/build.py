@@ -285,7 +285,7 @@ app.h); the build prints what it has.
                              in MODE JANK, and in MODE JANK the computer on the group's air. It takes the console's
                              endpoints and the audio output's feedback's: with usb_console or usb_audio_out_feedback it is
                              presented only when the app asks (plat_usb_net_present), in their place
-  wifi_mem = "app"         with wifi_stack = "own": Link's node (1.8 KB) and the access point's state (1.7 KB) lent by
+  wifi_mem = "app"          with wifi_stack = "own": Link's node (1.8 KB) and the access point's state (1.7 KB) lent by
                              the app while they may run, not static RAM (FM1B_WIFI_MEM; plat.h plat_link_mem,
                              plat_wifi_ap_mem): an app whose arena gets them back while Wi-Fi is off. Default "static"
   gen = ["tools/places.py --out {gen}/places.h"]   the app's generators, run before the build (relative to APP_DIR;
