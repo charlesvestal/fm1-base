@@ -134,6 +134,9 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
 #ifndef FM1B_AUDIO_AHEAD
 #define FM1B_AUDIO_AHEAD 0                          /* fm1.toml audio_ahead = true: 1 (with FM1B_AUDIO_ASIDE) */
 #endif
+#ifndef FM1B_AUDIO_BEHIND
+#define FM1B_AUDIO_BEHIND 2                         /* fm1.toml audio_behind: late renders in a row before a half drops */
+#endif
 #if FM1B_AUDIO_ASIDE
 #include "audio_commit.c"                           /* the half rendered aside, copied in while its half is free;
                                                      * FM1B_AUDIO_ASIDE 0 (the default): straight into the DMA's half */
@@ -154,8 +157,10 @@ void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_is
                                                      * pending, served as soon as this returns (a block's worth of
                                                      * latency for a render up to two halves long) */
         if (fm1_audio_pending() & FM1_AUDIO_HALF) {
-            if (++behind >= 2u) {                   /* (two in a row: that half dropped, as without the lookahead,
-                                                     * so the main loop gets its time; without this it starved) */
+            if (++behind >= FM1B_AUDIO_BEHIND) {    /* (that many in a row: that half dropped, as without the
+                                                     * lookahead, so the main loop gets its time; without this it
+                                                     * starved. A run that catches up within the aside block's
+                                                     * time plays whole: fm1.toml audio_behind) */
                 fm1_audio_ack_half();
                 behind = 0;
                 fm1b_dbg.late++;
