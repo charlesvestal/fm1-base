@@ -21,6 +21,12 @@ static void fm1_delay_ms(uint32_t ms) { (void)ms; }
 #define FELUCCA_UAC_CLOCK() 0u                  /* (the packets' clock: no packets here) */
 #include "usb.c"
 #include "../device/uac_mix.h"
+#ifndef UA_RING                         /* (the default input, as it was: a static ring, no pointer to take once) */
+#define UA_RING()
+#endif
+#ifndef UO_RING
+#define UO_RING()
+#endif
 
 #define N 32u
 #define APP 500000                      /* the app's render, 24-bit */
@@ -39,6 +45,7 @@ static int near(long a, long b) { return a - b < 2 && b - a < 2; }
 static void feed(uint32_t n)            /* the computer's packets into the output ring */
 {
     uint32_t i;
+    UO_RING();                          /* (felucca-bsp: the ring may be lent, so a pointer to it) */
     for (i = 0; i < n; i++)
         uo_ring[(uo_w + i) & (UO_N - 1u)] = (uint32_t)(uint16_t)PC | (uint32_t)(uint16_t)(-PC) << 16;
     uo_w += n;
@@ -50,6 +57,7 @@ static void block(uint32_t gain, uint32_t master, int full, uint32_t play, int32
 {
     int32_t o[2u * N];
     uint32_t i, w = ua_w;
+    UA_RING();
     for (i = 0; i < N; i++)
         o[2u * i] = o[2u * i + 1u] = APP;
 #if FELUCCA_UAC_OUT
@@ -71,6 +79,7 @@ static void slide(uint32_t g0, uint32_t gain, uint32_t master)
 {
     int32_t o[2u * N];
     uint32_t i, w = ua_w;
+    UA_RING();
     const long d = ((long)APP * gain - (long)APP * g0) / 4096 / (long)N;
     for (i = 0; i < N; i++)
         o[2u * i] = o[2u * i + 1u] = APP;

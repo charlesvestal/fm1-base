@@ -20,8 +20,23 @@
  *   FM1B_UAC_DEEP 0         1: the USB audio input keeps a half more in hand, for renders that take most of
  *                           their time (its 4 KB ring in the app's pool; 5.8 ms more latency)
  *   FM1B_UAC_RING_POOL 0    1: the USB audio input's 2 KB ring in the pool, its RAM left to the app
+ *   FM1B_UAC_MEM 0          1: the USB audio rings (in and out) a block the app lends only while the computer streams
+ *                           (fm1.toml usb_audio_mem = "app": plat.h plat_usb_audio_mem), not static RAM
  *   FM1B_UAC_OUT 1          USB audio output: the computer plays through the FM-1, mixed after the app and after the
  *                           USB recording's tap, at MASTER and plat_usb_play_gain (device/uac_mix.h)
+ *   FM1B_UAC_CH 2           the USB audio input's channels (fm1.toml usb_audio_in_channels, 2, 4 or 8): 2 the master; any
+ *                           other count the app's own (APP_USB_CAPTURE: app_usb_capture), 2 may be too
+ *   FM1B_UAC_24 0           1: the USB audio input in 24-bit too (follows fm1.toml usb_audio_in_channels: up to 4 channels; its alt setting 2)
+ *   FM1B_UAC_HOST_CLOCK 0   1: the USB audio input on the computer's clock (fm1.toml usb_audio_in_host_clock):
+ *                           resampled to the host's 44.1 kHz, a synchronous endpoint; 0 the FM-1's own (asynchronous)
+ *   FM1B_UAC_OUT_FEEDBACK 0 1: the USB audio output asynchronous (fm1.toml usb_audio_out_feedback): the computer sends
+ *                           at the FM-1's own rate (explicit feedback on EP3 IN), played as sent, nothing resampled;
+ *                           0 adaptive (resampled to the FM-1's clock). Not with FM1B_CDC (EP3)
+ *   FM1B_UAC_OUT_24 0       1: the USB audio output in 24-bit too (fm1.toml usb_audio_out_24bit: its alt setting 2;
+ *                           alt 1 stays 16-bit): the computer's 24 bits played whole
+ *   FM1B_UAC_SPLIT 0        1: the USB audio input and output as two audio functions of their own, named (fm1.toml
+ *                           usb_audio_split, usb_audio_in_name, usb_audio_out_name, usb_audio_in_channel_names): two
+ *                           devices on a computer, each on its own clock, MIDI apart. Not with FM1B_CDC
  *   FM1B_TRS 1              MIDI in on the TRS jack
  *   APP_TOUCH               velocity and pressure from the keys (lib/touch.h)
  *   FM1B_BLE 0              Bluetooth MIDI (fm1.toml ble = true; tools/build.py --no-ble leaves it out)
@@ -148,11 +163,38 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #endif
 #define FELUCCA_UAC_OUT FM1B_UAC_OUT
 #ifndef FM1B_UAC_CH
-#define FM1B_UAC_CH 2             /* the USB audio input's channels: the master, and the app's on 3..N (plat_usb_ch) */
+#define FM1B_UAC_CH 2             /* the USB audio input's channels: 2 the master, else the app's (APP_USB_CAPTURE) */
 #endif
 #define FELUCCA_UAC_CH FM1B_UAC_CH
+#ifndef FM1B_UAC_24
+#define FM1B_UAC_24 0             /* 1: 24-bit too (the input's alt setting 2; alt 1 stays 16-bit) */
+#endif
+#define FELUCCA_UAC_24 FM1B_UAC_24
+#ifndef FM1B_UAC_HOST_CLOCK
+#define FM1B_UAC_HOST_CLOCK 0     /* 1: the input on the computer's clock (felucca-bsp resamples it to 44.1 kHz) */
+#endif
+#define FELUCCA_UAC_HOST_CLOCK FM1B_UAC_HOST_CLOCK
+#ifndef FM1B_UAC_OUT_FEEDBACK
+#define FM1B_UAC_OUT_FEEDBACK 0   /* 1: the output asynchronous, its rate the FM-1's (felucca-bsp's explicit feedback) */
+#endif
+#define FELUCCA_UAC_OUT_FEEDBACK FM1B_UAC_OUT_FEEDBACK
+#ifndef FM1B_UAC_OUT_24
+#define FM1B_UAC_OUT_24 0         /* 1: the output in 24-bit too (its alt setting 2; alt 1 stays 16-bit) */
+#endif
+#define FELUCCA_UAC_OUT_24 FM1B_UAC_OUT_24
+#ifndef FM1B_UAC_SPLIT
+#define FM1B_UAC_SPLIT 0          /* 1: the input and the output as two audio functions (felucca-bsp's names, IADs) */
+#endif
+#define FELUCCA_UAC_SPLIT FM1B_UAC_SPLIT
+#ifndef FM1B_UAC_CAPTURE
+#define FM1B_UAC_CAPTURE 0        /* 1: the app fills every channel (usb_audio_in_channels, APP_USB_CAPTURE) */
+#endif
+#define FELUCCA_UAC_CAPTURE FM1B_UAC_CAPTURE
 #if FM1B_UAC_CH > 2
 #define FELUCCA_UAC_STALL_POLLS 200u     /* the stream serviced every 10 kHz tick (main_fm1.c): 20 ms of polls */
+#endif
+#if FM1B_UAC && FM1B_UAC_CAPTURE && !defined APP_USB_CAPTURE
+#error "usb_audio_in_channels: the app gives them (app.h APP_USB_CAPTURE, app_usb_capture)"
 #endif
 #ifndef FM1B_UAC_DEEP
 #define FM1B_UAC_DEEP 0           /* 1: the USB audio input holds a half more (renders past ~40 % of their time
@@ -166,6 +208,10 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #if FM1B_UAC_DEEP || FM1B_UAC_RING_POOL
 #define FELUCCA_UAC_RING_ATTR PLAT_POOL
 #endif
+#ifndef FM1B_UAC_MEM
+#define FM1B_UAC_MEM 0            /* 1: the USB audio rings lent by the app while the computer streams (plat_usb_audio_mem) */
+#endif
+#define FELUCCA_UAC_MEM FM1B_UAC_MEM
 #ifndef FELUCCA_ID
 #define FELUCCA_ID "FM-1_000"     /* package identity (tools/build.py passes the firmware's) */
 #endif
@@ -189,6 +235,9 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define FM1B_USB_HOST 0
 #endif
 #define FELUCCA_USB_HOST FM1B_USB_HOST /* the USB MIDI host (plat_usb_host) */
+#if defined APP_USB_HOST_NAME && FM1B_USB_HOST
+#define FELUCCA_USB_HOST_NAME 1      /* the device's product string (plat_usb_host_name) */
+#endif
 #ifndef FM1B_MSC
 #define FM1B_MSC 0
 #endif

@@ -327,10 +327,54 @@ void plat_host_patience(uint32_t try_ms, uint32_t total_ms)
 /* USB audio full: the render at full level for the USB audio input, MASTER after it (main_fm1.c render_block) */
 static volatile uint8_t uac_full;
 void plat_usb_audio_full(int on) { uac_full = (uint8_t)(on != 0); }
+int plat_usb_audio_rec(void)
+{
+#if FELUCCA_UAC
+    return uac_capturing();
+#else
+    return 0;
+#endif
+}
+#ifdef APP_USB_STATS
+/* (built for an app that shows them, APP_USB_STATS: another's image stays as it was, byte for byte) */
+void plat_usb_audio_stats(plat_usb_audio_stats_t *s)
+{
+    uint32_t i;
+    for (i = 0; i < sizeof *s; i++)
+        ((uint8_t *)s)[i] = 0;
+#if FELUCCA_UAC
+    s->in_packets = uac.pkts, s->in_underruns = uac.underruns, s->in_overruns = uac.overruns;
+    s->in_missed = uac.missed, s->in_stalls = uac.stalls, s->in_alt = uac.alt;
+#endif
+#if FELUCCA_UAC_OUT
+    s->out_packets = uo.pkts, s->out_frames = uo.frames, s->out_underruns = uo.underruns, s->out_overruns = uo.overruns;
+    s->out_alt = uo.alt;
+#endif
+#if FELUCCA_UAC_OUT_FEEDBACK
+    s->out_feedback = uo.alt ? uo.fb : 0u;
+#endif
+}
+#endif
+uint32_t plat_usb_audio_mem_bytes(void)
+{
+#if FELUCCA_UAC && FELUCCA_UAC_MEM
+    return uac_mem_bytes();
+#else
+    return 0u;
+#endif
+}
+void plat_usb_audio_mem(void *p)
+{
+#if FELUCCA_UAC && FELUCCA_UAC_MEM
+    uac_mem(p);
+#else
+    (void)p;
+#endif
+}
 /* the computer's USB audio's level in the mix, 0..4096 (uac_mix.h; read by the render: one word, no lock) */
 static volatile uint32_t usb_play_q12 = 4096u;
 void plat_usb_play_gain(uint32_t q12) { usb_play_q12 = q12 > 4096u ? 4096u : q12; }
-#if FM1B_UAC && FM1B_UAC_CH > 2
+#if FM1B_UAC && FM1B_UAC_CH > 2 && !FM1B_UAC_CAPTURE
 int16_t *plat_usb_ch(uint32_t off, uint32_t *run) { return uac_ch_frame(off, run); }
 #else
 int16_t *plat_usb_ch(uint32_t off, uint32_t *run) { (void)off; *run = 0; return 0; }
@@ -501,21 +545,20 @@ const uint8_t *plat_chip_uid(void) { return 0; }
 #ifdef FELUCCA_USB_SERIAL_FN
 /* the USB serial number (fm1.toml usb_serial, felucca-bsp FELUCCA_USB_SERIAL_FN): plat_chip_uid's 16 bytes folded into 12
  * (the last 4 over the first 4), 24 hex digits; "" with no ID (the bsp then says "0"). The same on every firmware with it,
- * so a computer tells FM-1s apart whichever port they are in (macOS's MIDI setup goes by the port without one) */
+ * so a computer tells FM-1s apart whichever port they are in (macOS's MIDI setup goes by the port without one).
+ * With FM1B_USB_SERIAL_MIX (a firmware with USB audio options set: tools/build.py usb_serial_mix) the digest of its
+ * configuration is mixed in (usb_serial_mix.h), so Windows sees a new device when the descriptors change */
+#include "usb_serial_mix.h"
+#ifdef FM1B_USB_SERIAL_MIX
+_Static_assert(sizeof(FM1B_USB_SERIAL_MIX) == 25, "FM1B_USB_SERIAL_MIX: 24 hex digits");
+#define FM1B_SERIAL_MIX FM1B_USB_SERIAL_MIX
+#else
+#define FM1B_SERIAL_MIX ((const char *)0)
+#endif
 const char *FELUCCA_USB_SERIAL_FN(void)
 {
     static char sn[25];
-    const uint8_t *u = plat_chip_uid();
-    uint32_t i;
-    if (!u)
-        return "";
-    for (i = 0; i < 12u; i++) {
-        uint8_t b = (uint8_t)(u[i] ^ (i < 4u ? u[12u + i] : 0u));
-        sn[2u * i] = "0123456789ABCDEF"[b >> 4];
-        sn[2u * i + 1u] = "0123456789ABCDEF"[b & 15u];
-    }
-    sn[24] = 0;
-    return sn;
+    return usb_serial_make(sn, plat_chip_uid(), FM1B_SERIAL_MIX);
 }
 #endif
 int plat_dev_id(void) { return plat_uid_hash16(plat_chip_uid()); }
