@@ -15,7 +15,11 @@
  *         after it are the block's head (copied by the CPU); the rest of the block and its CRC16 come by one DMA
  *         into the slot's tail. No token: another hunt.
  *   DATA  the slot full. The DMA's rounding bytes past the CRC16 (0 to 3) are the next hunt's first bytes. */
-#define SDA_PRIO 5u                        /* above the audio (ALNK0 3) and the input scan (TIMER5 4) */
+#define SDA_PRIO 4u                        /* above the audio (ALNK0 3), the input scan's own (TIMER5 4): never inside
+                                            * usb_poll. At 5 (inside it, every ~7 us while the card waits) the USB MIDI
+                                            * IN endpoint went silent on one FM-1 within minutes of a start, 3 starts of
+                                            * 3, until a power cycle; at 4: none in 2 starts (2026-11-19). Why the
+                                            * preemption does it is not known */
 #define SDA_HUNT 16u                       /* bytes a hunt: ~7 us at 20 MHz between interrupts while the card waits */
 #define SDA_TAIL 520u                      /* 514 + rounding, a multiple of 4 */
 enum { SDA_OFF, SDA_HUNTING, SDA_DATA, SDA_FULL, SDA_ERR };
