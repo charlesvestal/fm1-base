@@ -4,7 +4,9 @@
 <!-- The live mirror (device/mirror.c's events mode): the FM-1 sends what happens (its buttons, keys with their velocity
      and pressure, knobs, MASTER, the MIDI that comes in) and its state; this page runs the same build of the app
      (app.wasm, the emulator's) with them, so the screen is drawn here, whole, at full frame rate. The emulator is
-     silent: the sound is the FM-1's. tools/build.py APP_DIR --web puts it next to the emulator (build/emu/live.html). -->
+     silent: the sound is the FM-1's. An app whose state assumes its saved objects (app.h APP_MIRROR_PROJECT: a
+     sequencer's patterns) has them read first, as a backup reads them, and put into this copy. tools/build.py APP_DIR
+     --web puts it next to the emulator (build/emu/live.html). -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -63,6 +65,14 @@ function unpack7(src) {
 }
 // a request: 0 off, 3 the events mode (and its keep-alive), 4 the state again
 const request = (op) => Uint8Array.from([0xF0, ...pack7([0x00, 0x59, MR_REQ, 1, 0, 0, op, ~op & 0xFF]), 0xF7]);
+// a host message in the update's framing (ota.c ota_take), as web/backup/index.html sends its backup request
+function hostFrame(cmd, body) {
+  let s = 0;
+  for (const b of body) s += b;
+  return Uint8Array.from([0xF0, ...pack7([0x00, 0x59, cmd, body.length & 0xFF, body.length >> 8 & 0xFF, 0, ...body, ~s & 0xFF]), 0xF7]);
+}
+const CRC_T = Uint32Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+function crc32(b) { let c = 0xFFFFFFFF; for (const v of b) c = CRC_T[(c ^ v) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
 
 // ---------------------------------------------------------------- the app, here (silent)
 let ex, mem;
@@ -121,6 +131,37 @@ requestAnimationFrame(loop);
 const st = { frames: 0, bad: 0, inputs: 0, midi: 0, states: 0, sigOk: 0, sigBad: 0, bytes: 0 };
 let held = new Map();                                  // key -> [vel, press] as last given to the app
 let stateBuf = null, stateGot = 0, lastAsk = 0, badRun = 0, live = false;
+// The project first (an app whose state assumes its saved objects are the FM-1's: emu_web.c web_state_project): read
+// as a backup reads it (device/backup.c: BU_REQ with the app's magic, its chunks, BU_END), put into this copy
+// (web_backup_restore), then the state. A copy that drifts though its state came again reads the project again (at
+// most RELOADS times a connection, RELOAD_MS apart): the FM-1's flash, so edits made while it plays come at the next
+const BU_REQ = 0x42, BU_END = 0x43, RELOADS = 3, RELOAD_MS = 20000;
+const PROJECT = !!(ex.web_state_project && ex.web_state_project() && ex.web_backup_restore);
+let proj = null, asks = 0, reloads = 0, lastReload = 0;
+function readProject(then) {
+  const n = ex.web_backup_make();                      // (this copy's own backup: its first four bytes are the app's magic)
+  const magic = Array.from(new Uint8Array(mem.buffer, ex.web_backup_buf(), Math.min(n, 4)));
+  proj = { got: [], then, timer: setTimeout(() => projDone(null, `${NAME} didn't send its project`), 30000) };
+  say(`Reading the project from ${NAME}...`);
+  try { outPort.send(hostFrame(BU_REQ, magic)); } catch { projDone(null, "the FM-1 was disconnected"); }
+}
+function projDone(image, why) {
+  if (!proj) return;
+  const { then, timer } = proj;
+  clearTimeout(timer);
+  proj = null;
+  if (image) {
+    advance();
+    if (image.length > ex.web_backup_max()) { say(`The project is larger than this page's copy of ${NAME} takes.`, true); return; }
+    new Uint8Array(mem.buffer, ex.web_backup_buf(), image.length).set(image);
+    const rc = ex.web_backup_restore(image.length);
+    if (rc === 10) reloads--;                          // (this copy is playing: the app takes no restore now; again later)
+    else if (rc !== 0) { say(`This page's copy of ${NAME} did not take the project (${rc}). Is it the same version as the FM-1's?`, true); return; }
+  } else {
+    say(`Couldn't read the project: ${why}. The screen may differ from the FM-1's until Resync.`, true);
+  }
+  then();
+}
 function input(b, n) {
   ex.web_buttons(b[0] | b[1] << 8);
   for (let i = 0; i < 7; i++) { const d = (b[6 + i] << 24) >> 24; if (d) ex.web_enc(i, d); }
@@ -145,7 +186,16 @@ function frame(raw) {
   const cmd = m[2], b = m.slice(6, 6 + n);
   const u32 = (o) => (b[o] | b[o + 1] << 8 | b[o + 2] << 16 | b[o + 3] << 24) >>> 0;
   st.frames++;
-  if (cmd === MR_REQ && n >= 4) {
+  if (proj && cmd === BU_REQ && n >= 4) {                // the project, a chunk: its offset, its bytes
+    if (u32(0) !== proj.got.length) { projDone(null, "a piece of the project went missing on the way"); return; }
+    for (let i = 4; i < n; i++) proj.got.push(b[i]);
+    say(`Reading the project from ${NAME}... ${(proj.got.length / 1024).toFixed(1)} KB`);
+  } else if (proj && cmd === BU_END && n >= 10) {        // its end: the length, the CRC, the FM-1's status
+    const image = Uint8Array.from(proj.got);
+    if (b[8]) projDone(null, `${NAME} could not read its memory (status ${b[8]})`);
+    else if (u32(0) !== image.length || u32(4) !== crc32(image)) projDone(null, "the project arrived damaged");
+    else projDone(image);
+  } else if (cmd === MR_REQ && n >= 4) {
     if (b[0] < 5) say(`This FM-1's firmware mirrors only pixels (mirror version ${b[0]}). It needs version 5.`, true);
   } else if (cmd === MR_INPUT && n >= MR_NIN) {
     if (live) { input(b, n); st.inputs++; }
@@ -166,11 +216,17 @@ function frame(raw) {
       dot.className = "dot on";
       say(`Mirroring ${NAME}. The screen is drawn here; the sound is the FM-1's.`);
     }
-  } else if (cmd === MR_SIG && n >= 4 && live) {
-    if (u32(0) === ex.web_state_sig() >>> 0) { st.sigOk++; badRun = 0; }
+  } else if (cmd === MR_SIG && n >= 4 && live && !proj) {
+    if (u32(0) === ex.web_state_sig() >>> 0) { st.sigOk++; badRun = 0; asks = 0; }
     else {
       st.sigBad++;
-      if (++badRun >= 2 && performance.now() - lastAsk > 3000) { lastAsk = performance.now(); send(4); }   // drifted: the state again
+      if (++badRun >= 2 && performance.now() - lastAsk > 3000) {
+        lastAsk = performance.now();
+        if (PROJECT && asks >= 2 && reloads < RELOADS && performance.now() - lastReload > RELOAD_MS) {
+          reloads++; lastReload = performance.now(); asks = 0;
+          readProject(() => send(4));                  // drifted though the state came again: the project again
+        } else { asks++; send(4); }                    // drifted: the state again
+      }
     }
   }
 }
@@ -207,16 +263,25 @@ function attach() {
   if (inPort && inPort !== i) inPort.onmidimessage = null;
   if (outPort && outPort !== o) send(0);
   inPort = i; outPort = o;
+  if (proj) { clearTimeout(proj.timer); proj = null; }  // (another port: a read under way is dropped)
   live = false; held = new Map(); dot.className = "dot";
   clearInterval(keepAlive);
   if (!inPort || !outPort) { say(`Waiting for ${NAME}. Plug the FM-1 in, or pick its port.`); return; }
   inPort.onmidimessage = (e) => feed(e.data);
-  send(3);
-  keepAlive = setInterval(() => send(3), 2000);
-  say(`Asking ${outPort.name} for its state...`);
+  const start = () => {
+    send(3);
+    keepAlive = setInterval(() => send(3), 2000);
+    say(`Asking ${outPort.name} for its state...`);
+  };
+  reloads = 0; asks = 0;
+  if (PROJECT) readProject(start); else start();
 }
 portSel.addEventListener("change", attach);
-$("resync").addEventListener("click", () => { lastAsk = performance.now(); send(4); });
+$("resync").addEventListener("click", () => {
+  lastAsk = performance.now();
+  if (PROJECT && !proj) { reloads = 0; asks = 0; lastReload = performance.now(); readProject(() => send(4)); }
+  else send(4);
+});
 $("connect").addEventListener("click", async () => {
   if (!navigator.requestMIDIAccess) { say("This browser has no Web MIDI. Use Chrome or Edge.", true); return; }
   try { access = await navigator.requestMIDIAccess({ sysex: true }); }

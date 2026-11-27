@@ -258,6 +258,16 @@ __attribute__((used, visibility("default"))) void web_state_set(uint32_t n)
     if (n <= sizeof wstate)
         app_state_set((const uint8_t *)wstate, n);
 }
+/* 1: the app's state assumes its saved objects are the FM-1's (app.h APP_MIRROR_PROJECT): live.html reads them first,
+ * as a backup does (device/backup.c), and puts them in (web_backup_restore), then asks for the state */
+__attribute__((used, visibility("default"))) int web_state_project(void)
+{
+#ifdef APP_MIRROR_PROJECT
+    return 1;
+#else
+    return 0;
+#endif
+}
 __attribute__((used, visibility("default"))) uint32_t web_state_sig(void)
 {
     uint8_t *p = (uint8_t *)wstate;
