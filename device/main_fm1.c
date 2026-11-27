@@ -135,7 +135,7 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
 #define FM1B_AUDIO_AHEAD 0                          /* fm1.toml audio_ahead = true: 1 (with FM1B_AUDIO_ASIDE) */
 #endif
 #ifndef FM1B_AUDIO_BEHIND
-#define FM1B_AUDIO_BEHIND 2                         /* fm1.toml audio_behind: late renders in a row before a half drops */
+#define FM1B_AUDIO_BEHIND 3                         /* fm1.toml audio_behind: late renders in a row before a half drops */
 #endif
 #if FM1B_AUDIO_ASIDE
 #include "audio_commit.c"                           /* the half rendered aside, copied in while its half is free;

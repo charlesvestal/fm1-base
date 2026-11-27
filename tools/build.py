@@ -227,7 +227,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              spike at a chord's start); two late in a row drop a half as before. One block (5.8 ms) more
                              latency; implies audio_aside. Off by default
   audio_behind = 3           with audio_ahead: how many renders in a row may run past their half before one half is
-                             dropped so the main loop gets its time (FM1B_AUDIO_BEHIND, 2..8; 2 by default, as before).
+                             dropped so the main loop gets its time (FM1B_AUDIO_BEHIND, 2..8; 3 by default: 2 until
+                             2026-11-27, the smallest that kept the main loop from starving, not a tuned value).
                              The aside block catches up a run whose lateness stays under a block (a chord's spike then
                              a busy block: 120 % then 88 % ends at 208 % of 300 %); a load over 100 % for long still
                              drops every that many
@@ -1311,7 +1312,7 @@ def build_app():
         flags.append("-DFM1B_AUDIO_ASIDE=1")
     if CONF.get("audio_ahead"):                  # and a block ahead
         flags.append("-DFM1B_AUDIO_AHEAD=1")
-        behind = CONF.get("audio_behind", 2)     # late renders in a row before a half is dropped for the main loop
+        behind = CONF.get("audio_behind", 3)     # late renders in a row before a half is dropped for the main loop
         if not isinstance(behind, int) or not 2 <= behind <= 8:
             raise SystemExit(f"fm1.toml: audio_behind is 2..8, not {behind!r}")
         flags.append(f"-DFM1B_AUDIO_BEHIND={behind}")
