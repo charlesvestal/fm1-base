@@ -69,6 +69,13 @@
 #define RS_FAIL_ADDR 0xCF000000u
 #define BU_MAGIC APP_BACKUP_MAGIC
 #define BU_VERSION APP_BACKUP_VERSION
+/* an app that adds objects at its list's end (APP_BACKUP_OBJS) raises its version and keeps restoring the older ones:
+ * APP_BACKUP_VERSION_MIN (default: only its own). An older backup holds the list's first objects, as many as its count
+ * says; the others restore as none (an empty object: storage.c erases its copies), and the app makes what it loads of
+ * the older ones as it would any old save (LOOM-8 2026-11-27: its user presets moved to two objects of their own) */
+#ifndef APP_BACKUP_VERSION_MIN
+#define APP_BACKUP_VERSION_MIN APP_BACKUP_VERSION
+#endif
 #ifndef APP_BACKUP_WHAT
 #define APP_BACKUP_WHAT "replaces what is saved"
 #endif
@@ -294,6 +301,7 @@ static struct {
     uint32_t crc;
 } rs_rec __attribute__((aligned(4)));
 _Static_assert(sizeof rs_rec <= 4096u, "the journal record fits its sector: fewer objects (APP_BACKUP_OBJS)");
+static uint32_t rs_nf;                                /* the objects the image holds (an older version's: fewer) */
 
 static void rs_head(const rs_ent_t *e, st_hdr_t *h)   /* the header storage.c would write: the copy's commit */
 {
@@ -430,6 +438,11 @@ static int rs_rewrite(void)
     for (i = 0; i < BU_NOBJ; i++) {
         uint8_t r[BU_REC];
         uint32_t len, crc;
+        if (i >= rs_nf) {                             /* (past an older image's objects: none) */
+            if (st_save(bu_obj(i), bu_buf, 0))
+                return RS_E_PROG;
+            continue;
+        }
         if (rs_fetch(pos, r, BU_REC))
             return RS_E_FETCH;
         pos += BU_REC;
@@ -468,7 +481,7 @@ static int restore_rx(uint32_t len, uint32_t crc, int *begun_out)
         rc = RS_E_PLAYING;
         goto out;
     }
-    if (len < BU_HEAD + BU_NOBJ * BU_REC + 4u || len > BU_MAXIMG) {
+    if (len < BU_HEAD + BU_REC + 4u || len > BU_MAXIMG) {
         rc = RS_E_SIZE;
         goto out;
     }
@@ -476,9 +489,16 @@ static int restore_rx(uint32_t len, uint32_t crc, int *begun_out)
         rc = RS_E_FETCH;
         goto out;
     }
-    if (bu_rd32(hd) != BU_MAGIC || bu_rd16(hd + 4) != BU_VERSION || bu_rd16(hd + 6) != BU_NOBJ ||
-        bu_rd32(hd + 12) != bu_crc(0, hd, 12)) {
+    rs_nf = bu_rd16(hd + 6);
+    if (bu_rd32(hd) != BU_MAGIC || bu_rd32(hd + 12) != bu_crc(0, hd, 12) ||
+        (bu_rd16(hd + 4) == BU_VERSION ? rs_nf != BU_NOBJ
+                                       : bu_rd16(hd + 4) < APP_BACKUP_VERSION_MIN || bu_rd16(hd + 4) > BU_VERSION ||
+                                             rs_nf < 1u || rs_nf > BU_NOBJ)) {
         rc = RS_E_HEAD;
+        goto out;
+    }
+    if (len < BU_HEAD + rs_nf * BU_REC + 4u) {
+        rc = RS_E_SIZE;
         goto out;
     }
     rs_begin();
@@ -489,6 +509,14 @@ static int restore_rx(uint32_t len, uint32_t crc, int *begun_out)
     for (i = 0; i < BU_NOBJ; i++) {
         rs_ent_t *e = &rs_rec.e[i];
         uint8_t r[BU_REC];
+        if (i >= rs_nf) {                             /* (past an older image's objects: none) */
+            e->obj = bu_obj(i), e->len = 0, e->crc = bu_crc(0, bu_buf, 0);
+#ifndef APP_STORE_POOL
+            if ((rc = rs_stage(e)) != 0)
+                goto out;
+#endif
+            continue;
+        }
         if (rs_fetch(pos, r, BU_REC)) {
             rc = RS_E_FETCH;
             goto out;

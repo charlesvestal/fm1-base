@@ -2050,13 +2050,19 @@ static int sim_backup(const char *path)
 static int sim_restore_image(size_t n)            /* sim_img's n bytes: 0, or backup.c's RS_E_*: 10 playing, 3 the head, 4..6 damaged */
 {
     size_t pos = 16;
+    const uint32_t ver = (uint32_t)(sim_img[4] | sim_img[5] << 8);
+    const int nf = n >= 16u ? sim_img[6] | sim_img[7] << 8 : 0;   /* (an older version's: the list's first nf; backup.c) */
+#ifndef APP_BACKUP_VERSION_MIN
+#define APP_BACKUP_VERSION_MIN APP_BACKUP_VERSION
+#endif
     if (app_backup_playing())
         return 10;                                /* STOP FIRST */
-    if (n < 16u + (size_t)SIM_NOBJ * 8u + 4u || sim_rd32(sim_img) != APP_BACKUP_MAGIC ||
-        (uint32_t)(sim_img[4] | sim_img[5] << 8) != APP_BACKUP_VERSION || sim_img[6] != SIM_NOBJ ||
+    if (n < 16u + (size_t)nf * 8u + 4u || sim_rd32(sim_img) != APP_BACKUP_MAGIC ||
+        (ver == APP_BACKUP_VERSION ? nf != SIM_NOBJ : ver < APP_BACKUP_VERSION_MIN || ver > APP_BACKUP_VERSION ||
+                                                      nf < 1 || nf > SIM_NOBJ) ||
         sim_rd32(sim_img + 12) != sim_crc32(0, sim_img, 12))
         return 3;
-    for (int i = 0; i < SIM_NOBJ; i++) {          /* all checked before anything changes */
+    for (int i = 0; i < nf; i++) {                /* all checked before anything changes */
         const uint8_t *r = sim_img + pos;
         uint32_t len = r[2] | r[3] << 8;
         if (pos + 8 + len + 4 > n || (uint32_t)(r[0] | r[1] << 8) != sim_objs[i] || len > PLAT_STORE_MAX)
@@ -2070,7 +2076,11 @@ static int sim_restore_image(size_t n)            /* sim_img's n bytes: 0, or ba
     pos = 16;
     for (int i = 0; i < SIM_NOBJ; i++) {
         const uint8_t *r = sim_img + pos;
-        uint32_t o = sim_objs[i], len = r[2] | r[3] << 8;
+        uint32_t o = sim_objs[i], len = i < nf ? (uint32_t)(r[2] | r[3] << 8) : 0u;   /* (past an older image's: none) */
+        if (i >= nf) {
+            store_len[o] = -1;
+            continue;
+        }
         memcpy(store[o], r + 8, len);
         store_len[o] = len ? (int)len : -1;       /* (an empty object: none, as storage.c's st_load) */
         pos += 8 + len;
