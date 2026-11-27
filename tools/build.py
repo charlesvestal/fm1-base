@@ -224,14 +224,11 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              choose it at each start instead (its own setting: plat.h APP_CPU_396)
   audio_ahead = true         audio_aside a block ahead (FM1B_AUDIO_AHEAD): the block rendered last time copied in first,
                              then the next rendered, so a render may run up to two halves long without a dropout (a
-                             spike at a chord's start); audio_behind late renders in a row (3) drop a half for the main loop. One block (5.8 ms) more
-                             latency; implies audio_aside. Off by default
-  audio_behind = 3           with audio_ahead: how many renders in a row may run past their half before one half is
-                             dropped so the main loop gets its time (FM1B_AUDIO_BEHIND, 2..8; 3 by default: 2 until
-                             2026-11-27, the smallest that kept the main loop from starving, not a tuned value).
-                             The aside block catches up a run whose lateness stays under a block (a chord's spike then
-                             a busy block: 120 % then 88 % ends at 208 % of 300 %); a load over 100 % for long still
-                             drops every that many
+                             spike at a chord's start); a half is dropped only when one missed anyway, so a run of late
+                             renders that catches up plays whole and the main loop waits (at most ~0.6 s, at a load of
+                             99 %). One block (5.8 ms) more latency; implies audio_aside. Off by default
+  audio_behind               no longer used (2026-11-27: the count of late renders before a dropped half; a half is now
+                             dropped only when one missed anyway); still accepted, ignored
   input_hz = 5000            the input scan's rate: keys, buttons, knobs and LEDs, one of the 11 columns a tick
                              (FM1B_INPUT_HZ: device/unity.c, felucca-bsp's boards/fm1/fm1_input.h FM1_INPUT_HZ, which
                              derives every count of ticks or frames from it: times stay times). 10000 (the default, as
@@ -1312,10 +1309,6 @@ def build_app():
         flags.append("-DFM1B_AUDIO_ASIDE=1")
     if CONF.get("audio_ahead"):                  # and a block ahead
         flags.append("-DFM1B_AUDIO_AHEAD=1")
-        behind = CONF.get("audio_behind", 3)     # late renders in a row before a half is dropped for the main loop
-        if not isinstance(behind, int) or not 2 <= behind <= 8:
-            raise SystemExit(f"fm1.toml: audio_behind is 2..8, not {behind!r}")
-        flags.append(f"-DFM1B_AUDIO_BEHIND={behind}")
     clk = CONF.get("cpu_clock", 360)
     if clk not in (360, 396):
         raise SystemExit(f"fm1.toml: cpu_clock is 360 or 396, not {clk!r}")

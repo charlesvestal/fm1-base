@@ -134,9 +134,6 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
 #ifndef FM1B_AUDIO_AHEAD
 #define FM1B_AUDIO_AHEAD 0                          /* fm1.toml audio_ahead = true: 1 (with FM1B_AUDIO_ASIDE) */
 #endif
-#ifndef FM1B_AUDIO_BEHIND
-#define FM1B_AUDIO_BEHIND 3                         /* fm1.toml audio_behind: late renders in a row before a half drops */
-#endif
 #if FM1B_AUDIO_ASIDE
 #include "audio_commit.c"                           /* the half rendered aside, copied in while its half is free;
                                                      * FM1B_AUDIO_ASIDE 0 (the default): straight into the DMA's half */
@@ -150,24 +147,17 @@ void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_is
         uint32_t half = fm1_audio_free_half();
 #if FM1B_AUDIO_ASIDE && FM1B_AUDIO_AHEAD
         uint32_t ok;
-        static uint8_t behind;                      /* (renders in a row that ran past their half) */
         fm1_audio_ack_half();
         ok = audio_commit(half);                    /* the block rendered last time */
         render_block(aside);                        /* the next: one running past its half leaves the next half
                                                      * pending, served as soon as this returns (a block's worth of
-                                                     * latency for a render up to two halves long) */
-        if (fm1_audio_pending() & FM1_AUDIO_HALF) {
-            if (++behind >= FM1B_AUDIO_BEHIND) {    /* (that many in a row: that half dropped, as without the
-                                                     * lookahead, so the main loop gets its time; without this it
-                                                     * starved. A run that catches up within the aside block's
-                                                     * time plays whole: fm1.toml audio_behind) */
-                fm1_audio_ack_half();
-                behind = 0;
-                fm1b_dbg.late++;
-                audio_xruns++;
-            }
-        } else
-            behind = 0;
+                                                     * latency: a run of late renders plays whole while its lateness
+                                                     * stays under a block, the main loop waiting meanwhile) */
+        if (!ok && (fm1_audio_pending() & FM1_AUDIO_HALF))
+            fm1_audio_ack_half();                   /* (a half missed anyway: the next dropped too, so the main loop
+                                                     * gets its time. Lateness never passes a block, so the main loop
+                                                     * waits at most while the load stays just under 100 %: 0.6 s at
+                                                     * 99 %, the watchdog's ~8 s far off) */
         if (!ok) {
 #elif FM1B_AUDIO_ASIDE
         uint32_t ok;
