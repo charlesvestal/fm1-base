@@ -14,7 +14,7 @@
  *                                with APP_KEY_SENSE, the key lands at VEL 1..127, default 100, and is pressed PRESS
  *                                0..100 % more: the app's app_host_key makes the readings)
  *   strum A B [MS]               white keys A..B pressed in turn (down then up), MS apart (default 25)
- *   turn ENC N [MS]              (ENC: SELECT ALGO PRESET K1 K2 K3 K4; N detents, MS apart, default 80)
+ *   turn ENC N [MS]              (ENC: SELECT ALGO PRESET K1 K2 K3 K4 K5 K6 K7 K8; N detents, MS apart, default 80)
  *   spin ENC N                   N detents at once, exactly N (no acceleration)
  *   master N                     MASTER pot 0..4096 (then 40 ms, as the device's smoothing settles)
  *   midi [PORT] B0 B1 B2         incoming MIDI message (PORT: USB, the default, BLE, BLE-DEV or TRS; hex bytes;

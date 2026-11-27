@@ -31,4 +31,4 @@ fm1-reader     git           main                           2f49d91c142b1304fc56
 # the tools need (glibc, libstdc++, libgcc), in its debug variant for busybox's shell, the long-lived container's
 # keep-alive; no package manager. The same distroless build as cc-debian13:nonroot cc66d222. sha256 is the image index
 # digest (the registry's Docker-Content-Digest). tools/osv_scan.sh build-image says when the tag has moved.
-build-image    linux-amd64   cc-debian13:debug-nonroot      c69d16acb50ae6ee26adfb0645467b507753c0eb91c389afad87914cd2ecf6de  gcr.io/distroless/cc-debian13:debug-nonroot
+build-image    linux-amd64   cc-debian13:debug-nonroot      36978857457484568ebc541e7b47b291c30ffa2ae292d3d15ea5d294c0247f27  gcr.io/distroless/cc-debian13:debug-nonroot

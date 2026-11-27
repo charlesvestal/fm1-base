@@ -1159,5 +1159,6 @@ int plat_wheel(int w);                 /* PLAT_WHEEL_PITCH -8192..8191 (0 at res
                                         * PLAT_WHEEL_MOD 0..127 */
 int plat_pedal(void);                  /* 1 = the sustain pedal is down (either polarity: the jack's rest level is
                                         * read at power-on, so plug the pedal in before switching on) */
-void plat_master_set(uint32_t q12);    /* the virtual MASTER's level, 0..4096 */
+void plat_master_set(uint32_t q12);    /* the virtual MASTER's level, 0..4096. With APP_SMK_8ENC, K5 is freed as a
+                                        * normal encoder role, so the app owns volume control exclusively. */
 #endif
