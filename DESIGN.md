@@ -21,7 +21,9 @@ fetched, never committed).
 
 An app built on fm1-base may use any licence. MPL-2.0 applies file by file: changes to fm1-base's files are published
 under MPL-2.0, the app's own files are the app's choice. A firmware that links JieLi's closed Bluetooth or Wi-Fi
-libraries therefore has no GPL file in it at all.
+libraries can therefore have no GPL file in it at all; a GPL one would need an extra permission (GPL-3.0 section 7)
+from every copyright holder of its GPL code. A GPL firmware may use the rest of fm1-base, the own stacks included
+(LICENSING.md).
 
 ## Layers
 

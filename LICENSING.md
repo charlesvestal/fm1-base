@@ -7,6 +7,14 @@ So a firmware made of felucca-bsp, fm1-base and its own code may link JieLi's bi
 A firmware on fm1-base's own Bluetooth stack (`ble_stack = "own"`) links none of them; the build checks it, and so does
 one on the own Wi-Fi stack (`wifi_stack = "own"`).
 
+**A GPL firmware may use all of fm1-base, the own Bluetooth and Wi-Fi stacks included**, with or without Link. None
+of fm1-base's MPL-2.0 files carries the "Incompatible With Secondary Licenses" notice, so they can be combined with GPL
+code (MPL-2.0 section 3.3); the own stacks' files are `GPL-3.0-only OR MPL-2.0` besides, and their other parts are
+Apache-2.0 and BSD-2-Clause (below), both compatible with GPL-3.0. What a GPL firmware can't simply do is link JieLi's
+binary libraries (`ble = true` on JieLi's stack, `wifi = true` on JieLi's): that needs an extra permission (GPL-3.0
+section 7) from every copyright holder of its GPL code. An author who owns all of it can grant that; a Felucca fork
+can't, as Felucca's code is not only its author's.
+
 **One opt-in part is GPL-3.0-only: Ableton Link** (`link/`, fm1.toml `link = true`; below). Nothing of it is compiled
 into a firmware without `link = true`. A firmware built with it is a combination with GPL-3.0-only code and is
 distributed under GPL-3.0-only as a whole (the MPL-2.0 files in it can be combined with GPL code under MPL-2.0 section
