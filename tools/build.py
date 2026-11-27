@@ -224,7 +224,7 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              choose it at each start instead (its own setting: plat.h APP_CPU_396)
   audio_ahead = true         audio_aside a block ahead (FM1B_AUDIO_AHEAD): the block rendered last time copied in first,
                              then the next rendered, so a render may run up to two halves long without a dropout (a
-                             spike at a chord's start); two late in a row drop a half as before. One block (5.8 ms) more
+                             spike at a chord's start); audio_behind late renders in a row (3) drop a half for the main loop. One block (5.8 ms) more
                              latency; implies audio_aside. Off by default
   audio_behind = 3           with audio_ahead: how many renders in a row may run past their half before one half is
                              dropped so the main loop gets its time (FM1B_AUDIO_BEHIND, 2..8; 3 by default: 2 until
