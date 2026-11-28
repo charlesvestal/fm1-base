@@ -3,8 +3,8 @@
      Copyright (C) 2026 Charles Vestal
      Backup and restore in the browser (fm1.toml backup = true): tools/fm1_backup.py's backup and restore over Web MIDI
      (SysEx), on the protocol of device/backup.c. From Polly's. tools/make_site.py fills in the firmware's own
-     ({{...}}): NAME, ID its identity's prefix (fm1.toml id_prefix), MAGIC and BACKUP_VERSION (app.h APP_BACKUP_MAGIC,
-     APP_BACKUP_VERSION), EXT the files' extension, HOLDS what a backup holds (a phrase), EXTRA more notes (<li>s),
+     ({{...}}): NAME, ID its identity's prefix (fm1.toml id_prefix), MAGIC, BACKUP_VERSION and BACKUP_VERSION_MIN (app.h
+     APP_BACKUP_MAGIC, APP_BACKUP_VERSION, APP_BACKUP_VERSION_MIN: the oldest backup it restores), EXT the files' extension, HOLDS what a backup holds (a phrase), EXTRA more notes (<li>s),
      EXTRAS_JS the firmware's own sections (default none: "const EXTRAS = [];"), TERMINAL the note on doing it from
      a terminal. The part between the "backup
      protocol" markers is what tests/backup_page_test.mjs runs against a simulated FM-1 and against a transcript of
@@ -125,7 +125,7 @@ cable. This page works in Chrome or Edge, and there is nothing to install.</p>
 <script>
 "use strict";
 // --- backup protocol: begin (tools/fm1_backup.py, device/backup.c; tested by tests/backup_page_test.mjs)
-const FW = { name: "{{NAME}}", id: "{{ID}}", magic: "{{MAGIC}}", version: Number("{{BACKUP_VERSION}}"), ext: "{{EXT}}" };
+const FW = { name: "{{NAME}}", id: "{{ID}}", magic: "{{MAGIC}}", version: Number("{{BACKUP_VERSION}}"), versionMin: Number("{{BACKUP_VERSION_MIN}}"), ext: "{{EXT}}" };
 const PB = (() => {
   const HS_QUERY = [0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7];   // fm1_install.py / fm1ota.js
   // the one with the body 01: the whole identity (HS_QUERY gets NAME_ and three digits, M-UPGRADE 3.11's limit)
@@ -133,6 +133,7 @@ const PB = (() => {
   const RS_REQ = 0x41, BU_REQ = 0x42, BU_END = 0x43;
   const OK_ADDR = 0xC0000000, ASK_ADDR = 0xC1000000, FAIL_ADDR = 0xCF000000;
   const NAME = FW.name, MAGIC = [...FW.magic].map((c) => c.charCodeAt(0)), VERSION = FW.version;   // app.h's
+  const VERSION_MIN = Number.isInteger(FW.versionMin) ? FW.versionMin : VERSION;   // (unfilled: its own only)
   const HEAD = 16, REC = 8, PAYLOAD_MAX = 3840, MAXDATA = 512;
   const PLAYING = 10, DECLINED = 11;
   const ID = FW.id;                                                // the firmware's package identity (its prefix)
@@ -224,8 +225,10 @@ const PB = (() => {
     if (MAGIC.some((b, i) => image[i] !== b)) throw bad(`This file is not a ${NAME} backup.`);
     const ver = u16(image, 4), n = u16(image, 6), flags = u32(image, 8);
     if (u32(image, 12) !== crc32(image, 0, 12)) throw bad("This backup is damaged (its head).");
-    if (ver < VERSION) throw bad(`This is a backup from an older ${NAME} (version ${ver}). This ${NAME} can't restore it. Nothing was changed.`);
-    if (ver !== VERSION) throw bad(`This is a backup from another version of ${NAME} (version ${ver}). This ${NAME} can't restore it.`);
+    // an older version's backups restore too, as far back as APP_BACKUP_VERSION_MIN (device/backup.c: the parts it
+    // lacks restore as none, and the firmware reads the older saves as it would anyway)
+    if (ver < VERSION_MIN) throw bad(`This is a backup from an older ${NAME} (version ${ver}). This ${NAME} can't restore it. Nothing was changed.`);
+    if (ver > VERSION) throw bad(`This is a backup from a newer ${NAME} (version ${ver}). Update this ${NAME} first, then restore it.`);
     if (image.length < HEAD + n * REC + 4) throw bad("This backup is cut short.");
     const objs = []; let pos = HEAD;
     for (let k = 0; k < n; k++) {
@@ -421,7 +424,7 @@ const PB = (() => {
     }
   }
 
-  return { HS_QUERY, HS_FULL, RS_REQ, BU_REQ, BU_END, OK_ADDR, ASK_ADDR, FAIL_ADDR, VERSION, PLAYING, DECLINED, ID, NAME, MAGIC, DELAY, ERRORS,
+  return { HS_QUERY, HS_FULL, RS_REQ, BU_REQ, BU_END, OK_ADDR, ASK_ADDR, FAIL_ADDR, VERSION, VERSION_MIN, PLAYING, DECLINED, ID, NAME, MAGIC, DELAY, ERRORS,
            pack7, unpack7, crc32, frame, parseFrame, response, parseRequest, parseIdentity, parse, split, join, summary, find, others, backup,
            restore };
 })();

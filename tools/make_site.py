@@ -16,7 +16,8 @@
   companion/                  the companion page (web/companion/: index.html, companion.js, zip.js; web/fm1ports.js at
                               the site's top, which companion.js imports), with companion = true
   backup/index.html           backup and restore in the browser (web/backup/index.html, with fm1ports.js inlined), with
-                              backup = true: its magic and version from APP_DIR/app.h (APP_BACKUP_MAGIC, APP_BACKUP_VERSION)
+                              backup = true: its magic and version from APP_DIR/app.h (APP_BACKUP_MAGIC, APP_BACKUP_VERSION,
+                              APP_BACKUP_VERSION_MIN)
   firmware/NAME-VERSION.fwsc  the package the installer writes; also the download
   firmware/NAME-VERSION-res.bin  the resource region (fm1.toml resources), when PKG_STEM-res.bin is beside the
                               package (tools/build.py): the installer writes it after the firmware
@@ -84,9 +85,11 @@ def backup_values(app, conf):
     v = re.search(r"#define\s+APP_BACKUP_VERSION\s+(\d+)u?", src)
     if not m or not v:
         raise SystemExit(f"{app}/app.h: backup = true needs APP_BACKUP_MAGIC 0x........u and APP_BACKUP_VERSION N")
+    vmin = re.search(r"#define\s+APP_BACKUP_VERSION_MIN\s+(\d+)u?", src)   # the oldest it restores (default its own)
     magic = int(m.group(1), 16).to_bytes(4, "little").decode("ascii")
     name = conf.get("name", Path(app).name)
     return {"NAME": name, "ID": conf.get("id_prefix", ""), "MAGIC": magic, "BACKUP_VERSION": v.group(1),
+            "BACKUP_VERSION_MIN": (vmin or v).group(1),
             "EXT": conf.get("backup_ext", "bak"), "HOLDS": conf.get("backup_holds", f"everything {name} saves"),
             "EXTRA": "", "EXTRAS_JS": "const EXTRAS = [];",
             "TERMINAL": "You can also back up from a terminal. Run <code>python3 tools/fm1_backup.py</code> in fm1-base's "

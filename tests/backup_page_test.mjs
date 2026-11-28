@@ -19,7 +19,7 @@ import { fileURLToPath } from "url";
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 // fm1ports.js as tools/make_site.py inlines it (strip_module: no export, no import)
 const PORTS_JS = fs.readFileSync(path.join(root, "web/fm1ports.js"), "utf8").replace(/^export\s+/gm, "").replace(/^import .*?;\n/gm, "");
-const FILL = { NAME: "Template", ID: "FM-1_11", MAGIC: "TSTB", BACKUP_VERSION: "3", EXT: "bak", HOLDS: "everything", EXTRA: "", EXTRAS_JS: "const EXTRAS = [];", TERMINAL: "", PORTS_JS };
+const FILL = { NAME: "Template", ID: "FM-1_11", MAGIC: "TSTB", BACKUP_VERSION: "3", BACKUP_VERSION_MIN: "2", EXT: "bak", HOLDS: "everything", EXTRA: "", EXTRAS_JS: "const EXTRAS = [];", TERMINAL: "", PORTS_JS };
 let html = fs.readFileSync(path.join(root, "web/backup/index.html"), "utf8");
 html = html.replace(/\{\{([A-Z_]+)\}\}/g, (m, k) => (k in FILL ? FILL[k] : m));
 const unfilled = html.match(/\{\{[A-Z_]+\}\}/g);
@@ -213,16 +213,21 @@ const resealed = (b) => {                                      // its CRCs right
   return b;
 };
 {
-  const old = img.slice();                                     // version 2, its CRCs right
-  old[4] = 2; old[5] = 0;
+  const prev = img.slice();                                    // version 2 (APP_BACKUP_VERSION_MIN), its CRCs right
+  prev[4] = 2; prev[5] = 0;
+  resealed(prev);
+  let e0 = null; try { PB.parse(prev); } catch (x) { e0 = x; }
+  check(!e0, "an older version's backup at APP_BACKUP_VERSION_MIN (version 2): accepted (" + (e0 && e0.message) + ")");
+  const old = img.slice();                                     // version 1, older than the oldest it restores
+  old[4] = 1; old[5] = 0;
   resealed(old);
   let e = null; try { PB.parse(old); } catch (x) { e = x; }
-  check(e && /older Template/.test(e.message), "an older version's backup (version 2): refused, said so");
+  check(e && /older Template/.test(e.message), "a backup older than APP_BACKUP_VERSION_MIN (version 1): refused, said so");
   const dev = new FakeFM1(other);
   await err(PB.restore((await connect(dev)).link, old));
   check(dev.req === null && same(dev.image, other), "... nothing sent");
-  check(PB.VERSION === 3 && (img[4] | img[5] << 8) === 3 && PB.MAGIC.join() === [...Buffer.from("TSTB")].join(),
-        "the page's magic and version: the app's (TSTB, 3)");
+  check(PB.VERSION === 3 && PB.VERSION_MIN === 2 && (img[4] | img[5] << 8) === 3 && PB.MAGIC.join() === [...Buffer.from("TSTB")].join(),
+        "the page's magic and versions: the app's (TSTB, 3, oldest 2)");
 }
 {
   const ply = img.slice();                                     // another firmware's (its magic), its CRCs right
