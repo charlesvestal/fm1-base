@@ -12,7 +12,8 @@
      A firmware's sections: what it keeps outside the backup's parts (too big for device/backup.c, which holds a
      restore in RAM until it is checked), read and written by the page over the firmware's own SysEx. Each is an
      object in EXTRAS: {tag (4 letters), what (a phrase: "the samples"), backup(link, onProgress(0..1)) -> bytes,
-     check(bytes) -> a phrase on what it holds (throws on a bad one), restore(link, bytes, onProgress(0..1))
+     check(bytes) -> a phrase on what it holds (throws on a bad one), or {said, note} for one this firmware can't
+     take (a phrase, and a whole sentence on why: the section is left out, the rest restored, the note said), restore(link, bytes, onProgress(0..1))
      (throws on failure)}; link: send(bytes), read(ms) -> a SysEx message or null, drain(), lost. In the file, after
      the backup's own CRC, each section: its tag, u32 length, the bytes, u32 CRC-32 of the bytes (fm1_backup.py
      split). A restore puts the backup back first, then, once the FM-1 said yes, each section the page knows. -->
@@ -589,11 +590,14 @@ $("file").addEventListener("change", async (e) => {
       const { image, sections } = PB.split(new Uint8Array(await f.arrayBuffer()));
       const { flags, objs } = PB.parse(image);
       const known = sections.map((s) => ({ ...s, ex: EXTRAS.find((ex) => ex.tag === s.tag) })).filter((s) => s.ex);
-      const said = known.map((s) => `, and ${s.ex.check(s.data)}`).join("");
+      const checked = known.map((s) => ({ s, c: s.ex.check(s.data) }));   // (a {said, note}: left out, said why)
+      const said = checked.map(({ c }) => `, and ${typeof c === "string" ? c : c.said}`).join("");
+      const notes = checked.filter(({ c }) => typeof c !== "string").map(({ c }) => c.note);
       const missing = EXTRAS.filter((ex) => !known.some((s) => s.ex === ex));
-      picked = { image, sections: known, name: f.name };
+      picked = { image, sections: checked.filter(({ c }) => typeof c === "string").map(({ s }) => s), notes, name: f.name };
       info.innerHTML = `<b>${esc(f.name)}</b>: ${esc(PB.summary(objs))}${esc(said)}${flags & 1 ? `, taken while ${esc(FW.name)} was playing` : ""}.` +
-        (missing.length ? ` It doesn't hold ${esc(missing.map((ex) => ex.what).join(" or "))}, so ${missing.length > 1 ? "those stay" : "they stay"} as they are.` : "");
+        (missing.length ? ` It doesn't hold ${esc(missing.map((ex) => ex.what).join(" or "))}, so ${missing.length > 1 ? "those stay" : "they stay"} as they are.` : "") +
+        notes.map((n) => ` ${esc(n)}`).join("");
       info.hidden = false;
       say(`Ready to restore. Stop ${esc(FW.name)} first, then press Restore.`);
     } catch (err) {
@@ -630,6 +634,7 @@ $("askYes").addEventListener("click", async () => {
       }
     });
     progress(null);
+    const notes = picked.notes.map((n) => ` ${esc(n)}`).join("");
     if (code === 0 && picked.sections.length) {
       for (const s of picked.sections) {
         say(`Restored. Now sending ${esc(s.ex.what)}&hellip;`);
@@ -642,8 +647,8 @@ $("askYes").addEventListener("click", async () => {
         }
       }
       progress(null);
-      say(`Done. ${esc(FW.name)} restored the backup and ${esc(picked.sections.map((s) => s.ex.what).join(" and "))}, and reloaded everything.`);
-    } else if (code === 0) say(`Done. ${esc(FW.name)} restored the backup and reloaded everything.`);
+      say(`Done. ${esc(FW.name)} restored the backup and ${esc(picked.sections.map((s) => s.ex.what).join(" and "))}, and reloaded everything.${notes}`);
+    } else if (code === 0) say(`Done. ${esc(FW.name)} restored the backup and reloaded everything.${notes}`);
     else if (code === PB.PLAYING) say(`<b>STOP FIRST.</b> ${esc(FW.name)} is playing. Press <kbd>PLAY</kbd> on the FM-1 to stop it, then press Restore again. Nothing changed.`, "err");
     else if (code === PB.DECLINED) say("Not restored. Someone pressed <kbd>HOME</kbd> on the FM-1, or nobody answered within a minute. Nothing changed.", "err");
     else say(`Not restored. There was a problem with ${esc(PB.ERRORS[code] || "code " + code)}.` + (code === 12 ? "" : " Nothing changed. Try again."), "err");
