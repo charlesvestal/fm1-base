@@ -9,7 +9,7 @@ or by a program (an agent). Needs mido with python-rtmidi.
   or by its answer to the screen reader's HELLO (tools/fm1ports.py), whatever its port is called:
     press BTN | release BTN | tap BTN       a button (FX SEL ENV LFO EDIT GLO HOME SAVE ARP SEQ PLAY REC OCT- OCT+)
     key K down | key K up | tapkey K        a key, 0..26 (0 = F3), as pressed (no velocity reading)
-    turn ENC N                              an encoder, N detents (SELECT ALGO PRESET K1 K2 K3 K4)
+    turn ENC N                              an encoder, N detents (SELECT ALGO PRESET K1 K2 K3 K4 K5 K6 K7 K8)
     master N | master pot                   MASTER at 0..4096, or the pot's own again
     wait MS                                 let it run (with listen: print what it says meanwhile)
     listen                                  a screen reader starts listening: every message it says is printed
@@ -78,7 +78,7 @@ import time
 import fm1ports
 
 BTN = ["FX", "SEL", "ENV", "LFO", "EDIT", "GLO", "HOME", "SAVE", "ARP", "SEQ", "PLAY", "REC", "OCT-", "OCT+"]
-ENC = ["SELECT", "ALGO", "PRESET", "K1", "K2", "K3", "K4"]
+ENC = ["SELECT", "ALGO", "PRESET", "K1", "K2", "K3", "K4", "K5", "K6", "K7", "K8"]
 LC, LG, LW, SR = [0x7D, 0x4C, 0x43], [0x7D, 0x4C, 0x47], [0x7D, 0x4C, 0x57], [0x7D, 0x53, 0x52]
 WIFI_OP = {"on": 1, "off": 2, "scan": 3, "status": 4, "saved": 5, "forget": 6, "join": 7, "found": 8, "tune": 9}
 

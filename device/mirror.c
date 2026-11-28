@@ -13,8 +13,8 @@
  *                        rectangle row by row, run-length coded on RGB565 (below)
  *                   cmd 0x52 fill: x, y, w, h, seq, the colour (RGB565, high byte first)
  *                   cmd 0x53 input: buttons held u16 (bit B_*: plat.h), keys held u32 (bit k = key k, F3 = 0),
- *                        the encoders' detents since the last report, int8 each (SELECT, ALGORITHM, PRESETS,
- *                        KNOB 1..4: EN_*), MASTER u16 (plat_master: 0..4096), the lit buttons u16 (bit 15: PLAY
+ *                        the encoders' detents since the last report, int8 each (EN_SELECT..EN_K4 on FM-1,
+ *                        EN_K1..EN_K8 on SMK-37 with APP_SMK_8ENC), MASTER u16 (plat_master: 0..4096), the lit buttons u16 (bit 15: PLAY
  *                        lit red), the lit keys u32; then (version 4) the dim buttons u16 and the dim keys u32,
  *                        not lit but glowing (plat_lights' dim ones, plat_lights_mid's) (little-endian, 27 bytes)
  *   host -> device  cmd 0x54 remote, body 5 bytes: seq, op, a, b, c; only while mirroring (else refused), one at a
@@ -500,7 +500,7 @@ static uint32_t mirror_in_keys(void) { return mirror_on ? mr_in.keys : 0u; }
 static int32_t mirror_in_enc(int role)
 {
     int32_t n;
-    if (!mirror_on || role < 0 || role >= 7)
+    if (!mirror_on || role < 0 || role >= NE)
         return 0;
     n = mr_in.enc[role];
     mr_in.enc[role] = 0;
@@ -525,7 +525,7 @@ static void mirror_remote(const uint8_t *b)
                 mr_in.btn = (uint16_t)(v ? mr_in.btn | 1u << a : mr_in.btn & ~(1u << a));
             else if (op == 2 && a < (uint32_t)NKEYS)
                 mr_in.keys = v ? mr_in.keys | 1u << a : mr_in.keys & ~(1u << a);
-            else if (op == 3 && a < 7u) {
+            else if (op == 3 && a < (uint32_t)NE) {
                 int32_t n = mr_in.enc[a] + (int8_t)v;
                 mr_in.enc[a] = (int8_t)(n > 127 ? 127 : n < -127 ? -127 : n);
             } else if (op == 5 && a <= 1u)

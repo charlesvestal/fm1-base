@@ -57,7 +57,17 @@ enum { B_FX, B_SEL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B
 enum { B_FX, B_SEL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B_PLAY, B_REC,
        B_OCTDN, B_OCTUP, NB };
 #endif
+#if PLAT_SMK37 && defined(APP_SMK_8ENC)
+enum { EN_K1, EN_K2, EN_K3, EN_K4, EN_K5, EN_K6, EN_K7, EN_K8, NE };
+#define EN_SELECT EN_K6
+#define EN_ALGO EN_K7
+#define EN_PRESET EN_K8
+#else
 enum { EN_SELECT, EN_ALGO, EN_PRESET, EN_K1, EN_K2, EN_K3, EN_K4, NE };
+#if PLAT_SMK37
+#define EN_K5 NE
+#endif
+#endif
 
 #define NKEYS 27                       /* F3 .. G5 */
 /* key k by colour: the 16 white keys and the 11 black keys, left to right (initialisers for a uint8_t array) */
@@ -1123,8 +1133,9 @@ int app_stats_quiet(void);
  * middle 27 keys (F3..G5), plat_buttons the 14 functions on the SMK's buttons (FX, SCALE as SEL, CHORD as ENV,
  * NOTE REPEAT as LFO, PARA as EDIT, GLOBE as GLO, PATCH as HOME, BT as SAVE, ARP, SEQ, SEQ PLAY, SEQ REC,
  * OCTAVE-/+; HARDWARE CALIBRATION re-teaches them) plus B_KBANK, B_FBANK, B_LEFT, B_RIGHT; plat_enc the seven
- * roles on K6 (SELECT), K7 (ALGORITHM), K8 (PRESETS), K1..K4; plat_master a virtual MASTER turned by K5, kept with the
- * panel calibration (plat_master_set: an app's own saved level); plat_lights the 18 buttons' LEDs and PLAY's second
+ * roles on K6 (SELECT), K7 (ALGORITHM), K8 (PRESETS), K1..K4; normally K5 turns a virtual MASTER kept with the
+ * panel calibration (plat_master_set: an app's own saved level). With APP_SMK_8ENC, K1..K8 are normal calibrated
+ * encoder roles and K5 no longer changes MASTER. plat_lights: the 18 buttons' LEDs and PLAY's second
  * colour, no key LEDs; plat_battery as on the FM-1. Not yet confirmed on a unit (the board layer follows Melodee's own
  * SMK-37 port, which runs on an Elite); the Pro and the MKE-P37 are the same firmware under their names. */
 #if PLAT_SMK37
@@ -1148,5 +1159,6 @@ int plat_wheel(int w);                 /* PLAT_WHEEL_PITCH -8192..8191 (0 at res
                                         * PLAT_WHEEL_MOD 0..127 */
 int plat_pedal(void);                  /* 1 = the sustain pedal is down (either polarity: the jack's rest level is
                                         * read at power-on, so plug the pedal in before switching on) */
-void plat_master_set(uint32_t q12);    /* the virtual MASTER's level, 0..4096 */
+void plat_master_set(uint32_t q12);    /* the virtual MASTER's level, 0..4096. With APP_SMK_8ENC, K5 is freed as a
+                                        * normal encoder role, so the app owns volume control exclusively. */
 #endif

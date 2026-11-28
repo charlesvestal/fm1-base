@@ -1,0 +1,44 @@
+# APP_SMK_8ENC: eight normal encoder roles (K5-K8)
+# This test is for apps that enable APP_SMK_8ENC in their fm1.toml
+# When APP_SMK_8ENC is enabled: K5-K8 work as independent CC encoders, K5 is NOT a virtual MASTER
+# When disabled: K5 is a virtual MASTER volume control (this test will fail without APP_SMK_8ENC)
+# To run this test: enable app_smk_8enc = true in your fm1.toml, then:
+#   FM1B_BOARD=smk37 FM1B_MODEL=elite tools/build.py yourapp --host
+#   yourapp/build/host/yourapp-smk37-elite_host template/tests/8enc.txt yourapp/build/host
+wait 300
+out
+
+# K5-K8: in 8-encoder mode, they send CC 0x18-0x1B respectively
+spin K5 2
+expect_out USB B0 18 42
+spin K6 1
+expect_out USB B0 19 41
+spin K7 -1
+expect_out USB B0 1A 3F
+spin K8 2
+expect_out USB B0 1B 42
+
+# Volume control: fader 3 (MASTER) is the only volume input, not K5
+# K5 changes don't affect volume; fader 3 does
+out
+fader 3 100
+expect_out USB B0 07 64
+fader 3 50
+expect_out USB B0 07 32
+
+# Verify K5 and fader 3 are independent
+out
+spin K5 1
+fader 3 80
+expect_out USB B0 18 43
+expect_out USB B0 07 50
+
+# K5 behavior: still increments CC independently
+out
+spin K5 -1
+expect_out USB B0 18 42
+# fader 3 should still work independently
+fader 3 30
+expect_out USB B0 07 1E
+
+out

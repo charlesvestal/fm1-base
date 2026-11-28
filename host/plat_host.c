@@ -14,7 +14,7 @@
  *                                with APP_KEY_SENSE, the key lands at VEL 1..127, default 100, and is pressed PRESS
  *                                0..100 % more: the app's app_host_key makes the readings)
  *   strum A B [MS]               white keys A..B pressed in turn (down then up), MS apart (default 25)
- *   turn ENC N [MS]              (ENC: SELECT ALGO PRESET K1 K2 K3 K4; N detents, MS apart, default 80)
+ *   turn ENC N [MS]              (ENC: SELECT ALGO PRESET K1 K2 K3 K4 K5 K6 K7 K8; N detents, MS apart, default 80)
  *   spin ENC N                   N detents at once, exactly N (no acceleration)
  *   master N                     MASTER pot 0..4096 (then 40 ms, as the device's smoothing settles)
  *   midi [PORT] B0 B1 B2         incoming MIDI message (PORT: USB, the default, BLE, BLE-DEV or TRS; hex bytes;
@@ -316,7 +316,10 @@ uint32_t plat_keys(void) { return held_keys | mirror_in_keys(); }
 static uint32_t plat_remote_keys(void) { return 0; }   /* (the device's remote control: the script is this one's) */
 int32_t plat_enc(int role)
 {
-    int32_t v = enc_acc[role] + mirror_in_enc(role);
+    int32_t v;
+    if (role < 0 || role >= NE)
+        return 0;
+    v = enc_acc[role] + mirror_in_enc(role);
     enc_acc[role] = 0;
     if (v)
         mirror_enc(role, v);
@@ -2524,7 +2527,13 @@ static const char *const BTN_N[NB] = {"FX", "SEL", "ENV", "LFO", "EDIT", "GLO", 
                                       , "KBANK", "FBANK", "LEFT", "RIGHT"
 #endif
 };
-static const char *const ENC_N[NE] = {"SELECT", "ALGO", "PRESET", "K1", "K2", "K3", "K4"};
+static const char *const ENC_N[NE] = {
+#if PLAT_SMK37 && defined(APP_SMK_8ENC)
+    "K1", "K2", "K3", "K4", "K5", "K6", "K7", "K8"
+#else
+    "SELECT", "ALGO", "PRESET", "K1", "K2", "K3", "K4"
+#endif
+};
 
 static int find_name(const char *const *t, int n, const char *s)
 {

@@ -8,20 +8,33 @@
 #define FM1_NBTN 14u                     /* the FM-1 board's button ids (the SMK's header defines its own) */
 #endif
 #if PLAT_SMK37
-/* the SMK-37's printed labels for the FM-1's functions, then its own four buttons; K5 is MASTER (not taught) */
+/* the SMK-37's printed labels for the FM-1's functions, then its own four buttons */
 static const char *const B_NAME[NB] = {"FX", "SCALE", "CHORD", "REPEAT", "PARA", "GLOBE", "PATCH", "BT",
                                         "ARP", "SEQ", "SEQ PLAY", "SEQ REC", "OCTAVE-", "OCTAVE+",
                                         "KBANK", "FBANK", "<", ">"};
+#if defined(APP_SMK_8ENC)
+#define PANEL_ENC_RESERVED 0u
+#else
 #define PANEL_ENC_RESERVED (1u << 4)     /* K5: the virtual MASTER's knob */
+#endif
 #else
 static const char *const B_NAME[NB] = {"FX", "SEL", "ENV", "LFO", "EDIT", "GLO", "HOME", "SAVE",
                                         "ARP", "SEQ", "PLAY", "REC", "OCT-", "OCT+"};
 #define PANEL_ENC_RESERVED 0u
 #endif
+#if PLAT_SMK37 && defined(APP_SMK_8ENC)
+static const char *const E_NAME[NE] = {"KNOB 1", "KNOB 2", "KNOB 3", "KNOB 4", "KNOB 5",
+                                        "KNOB 6", "KNOB 7", "KNOB 8"};
+#else
 static const char *const E_NAME[NE] = {"SELECT", "ALGORITHM", "PRESETS", "KNOB 1", "KNOB 2",
                                         "KNOB 3", "KNOB 4"};
+#endif
 #if PLAT_SMK37
+#if defined(APP_SMK_8ENC)
+#define PANEL_MAGIC 0x50414E37u          /* "PAN7": all eight encoders are calibrated */
+#else
 #define PANEL_MAGIC 0x50414E36u          /* "PAN6": the SMK's layout (18 buttons, 8 encoders, the master) */
+#endif
 #else
 #define PANEL_MAGIC 0x50414E35u          /* "PAN5": Felucca's layout, so its calibration stays valid */
 #endif
@@ -41,8 +54,13 @@ panel_t panel __attribute__((section(".noinit")));
 static const panel_t PANEL_DEFAULT = {   /* the SMK's ids (felucca-bsp boards/smk37/fm1_input.h FM1_BTN, K1..K8) */
     PANEL_MAGIC,
     {14, 8, 9, 7, 13, 10, 12, 11, 6, 15, 16, 17, 4, 5, 0, 1, 2, 3},
+#if defined(APP_SMK_8ENC)
+    {0, 1, 2, 3, 4, 5, 6, 7},
+    {1, 1, 1, 1, 1, 1, 1, 1},
+#else
     {5, 6, 7, 0, 1, 2, 3},
     {1, 1, 1, 1, 1, 1, 1},
+#endif
     2896u,                                       /* half gain: the level a firmware starts at on the FM-1 */
 };
 #else
@@ -66,9 +84,38 @@ static int panel_valid(const panel_t *p)
 
 static void panel_init(void)
 {
+#if PLAT_SMK37 && defined(APP_SMK_8ENC)
+    /* PAN7 stores eight knob roles; migrate PAN6's seven roles plus MASTER so existing calibrations survive. */
+    typedef struct {
+        uint32_t magic;
+        uint8_t btn[NB], enc[7];
+        int8_t dir[7];
+        uint32_t master;
+    } panel_v6_t;
+    union { panel_t current; panel_v6_t v6; } saved;
+    int n = plat_store_load(OBJ_PANEL, &saved, sizeof saved);
+    if (n == (int)sizeof saved.current && panel_valid(&saved.current)) {
+        panel = saved.current;
+    } else if (n == (int)sizeof saved.v6 && saved.v6.magic == 0x50414E36u) {
+        panel_t p = PANEL_DEFAULT;
+        uint32_t i;
+        for (i = 0; i < NB; i++)
+            p.btn[i] = saved.v6.btn[i];
+        for (i = 0; i < 7; i++) {
+            /* PAN6 stored SELECT/ALGORITHM/PRESETS before K1-K4; PAN7 orders K1-K8. */
+            uint32_t role = i < 3 ? i + 5u : i - 3u;
+            p.enc[role] = saved.v6.enc[i];
+            p.dir[role] = saved.v6.dir[i];
+        }
+        p.master = saved.v6.master;
+        if (panel_valid(&p))
+            panel = p;
+    }
+#else
     panel_t p;
     if (plat_store_load(OBJ_PANEL, &p, sizeof p) == (int)sizeof p && panel_valid(&p))
         panel = p;
+#endif
     if (!panel_valid(&panel))
         panel = PANEL_DEFAULT;
 }
